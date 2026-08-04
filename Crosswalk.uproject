@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{5E1247A4-4C7A-6626-B24E-918AEC45F563}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Crosswalk",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		}
+	]
+}

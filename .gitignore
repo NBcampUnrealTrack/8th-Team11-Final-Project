@@ -4,6 +4,7 @@ DerivedDataCache/
 Intermediate/
 Saved/
 
+*.slnx
 *.sln
 *.suo
 *.xcodeproj
@@ -22,3 +23,6 @@ Saved/
 # Visual Studio cache
 .vs/
 *.ipch
+
+# RiderLink Plugin
+Plugins/Developer/RiderLink/
