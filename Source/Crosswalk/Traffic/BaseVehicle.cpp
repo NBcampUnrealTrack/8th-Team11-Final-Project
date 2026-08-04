@@ -4,7 +4,9 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "TimerManager.h"
 #include "TrafficLane.h"
 #include "TrafficSubsystem.h"
 
@@ -39,7 +41,7 @@ void ABaseVehicle::Tick(float DeltaSeconds)
 		return;
 	}
 
-	DistanceAlongLane += GetEffectiveSpeed() * DeltaSeconds;
+	DistanceAlongLane += ResolveStepSpeed(DeltaSeconds) * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
@@ -48,6 +50,11 @@ void ABaseVehicle::Tick(float DeltaSeconds)
 	}
 
 	UpdateTransformOnLane();
+}
+
+float ABaseVehicle::GetVehicleLength() const
+{
+	return CollisionBox ? CollisionBox->GetUnscaledBoxExtent().X * 2.f : 0.f;
 }
 
 void ABaseVehicle::InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleSpawnParams& Params)
@@ -124,6 +131,12 @@ bool ABaseVehicle::TryParry(AActor* Parrier)
 	// 패링에 성공한 대상은 정지 이후에도 겹칠 수 있으므로 피격 대상에서 제외한다.
 	HitActors.Add(Parrier);
 
+	// 정지한 차가 차선에 남아 있으면 뒤차가 전부 막히므로 잠시 뒤 치운다.
+	if (ParriedDespawnDelay > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ABaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
+	}
+
 	OnVehicleParried.Broadcast(this, Parrier);
 
 	return true;
@@ -143,6 +156,11 @@ void ABaseVehicle::BeginPlay()
 
 void ABaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ParriedDespawnTimerHandle);
+	}
+
 	if (UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this))
 	{
 		TrafficSubsystem->UnregisterVehicle(this);
@@ -155,6 +173,42 @@ void ABaseVehicle::OnReachedLaneEnd()
 {
 	// 풀링을 붙이면 Destroy 대신 스포너에 반납하도록 자식에서 오버라이드한다.
 	Destroy();
+}
+
+float ABaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
+{
+	const float DesiredSpeed = GetEffectiveSpeed();
+
+	if (DeltaSeconds <= KINDA_SMALL_NUMBER)
+	{
+		return DesiredSpeed;
+	}
+
+	const UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this);
+	if (!TrafficSubsystem)
+	{
+		return DesiredSpeed;
+	}
+
+	const ABaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this);
+	if (!VehicleAhead)
+	{
+		return DesiredSpeed;
+	}
+
+	// 두 차의 앞뒤 범퍼 사이 빈 거리. 여기서 FollowingGap을 더 빼 여유를 남긴다.
+	const float BumperToBumper = VehicleAhead->GetDistanceAlongLane() - DistanceAlongLane
+		- (GetVehicleLength() * 0.5f) - (VehicleAhead->GetVehicleLength() * 0.5f);
+	const float AllowedTravel = BumperToBumper - FollowingGap;
+
+	if (AllowedTravel <= 0.f)
+	{
+		// 이미 최소 간격 안까지 붙었으면 멈춰 세운다. 통과보다 정지가 덜 어색하다.
+		return 0.f;
+	}
+
+	// 이번 프레임에 허용 거리 이상 전진하지 못하게 속도를 깎는다.
+	return FMath::Min(DesiredSpeed, AllowedTravel / DeltaSeconds);
 }
 
 void ABaseVehicle::UpdateTransformOnLane()

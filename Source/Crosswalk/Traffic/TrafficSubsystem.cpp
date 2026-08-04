@@ -4,6 +4,7 @@
 
 #include "Engine/World.h"
 #include "BaseVehicle.h"
+#include "TrafficLane.h"
 
 UTrafficSubsystem* UTrafficSubsystem::Get(const UObject* WorldContextObject)
 {
@@ -30,6 +31,39 @@ void UTrafficSubsystem::UnregisterVehicle(ABaseVehicle* Vehicle)
 	{
 		ActiveVehicles.RemoveSingleSwap(Vehicle);
 	}
+}
+
+ABaseVehicle* UTrafficSubsystem::FindVehicleAhead(const ABaseVehicle* Vehicle) const
+{
+	const ATrafficLane* Lane = Vehicle ? Vehicle->GetCurrentLane() : nullptr;
+	if (!Lane)
+	{
+		return nullptr;
+	}
+
+	const float MyDistance = Vehicle->GetDistanceAlongLane();
+
+	ABaseVehicle* Nearest = nullptr;
+	float NearestDistance = TNumericLimits<float>::Max();
+
+	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	{
+		ABaseVehicle* Other = VehiclePtr.Get();
+		if (!Other || Other == Vehicle || Other->GetCurrentLane() != Lane)
+		{
+			continue;
+		}
+
+		// 나보다 앞서 있는 차량 중 가장 가까운 것.
+		const float OtherDistance = Other->GetDistanceAlongLane();
+		if (OtherDistance > MyDistance && OtherDistance < NearestDistance)
+		{
+			NearestDistance = OtherDistance;
+			Nearest = Other;
+		}
+	}
+
+	return Nearest;
 }
 
 ABaseVehicle* UTrafficSubsystem::FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const

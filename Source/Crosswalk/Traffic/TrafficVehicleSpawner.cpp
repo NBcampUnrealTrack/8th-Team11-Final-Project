@@ -75,9 +75,37 @@ ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicle(float StartDistance)
 	if (Vehicle)
 	{
 		Vehicle->InitializeOnLane(TargetLane, RollSpawnParams(StartDistance));
+		LastSpawnedVehicle = Vehicle;
 	}
 
 	return Vehicle;
+}
+
+float ATrafficVehicleSpawner::GetRequiredCenterGap() const
+{
+	float VehicleLength = 0.f;
+	if (VehicleClass)
+	{
+		// CDO에서 길이를 읽으면 차종 BP의 콜리전 크기가 그대로 반영된다.
+		if (const ABaseVehicle* VehicleTemplate = VehicleClass->GetDefaultObject<ABaseVehicle>())
+		{
+			VehicleLength = VehicleTemplate->GetVehicleLength();
+		}
+	}
+
+	return VehicleLength + SpawnClearance;
+}
+
+bool ATrafficVehicleSpawner::IsLaneEntranceBlocked() const
+{
+	// 차간 거리 유지 로직 덕에 추월이 없으므로, 가장 최근 스폰 차량이 항상 맨 뒤에 있다.
+	const ABaseVehicle* Rearmost = LastSpawnedVehicle.Get();
+	if (!Rearmost)
+	{
+		return false;
+	}
+
+	return Rearmost->GetDistanceAlongLane() < GetRequiredCenterGap();
 }
 
 void ATrafficVehicleSpawner::BeginPlay()
@@ -100,7 +128,11 @@ void ATrafficVehicleSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ATrafficVehicleSpawner::HandleSpawnTimer()
 {
-	SpawnVehicle();
+	// 입구에 앞차가 아직 남아 있으면 이번 차례는 건너뛴다. 겹쳐 스폰하는 것보다 낫다.
+	if (!IsLaneEntranceBlocked())
+	{
+		SpawnVehicle();
+	}
 
 	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ATrafficVehicleSpawner::HandleSpawnTimer, RollSpawnInterval(), false);
 }
@@ -123,15 +155,34 @@ void ATrafficVehicleSpawner::PrewarmLane()
 	}
 
 	const float LaneLength = TargetLane->GetLaneLength();
-	const float SlotSize = LaneLength / (PrewarmVehicleCount + 1);
+	const float RequiredGap = GetRequiredCenterGap();
 
-	for (int32 Index = 0; Index < PrewarmVehicleCount; ++Index)
+	// 차선 길이에 물리적으로 들어갈 수 있는 대수. 초과 요청은 겹침으로 이어지므로 잘라낸다.
+	const int32 MaxCount = (RequiredGap > 0.f) ? FMath::FloorToInt(LaneLength / RequiredGap) - 1 : PrewarmVehicleCount;
+	const int32 Count = FMath::Clamp(PrewarmVehicleCount, 0, FMath::Max(0, MaxCount));
+
+	if (Count < PrewarmVehicleCount)
 	{
-		// 차선을 균등 분할한 지점에 지터를 섞어, 미리 깔린 차들이 등간격으로 보이지 않게 한다.
-		const float SlotCenter = SlotSize * (Index + 1);
-		const float Jitter = FMath::FRandRange(-SlotSize * 0.4f, SlotSize * 0.4f);
+		UE_LOG(LogTemp, Warning, TEXT("[%s] 차선 길이 %.0fcm에는 %d대까지만 배치 가능하다. %d대 요청 중 %d대만 배치한다."),
+			*GetName(), LaneLength, Count, PrewarmVehicleCount, Count);
+	}
 
-		SpawnVehicle(FMath::Clamp(SlotCenter + Jitter, 0.f, LaneLength));
+	if (Count <= 0)
+	{
+		return;
+	}
+
+	const float SlotSize = LaneLength / (Count + 1);
+	// 지터가 인접 슬롯의 최소 간격을 침범하면 차들이 겹친다. 그만큼만 흔든다.
+	const float MaxJitter = FMath::Max(0.f, (SlotSize - RequiredGap) * 0.5f);
+
+	// 먼 쪽부터 스폰해 LastSpawnedVehicle이 입구에 가장 가까운 차가 되게 한다.
+	for (int32 Index = Count; Index >= 1; --Index)
+	{
+		const float SlotCenter = SlotSize * Index;
+		const float Distance = SlotCenter + FMath::FRandRange(-MaxJitter, MaxJitter);
+
+		SpawnVehicle(FMath::Clamp(Distance, 0.f, LaneLength));
 	}
 }
 

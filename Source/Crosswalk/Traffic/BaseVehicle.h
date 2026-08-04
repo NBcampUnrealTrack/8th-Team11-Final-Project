@@ -28,6 +28,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnVehicleParriedSignature, ABaseVe
  *
  * 차량은 플레이어를 추적하지 않는다 - 거동이 예측 가능해야 회피/패링 학습이 성립한다.
  * 개체별 편차(속도 배율, 좌우 오프셋)는 스포너가 굴려서 넘긴다.
+ * 앞차와는 최소 간격을 유지하므로 같은 차선에서 서로 통과하지 않는다.
  */
 UCLASS()
 class CROSSWALK_API ABaseVehicle : public AActor
@@ -46,6 +47,16 @@ public:
 	/** 차종 기본 속도에 개체 배율을 적용한 실제 주행 속도(cm/s). */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier; }
+
+	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetVehicleLength() const;
+
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	ATrafficLane* GetCurrentLane() const { return CurrentLane; }
+
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetDistanceAlongLane() const { return DistanceAlongLane; }
 
 	/**
 	 * Target이 이 차량의 진행 경로 위에 있을 때 충돌까지 남은 시간(초)을 낸다.
@@ -77,6 +88,12 @@ protected:
 	virtual void OnReachedLaneEnd();
 
 private:
+	/**
+	 * 앞차를 추월해 통과하지 않도록 이번 프레임 이동 속도를 제한한다.
+	 * 앞차가 없으면 제 속도를 그대로 낸다.
+	 */
+	float ResolveStepSpeed(float DeltaSeconds) const;
+
 	/** 현재 진행 거리와 좌우 오프셋을 실제 트랜스폼에 반영한다. */
 	void UpdateTransformOnLane();
 
@@ -97,6 +114,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float Speed = 750.f;
 
+	/** 앞차 뒤범퍼와 유지할 최소 여유 거리(cm). 차 길이에 더해서 쓴다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float FollowingGap = 150.f;
+
 	/** 패링 판정 윈도우(초). 충돌 직전 이 시간 안에 입력해야 성공. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryWindow = 0.3f;
@@ -110,6 +131,13 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Parry")
 	bool bCanBeParried = true;
+
+	/**
+	 * 패링당해 정지한 뒤 사라지기까지의 시간(초).
+	 * 정지한 차가 차선에 남으면 뒤차가 전부 막혀 트래픽이 멈춘다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	float ParriedDespawnDelay = 2.f;
 
 	/** 현재 주행 중인 차선. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
@@ -134,6 +162,8 @@ protected:
 private:
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
 	TSet<TWeakObjectPtr<AActor>> HitActors;
+
+	FTimerHandle ParriedDespawnTimerHandle;
 
 	// 델리게이트는 최하단에 배치
 public:

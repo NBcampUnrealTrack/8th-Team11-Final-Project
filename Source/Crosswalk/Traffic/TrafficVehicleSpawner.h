@@ -52,6 +52,15 @@ private:
 	/** 하한이 상한보다 크게 설정돼도 안전하도록 정리한 스폰 간격. */
 	float RollSpawnInterval() const;
 
+	/**
+	 * 차량 두 대의 중심이 최소한 떨어져 있어야 하는 거리(cm).
+	 * 차량 클래스의 실제 길이에서 뽑으므로 차종이 커지면 자동으로 늘어난다.
+	 */
+	float GetRequiredCenterGap() const;
+
+	/** 차선 입구가 아직 앞차에 점유돼 있는지. */
+	bool IsLaneEntranceBlocked() const;
+
 protected:
 	/** 차량을 흘려보낼 차선. 레벨에 배치한 ATrafficLane을 지정한다. */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Traffic|Spawner")
@@ -92,16 +101,23 @@ protected:
 	int32 PrewarmVehicleCount = 1;
 
 	/**
-	 * 차종 기본 속도에 적용할 편차 비율. 0.1이면 ±10%.
+	 * 차종 기본 속도에 적용할 편차 비율. 0.05면 ±5%.
 	 * 크게 주면 패링 타이밍 학습이 어려워지므로 밸런스 값이다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0", ClampMax = "0.5"))
-	float SpeedJitter = 0.1f;
+	float SpeedJitter = 0.05f;
 
 	/** 차선 중심선 대비 좌우로 흔들 최대 거리(cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0"))
-	float LaneOffsetRange = 40.f;
+	float LaneOffsetRange = 20.f;
+
+	/** 차 길이에 더해 스폰·프리웜 시 확보할 여유 간격(cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0"))
+	float SpawnClearance = 200.f;
 
 private:
 	FTimerHandle SpawnTimerHandle;
+
+	/** 가장 최근에 스폰한 차량. 차선 입구 점유 확인용. */
+	TWeakObjectPtr<ABaseVehicle> LastSpawnedVehicle;
 };

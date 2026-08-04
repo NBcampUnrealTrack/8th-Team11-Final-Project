@@ -27,6 +27,13 @@ public:
 	void UnregisterVehicle(ABaseVehicle* Vehicle);
 
 	/**
+	 * 같은 차선에서 Vehicle 바로 앞에 있는 차량을 찾는다. 없으면 nullptr.
+	 * 차간 거리 유지에 쓰이므로 정지한 차량도 후보에 포함한다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic")
+	ABaseVehicle* FindVehicleAhead(const ABaseVehicle* Vehicle) const;
+
+	/**
 	 * Target을 Window(초) 안에 칠 차량 중 가장 임박한 것을 찾는다.
 	 * Window에 0 이하를 넘기면 각 차량의 자체 패링 윈도우를 기준으로 판정한다.
 	 */
