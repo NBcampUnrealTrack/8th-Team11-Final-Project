@@ -26,3 +26,14 @@ Saved/
 
 # RiderLink Plugin
 Plugins/Developer/RiderLink/
+
+#Jetbrains Rider
+.idea/
+*.sln.iml
+
+#Visual Studio Config & Temporary Files
+.vs
+.vsconfig
+*.user
+*.userossc
+*.sln.docstates
