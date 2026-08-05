@@ -10,7 +10,7 @@
 #include "TrafficLane.h"
 #include "TrafficSubsystem.h"
 #include "../Data/Structs/CWVehicleHitContext.h"
-#include "../EnvPressure/Interfaces/Interface_VehicleHitReceiver.h"
+#include "Interfaces/Interface_VehicleHitReceiver.h"
 
 ABaseVehicle::ABaseVehicle()
 {
