@@ -1,4 +1,4 @@
-// CWToolTypes.h
+﻿// CWToolTypes.h
 
 #pragma once
 
@@ -22,4 +22,5 @@ enum class ECWToolType : uint8
 	WhiteRoller		UMETA(DisplayName = "안쪽 채우기 롤러"),
 	BlackRoller		UMETA(DisplayName = "검은색 롤러"),
 	AsphaltPatcher	UMETA(DisplayName = "아스팔트 패처")
+
 };
