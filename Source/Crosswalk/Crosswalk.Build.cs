@@ -8,6 +8,13 @@ public class Crosswalk : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Lets code include headers by subfolder-qualified path (e.g. "Character/CWCharacter.h")
+        // from anywhere else in this module, instead of only from the same folder.
+        PublicIncludePaths.AddRange(new string[]
+        {
+            ModuleDirectory
+        });
+
         PublicDependencyModuleNames.AddRange(new string[]
         {
             "Core",
