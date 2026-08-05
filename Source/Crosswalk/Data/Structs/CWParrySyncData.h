@@ -34,15 +34,8 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     bool bParrySucceeded = false;
 
-    // 완벽 패링 같은 추가 보상 판정 여부
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
-    bool bPerfectParry = false;
-
     // 패링 성공 시 차량이 밀려나거나 멈추는 힘
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     float VehicleReactionStrength = 0.f;
 
-    // 패링 성공 시 플레이어에게 더해질 스택 수
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
-    int32 ParryStackDelta = 0;
 };
