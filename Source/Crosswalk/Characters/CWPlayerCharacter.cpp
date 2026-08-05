@@ -53,11 +53,12 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
+	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
 	// 팀 캐릭터 애셋이 정해지면 BP 자식에서 갈아 끼우면 된다.
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> PlaceholderMesh(
-		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+		TEXT("/Game/ThirdParty/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
 	static ConstructorHelpers::FClassFinder<UAnimInstance> PlaceholderAnim(
-		TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
+		TEXT("/Game/ThirdParty/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
 
 	if (PlaceholderMesh.Succeeded())
 	{
