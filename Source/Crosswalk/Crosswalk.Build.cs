@@ -28,7 +28,12 @@ public class Crosswalk : ModuleRules
             "SlateCore",
             "OnlineBase",
             "OnlineSubsystem",
-            "OnlineSubsystemUtils"
+            "OnlineSubsystemUtils", 
+
+            // UI
+            "UMG", 
+            "Slate", 
+            "SlateCore", 
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]
