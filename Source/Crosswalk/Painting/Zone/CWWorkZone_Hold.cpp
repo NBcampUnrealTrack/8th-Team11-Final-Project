@@ -1,4 +1,4 @@
-#include "Painting/Zones/CWWorkZone_Hold.h"
+#include "Painting/Zone/CWWorkZone_Hold.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"

@@ -1,4 +1,4 @@
-#include "Painting/Zones/CWBaseWorkZone.h"
+#include "Painting/Zone/CWBaseWorkZone.h"
 
 #include "Components/BoxComponent.h"
 #include "Engine/Engine.h"

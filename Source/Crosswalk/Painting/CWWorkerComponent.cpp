@@ -6,7 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
-#include "Painting/Zones/CWBaseWorkZone.h"
+#include "Painting/Zone/CWBaseWorkZone.h"
 
 UCWWorkerComponent::UCWWorkerComponent()
 {

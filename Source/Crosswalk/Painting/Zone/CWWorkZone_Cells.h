@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Painting/Zones/CWBaseWorkZone.h"
+#include "Painting/Zone/CWBaseWorkZone.h"
 #include "CWWorkZone_Cells.generated.h"
 
 class UBoxComponent;
