@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Data/TrafficVehicleEntry.h"
 #include "Data/TrafficVehicleSpawnParams.h"
 #include "TrafficVehicleSpawner.generated.h"
 
@@ -14,8 +15,8 @@ class ATrafficLane;
  * 지정한 차선에 일정 주기로 차량을 흘려보낸다.
  * 왕복 2차선은 차선마다 스포너를 하나씩 두고 각자 간격을 굴린다.
  *
- * 개체별 편차(간격 / 속도 / 좌우 위치)를 여기서 굴려 차량에 넘긴다.
- * 트래픽 프로파일 데이터가 붙으면 이 값들이 데이터 테이블로 빠진다.
+ * 개체별 편차(간격 / 속도 / 좌우 위치)와 차종 비율을 여기서 굴려 차량에 넘긴다.
+ * 트래픽 프로파일 데이터 에셋이 붙으면 이 값들이 그쪽으로 빠진다.
  */
 UCLASS()
 class CROSSWALK_API ATrafficVehicleSpawner : public AActor
@@ -31,9 +32,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	void StopSpawning();
 
-	/** 간격을 무시하고 즉시 1대 스폰. 테스트용이자 내부 스폰 경로. */
+	/** 차간 간격을 무시하고 즉시 1대 스폰. 차종은 비율대로 뽑는다. 테스트용. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	ABaseVehicle* SpawnVehicle(float StartDistance = 0.f);
+
+	/** VehicleMix에서 가중치 추첨으로 차종을 고른다. 목록이 비면 VehicleClass로 떨어진다. */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
+	TSubclassOf<ABaseVehicle> PickVehicleClass() const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -42,6 +47,9 @@ protected:
 private:
 	/** 1대 스폰한 뒤 다음 간격을 뽑아 다시 타이머를 건다. */
 	void HandleSpawnTimer();
+
+	/** 차종을 지정해 실제로 스폰한다. */
+	ABaseVehicle* SpawnVehicleOfClass(TSubclassOf<ABaseVehicle> SpawnClass, float StartDistance);
 
 	/** 개체별 편차를 굴린다. */
 	FTrafficVehicleSpawnParams RollSpawnParams(float StartDistance) const;
@@ -52,21 +60,34 @@ private:
 	/** 하한이 상한보다 크게 설정돼도 안전하도록 정리한 스폰 간격. */
 	float RollSpawnInterval() const;
 
-	/**
-	 * 차량 두 대의 중심이 최소한 떨어져 있어야 하는 거리(cm).
-	 * 차량 클래스의 실제 길이에서 뽑으므로 차종이 커지면 자동으로 늘어난다.
-	 */
-	float GetRequiredCenterGap() const;
+	/** 스폰 가능한 차종이 하나라도 설정돼 있는지. */
+	bool HasSpawnableVehicleClass() const;
 
-	/** 차선 입구가 아직 앞차에 점유돼 있는지. */
-	bool IsLaneEntranceBlocked() const;
+	/** 차종 CDO에서 전체 길이(cm)를 읽는다. */
+	float GetVehicleLengthOf(TSubclassOf<ABaseVehicle> InClass) const;
+
+	/** 등장할 수 있는 차종 중 가장 긴 길이(cm). 조합을 모르는 프리웜의 보수적 기준. */
+	float GetLargestVehicleLength() const;
+
+	/** 길이가 다른 두 차량의 중심이 최소한 떨어져 있어야 하는 거리(cm). */
+	float GetRequiredCenterGap(float LengthA, float LengthB) const;
+
+	/** 들어올 차종 기준으로 차선 입구가 아직 앞차에 점유돼 있는지. */
+	bool IsLaneEntranceBlocked(TSubclassOf<ABaseVehicle> IncomingClass) const;
 
 protected:
 	/** 차량을 흘려보낼 차선. 레벨에 배치한 ATrafficLane을 지정한다. */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Traffic|Spawner")
 	TObjectPtr<ATrafficLane> TargetLane;
 
-	/** 스폰할 차량 클래스. BP_Vehicle을 지정한다. */
+	/**
+	 * 섞어 내보낼 차종과 비율. 비워두면 VehicleClass 한 종류만 나온다.
+	 * 트래픽 프로파일 데이터로 승격될 때 이 배열이 그대로 에셋으로 옮겨간다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner")
+	TArray<FTrafficVehicleEntry> VehicleMix;
+
+	/** VehicleMix가 비었을 때 쓰는 단일 차종. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner")
 	TSubclassOf<ABaseVehicle> VehicleClass;
 
@@ -111,7 +132,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0"))
 	float LaneOffsetRange = 20.f;
 
-	/** 차 길이에 더해 스폰·프리웜 시 확보할 여유 간격(cm). */
+	/** 두 차량의 차체 사이에 확보할 여유 간격(cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0"))
 	float SpawnClearance = 200.f;
 
