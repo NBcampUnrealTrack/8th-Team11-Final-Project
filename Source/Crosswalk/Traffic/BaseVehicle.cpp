@@ -9,6 +9,8 @@
 #include "TimerManager.h"
 #include "TrafficLane.h"
 #include "TrafficSubsystem.h"
+#include "../Data/Structs/CWVehicleHitContext.h"
+#include "../EnvPressure/Interfaces/Interface_VehicleHitReceiver.h"
 
 ABaseVehicle::ABaseVehicle()
 {
@@ -230,15 +232,17 @@ void ABaseVehicle::UpdateTransformOnLane()
 }
 
 void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool /*bFromSweep*/, const FHitResult& /*SweepResult*/)
+	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
 	if (!HasAuthority() || bParried || !OtherActor || OtherActor == this)
 	{
 		return;
 	}
 
-	// 프로토타입 단계에서는 폰만 피격 대상으로 본다.
-	if (!OtherActor->IsA<APawn>())
+	// 피격 인터페이스를 구현했으면 대상으로 본다. 아직 구현 전인 플레이어도 검증할 수 있도록
+	// 프로토타입 단계에서는 폰도 함께 받아준다.
+	const bool bImplementsReceiver = OtherActor->Implements<UInterface_VehicleHitReceiver>();
+	if (!bImplementsReceiver && !OtherActor->IsA<APawn>())
 	{
 		return;
 	}
@@ -250,6 +254,44 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 	}
 	HitActors.Add(OtherActor);
 
-	// 넉백 방향은 진행 방향을 그대로 넘긴다. 실제 임펄스 적용은 플레이어/물리 파트 담당.
-	OnVehicleHitActor.Broadcast(this, OtherActor, GetActorForwardVector());
+	const FVector HitDirection = GetActorForwardVector();
+
+	if (bImplementsReceiver)
+	{
+		FCWVehicleHitContext HitContext;
+		HitContext.HitLocation = ResolveHitLocation(OtherActor, bFromSweep, SweepResult);
+		HitContext.HitDirection = HitDirection;
+		HitContext.VehicleSpeed = GetEffectiveSpeed();
+		HitContext.VehicleType = VehicleType;
+		HitContext.bCanParry = bCanBeParried;
+		HitContext.bFlattenOnHit = bFlattenOnHit;
+
+		// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.
+		IInterface_VehicleHitReceiver::Execute_ReceiveVehicleHit(OtherActor, HitContext);
+	}
+
+	// 인터페이스를 구현하지 않는 관찰자(연출·사운드·집계)를 위해 남겨둔다.
+	// 서버에서만 발화하므로 클라 연출에는 쓸 수 없다.
+	OnVehicleHitActor.Broadcast(this, OtherActor, HitDirection);
+}
+
+FVector ABaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
+{
+	// 스윕으로 발생한 오버랩이 아니면 SweepResult는 비어 있다.
+	// 차량은 SetActorTransform으로 위치를 덮어쓰므로 대부분 이 경우다.
+	if (bFromSweep)
+	{
+		return SweepResult.ImpactPoint;
+	}
+
+	const FVector TargetLocation = HitActor ? HitActor->GetActorLocation() : GetActorLocation();
+
+	FVector ClosestPoint = FVector::ZeroVector;
+	if (CollisionBox && CollisionBox->GetClosestPointOnCollision(TargetLocation, ClosestPoint) >= 0.f)
+	{
+		return ClosestPoint;
+	}
+
+	// 대상이 이미 박스 안쪽이면 최근접점을 못 구한다. 그때는 대상 위치가 곧 접점에 가깝다.
+	return TargetLocation;
 }
