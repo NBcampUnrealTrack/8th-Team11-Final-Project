@@ -38,3 +38,9 @@ Plugins/Developer/RiderLink/
 *.userossc
 *.sln.docstates
 CLAUDE.md
+
+# AI tool local settings
+.codex/
+.gemini/
+.cursor/
+.mcp.json
