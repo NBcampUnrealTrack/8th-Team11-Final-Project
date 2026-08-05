@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
-#include "UI/Data/CWUITypes.h"
+#include "Data/Enums/CWUITypes.h"
 #include "UI/Core/CWUIRootWidget.h"
 #include "UI/Core/CWUIScreenWidget.h"
 #include "CWUISubsystem.generated.h"

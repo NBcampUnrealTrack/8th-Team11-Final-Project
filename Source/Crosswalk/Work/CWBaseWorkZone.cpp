@@ -1,4 +1,4 @@
-#include "WorkSystem/CWBaseWorkZone.h"
+#include "Work/CWBaseWorkZone.h"
 
 #include "Components/BoxComponent.h"
 #include "Engine/Engine.h"

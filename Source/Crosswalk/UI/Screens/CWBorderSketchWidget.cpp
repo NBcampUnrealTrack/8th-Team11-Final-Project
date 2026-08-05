@@ -1,7 +1,7 @@
-#include "UI/CWBorderSketchWidget.h"
+#include "UI/Screens/CWBorderSketchWidget.h"
 
 #include "Rendering/DrawElements.h"
-#include "WorkSystem/CWWorkZone_BorderSketch.h"
+#include "Work/CWWorkZone_BorderSketch.h"
 
 namespace
 {

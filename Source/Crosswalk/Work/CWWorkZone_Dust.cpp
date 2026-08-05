@@ -1,4 +1,4 @@
-#include "WorkSystem/CWWorkZone_Dust.h"
+#include "Work/CWWorkZone_Dust.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -11,7 +11,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
-#include "WorkSystem/CWWorkerComponent.h"
+#include "Work/CWWorkerComponent.h"
 
 ACWWorkZone_Dust::ACWWorkZone_Dust()
 {

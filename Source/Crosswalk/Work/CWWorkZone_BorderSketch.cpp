@@ -1,4 +1,4 @@
-#include "WorkSystem/CWWorkZone_BorderSketch.h"
+#include "Work/CWWorkZone_BorderSketch.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -9,9 +9,9 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
-#include "UI/CWBorderSketchWidget.h"
+#include "UI/Screens/CWBorderSketchWidget.h"
 #include "UObject/ConstructorHelpers.h"
-#include "WorkSystem/CWWorkerComponent.h"
+#include "Work/CWWorkerComponent.h"
 
 ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 {

@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Gameplay/CWToolTypes.h"
+#include "Data/Enums/CWToolTypes.h"
 #include "CWWorkerComponent.generated.h"
 
 class ACWBaseWorkZone;

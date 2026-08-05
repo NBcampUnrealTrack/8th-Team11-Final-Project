@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
-#include "../../Data/Structs/CWParryAttemptContext.h"
+#include "Data/Structs/CWParryAttemptContext.h"
 #include "Interface_ParryReceiver.generated.h"
 
 UINTERFACE(BlueprintType)

@@ -1,8 +1,8 @@
-#include "WorkSystem/CWWorkZone_Cells.h"
+#include "Work/CWWorkZone_Cells.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "WorkSystem/CWWorkerComponent.h"
+#include "Work/CWWorkerComponent.h"
 
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {

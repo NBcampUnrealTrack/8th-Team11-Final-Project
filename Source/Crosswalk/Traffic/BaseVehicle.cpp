@@ -9,7 +9,7 @@
 #include "TimerManager.h"
 #include "TrafficLane.h"
 #include "TrafficSubsystem.h"
-#include "../Data/Structs/CWVehicleHitContext.h"
+#include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
 
 ABaseVehicle::ABaseVehicle()

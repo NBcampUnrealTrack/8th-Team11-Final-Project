@@ -1,7 +1,7 @@
 #include "Core/CWGameMode.h"
 
-#include "Player/CWPlayerCharacter.h"
-#include "Player/CWPlayerController.h"
+#include "Characters/CWPlayerCharacter.h"
+#include "Characters/CWPlayerController.h"
 
 ACWGameMode::ACWGameMode()
 {

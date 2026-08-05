@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Templates/SubclassOf.h"
-#include "WorkSystem/CWBaseWorkZone.h"
+#include "Work/CWBaseWorkZone.h"
 #include "CWWorkZone_BorderSketch.generated.h"
 
 class UCWBorderSketchWidget;

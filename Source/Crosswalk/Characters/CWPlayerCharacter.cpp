@@ -1,4 +1,4 @@
-#include "Player/CWPlayerCharacter.h"
+#include "Characters/CWPlayerCharacter.h"
 
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
@@ -14,10 +14,10 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
-#include "ItemSystem/CWBaseTool.h"
-#include "ItemSystem/CWToolHolderComponent.h"
+#include "Tools/CWBaseTool.h"
+#include "Tools/CWToolHolderComponent.h"
 #include "UObject/ConstructorHelpers.h"
-#include "WorkSystem/CWWorkerComponent.h"
+#include "Work/CWWorkerComponent.h"
 
 ACWPlayerCharacter::ACWPlayerCharacter()
 {

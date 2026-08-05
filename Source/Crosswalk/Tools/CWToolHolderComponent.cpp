@@ -1,11 +1,11 @@
-#include "ItemSystem/CWToolHolderComponent.h"
+#include "Tools/CWToolHolderComponent.h"
 
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
-#include "ItemSystem/CWBaseTool.h"
+#include "Tools/CWBaseTool.h"
 #include "Net/UnrealNetwork.h"
-#include "WorkSystem/CWWorkerComponent.h"
+#include "Work/CWWorkerComponent.h"
 
 UCWToolHolderComponent::UCWToolHolderComponent()
 {

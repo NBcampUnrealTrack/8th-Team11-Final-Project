@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "WorkSystem/CWBaseWorkZone.h"
+#include "Work/CWBaseWorkZone.h"
 #include "CWWorkZone_Hold.generated.h"
 
 class UMaterialInstanceDynamic;

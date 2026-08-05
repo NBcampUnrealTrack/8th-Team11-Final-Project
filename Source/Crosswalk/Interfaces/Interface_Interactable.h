@@ -1,20 +1,20 @@
-// CWInteractable.h
+// Interface_Interactable.h
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
-#include "CWInteractable.generated.h"
+#include "Interface_Interactable.generated.h"
 
 // Implemented by anything a character can act on via the Interact input:
 // tool pickups, the signal light, the store counter, etc.
 UINTERFACE(BlueprintType, MinimalAPI)
-class UCWInteractable : public UInterface
+class UInterface_Interactable : public UInterface
 {
 	GENERATED_BODY()
 };
 
-class CROSSWALK_API ICWInteractable
+class CROSSWALK_API IInterface_Interactable
 {
 	GENERATED_BODY()
 

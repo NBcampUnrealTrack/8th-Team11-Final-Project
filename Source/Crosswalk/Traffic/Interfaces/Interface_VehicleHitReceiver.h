@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
-#include "../../Data/Structs/CWVehicleHitContext.h"
+#include "Data/Structs/CWVehicleHitContext.h"
 #include "Interface_VehicleHitReceiver.generated.h"
 
 UINTERFACE(BlueprintType)

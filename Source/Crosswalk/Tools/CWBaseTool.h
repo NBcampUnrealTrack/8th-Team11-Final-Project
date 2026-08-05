@@ -2,8 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Gameplay/CWToolTypes.h"
-#include "Interaction/CWInteractable.h"
+#include "Data/Enums/CWToolTypes.h"
+#include "Interfaces/Interface_Interactable.h"
 #include "CWBaseTool.generated.h"
 
 class APawn;
@@ -27,14 +27,14 @@ class UStaticMeshComponent;
  *   콜리전과 하이라이트는 리플리케이트되지 않으므로 OnRep_Holder 에서 다시 맞춘다.
  *   TryPickUp / Drop 은 서버에서만 실행된다. 클라이언트는 홀더 컴포넌트의 RPC 를 거친다.
  *
- * ICWInteractable 을 구현하는 이유:
+ * IInterface_Interactable 을 구현하는 이유:
  *   신호등이나 상점 카운터처럼 도구가 아닌 상호작용 대상이 생겼을 때
  *   같은 인터페이스로 묶으려면 도구도 그 계약을 따라야 한다.
  *   도구를 집는 경로는 두 개가 되지만(홀더의 E 입력, 범용 상호작용) 둘 다
  *   UCWToolHolderComponent::PickUpTool 로 모이므로 상태가 갈라지지 않는다.
  */
 UCLASS()
-class CROSSWALK_API ACWBaseTool : public AActor, public ICWInteractable
+class CROSSWALK_API ACWBaseTool : public AActor, public IInterface_Interactable
 {
 	GENERATED_BODY()
 

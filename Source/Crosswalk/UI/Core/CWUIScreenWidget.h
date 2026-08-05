@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "UI/Data/CWUITypes.h"
+#include "Data/Enums/CWUITypes.h"
 #include "CWUIScreenWidget.generated.h"
 
 // 화면이 Subsystem에 페이지 전환을 요청
