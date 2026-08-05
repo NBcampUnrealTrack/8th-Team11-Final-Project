@@ -8,7 +8,7 @@ public class Crosswalk : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        // Lets code include headers by subfolder-qualified path (e.g. "Character/CWCharacter.h")
+        // Lets code include headers by subfolder-qualified path (e.g. "Characters/CWPlayerCharacter.h")
         // from anywhere else in this module, instead of only from the same folder.
         PublicIncludePaths.AddRange(new string[]
         {
@@ -28,12 +28,7 @@ public class Crosswalk : ModuleRules
             "SlateCore",
             "OnlineBase",
             "OnlineSubsystem",
-            "OnlineSubsystemUtils", 
-
-            // UI
-            "UMG", 
-            "Slate", 
-            "SlateCore", 
+            "OnlineSubsystemUtils",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]
