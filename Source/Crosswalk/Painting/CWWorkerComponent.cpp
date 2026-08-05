@@ -1,4 +1,4 @@
-#include "Work/CWWorkerComponent.h"
+#include "Painting/CWWorkerComponent.h"
 
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
@@ -6,7 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
-#include "Work/CWBaseWorkZone.h"
+#include "Painting/Zones/CWBaseWorkZone.h"
 
 UCWWorkerComponent::UCWWorkerComponent()
 {

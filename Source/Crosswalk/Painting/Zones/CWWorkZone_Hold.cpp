@@ -1,11 +1,11 @@
-#include "Work/CWWorkZone_Hold.h"
+#include "Painting/Zones/CWWorkZone_Hold.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Work/CWWorkerComponent.h"
+#include "Painting/CWWorkerComponent.h"
 
 ACWWorkZone_Hold::ACWWorkZone_Hold()
 {

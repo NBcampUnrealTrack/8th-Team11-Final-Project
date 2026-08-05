@@ -28,7 +28,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnHeldToolChangedSignature, UCWT
  *   서버가 거리를 다시 재서 승인한다. 그래서 두 명이 같은 도구를 집는 일이 생기지 않는다.
  *   FocusedTool 은 화면 표시용이라 리플리케이트하지 않고 각 클라이언트가 로컬로 계산한다.
  */
-UCLASS(ClassGroup = (ItemSystem), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Painting), meta = (BlueprintSpawnableComponent))
 class CROSSWALK_API UCWToolHolderComponent : public UActorComponent
 {
 	GENERATED_BODY()

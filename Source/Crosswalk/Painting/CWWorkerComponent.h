@@ -29,7 +29,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnTargetZoneChangedSignature, UC
  * 또 하나. 서버는 클라이언트의 마우스 커서를 읽을 수 없다. 커서 트레이스는 로컬 전용이라
  * 작업 지점은 소유 클라이언트가 주기적으로 올려보내야 한다. (칸을 칠하는 존에서 필요)
  */
-UCLASS(ClassGroup = (WorkSystem), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Painting), meta = (BlueprintSpawnableComponent))
 class CROSSWALK_API UCWWorkerComponent : public UActorComponent
 {
 	GENERATED_BODY()

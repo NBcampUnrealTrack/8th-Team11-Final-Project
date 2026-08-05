@@ -1,4 +1,4 @@
-#include "Work/CWWorkZone_BorderSketch.h"
+#include "Painting/Zones/CWWorkZone_BorderSketch.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -11,7 +11,7 @@
 #include "Net/UnrealNetwork.h"
 #include "UI/Screens/CWBorderSketchWidget.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Work/CWWorkerComponent.h"
+#include "Painting/CWWorkerComponent.h"
 
 ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 {

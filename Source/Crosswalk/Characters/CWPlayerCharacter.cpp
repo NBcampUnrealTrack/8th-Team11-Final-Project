@@ -14,10 +14,10 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
-#include "Tools/CWBaseTool.h"
-#include "Tools/CWToolHolderComponent.h"
+#include "Painting/CWWorkerComponent.h"
+#include "Painting/Tools/CWBaseTool.h"
+#include "Painting/Tools/CWToolHolderComponent.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Work/CWWorkerComponent.h"
 
 ACWPlayerCharacter::ACWPlayerCharacter()
 {

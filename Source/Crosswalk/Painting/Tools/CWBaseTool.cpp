@@ -1,10 +1,10 @@
-#include "Tools/CWBaseTool.h"
+#include "Painting/Tools/CWBaseTool.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
-#include "Tools/CWToolHolderComponent.h"
+#include "Painting/Tools/CWToolHolderComponent.h"
 #include "Net/UnrealNetwork.h"
 
 ACWBaseTool::ACWBaseTool()
