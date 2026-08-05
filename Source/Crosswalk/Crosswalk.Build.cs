@@ -22,6 +22,10 @@ public class Crosswalk : ModuleRules
             "Engine",
             "InputCore",
             "EnhancedInput",
+            // 테두리 스케치 미니게임 위젯이 Slate 로 선을 직접 그린다.
+            "UMG",
+            "Slate",
+            "SlateCore",
             "OnlineBase",
             "OnlineSubsystem",
             "OnlineSubsystemUtils"
