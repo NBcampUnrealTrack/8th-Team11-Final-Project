@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/Structs/CWParryAttemptContext.h"
 #include "Data/Structs/CWParrySyncData.h"
 #include "CWParryComponent.generated.h"
 
@@ -31,7 +32,7 @@ public:
 protected:
 	// 클라이언트에서 서버로 패링 판정을 요청
 	UFUNCTION(Server, Reliable)
-	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation);
+	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation, float ClientInputTime);
 
 	// 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달
 	UFUNCTION(NetMulticast, Reliable)
@@ -39,7 +40,10 @@ protected:
 
 private:
 	// 서버에서 쿨타임을 확인하고 주변 위협 차량에 패링 판정을 시도
-	void HandleServerParryRequest(const FVector& CursorWorldLocation);
+	void HandleServerParryRequest(const FVector& CursorWorldLocation, float ClientInputTime);
+
+	// 커서 입력을 트래픽 쪽이 판정할 수 있는 시도 정보로 만든다
+	FCWParryAttemptContext BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation, float ClientInputTime) const;
 
 	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
 	FCWParrySyncData BuildParrySyncData(const AActor& Parrier, ABaseVehicle& ParriedVehicle) const;
@@ -59,6 +63,14 @@ private:
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
 	float ParryCooldown = 1.f;
+
+	// 패링이 닿는 거리(cm). 차체 표면 기준으로 잰다. 0 이면 거리 제한 없음
+	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
+	float ParryRadius = 150.f;
+
+	// 커서 방향을 중심으로 한 부채꼴 전체 각(도). 360 이면 방향 제한 없음
+	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	float ParryAngle = 90.f;
 
 	float LastLocalParryRequestTime = -999.f;
 

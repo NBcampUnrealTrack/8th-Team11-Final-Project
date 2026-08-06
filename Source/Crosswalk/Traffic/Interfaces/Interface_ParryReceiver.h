@@ -19,7 +19,7 @@ class CROSSWALK_API IInterface_ParryReceiver
     GENERATED_BODY()
 
 public:
-    // 서버 권한 패링 판정을 위해 패링 시도 정보를 전달
+    // 서버 권한 패링 판정을 위해 패링 시도 정보를 전달. 반환값은 판정 통과 여부다
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Crosswalk|Parry")
-    void ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext);
+    bool ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext);
 };

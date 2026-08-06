@@ -14,6 +14,10 @@ struct FCWParryAttemptContext
     GENERATED_BODY()
 
 public:
+    // 패링을 시도한 액터. 수신 측이 충돌 예측 기준점으로 쓴다
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
+    TObjectPtr<AActor> Parrier = nullptr;
+
     // 패링을 시도한 월드 위치
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     FVector AttemptLocation = FVector::ZeroVector;
@@ -38,7 +42,8 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     FName VehicleType = NAME_None;
 
-    // 클라이언트 입력 시점을 기록하기 위한 값이며, 최종 판정은 서버가 결정
+    // 클라이언트 입력 시점을 기록하기 위한 값이며, 최종 판정은 서버가 결정.
+    // 클라이언트 월드 시간이라 서버 시간과 직접 비교할 수 없다. 기록·디버깅용이다
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     float ClientInputTime = 0.f;
 };

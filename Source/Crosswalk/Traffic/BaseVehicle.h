@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/TrafficVehicleSpawnParams.h"
+#include "Interfaces/Interface_ParryReceiver.h"
 #include "BaseVehicle.generated.h"
 
 class ABaseVehicle;
@@ -31,7 +32,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnVehicleParriedSignature, ABaseVe
  * 앞차와는 최소 간격을 유지하므로 같은 차선에서 서로 통과하지 않는다.
  */
 UCLASS()
-class CROSSWALK_API ABaseVehicle : public AActor
+class CROSSWALK_API ABaseVehicle : public AActor, public IInterface_ParryReceiver
 {
 	GENERATED_BODY()
 
@@ -39,6 +40,12 @@ public:
 	ABaseVehicle();
 
 	virtual void Tick(float DeltaSeconds) override;
+
+	/**
+	 * 서버 권한 패링 판정. 대상 선별은 트래픽 서브시스템이 끝낸 뒤 이 차량에게만 들어온다.
+	 * 반경·각도는 선별 단계에서 걸러지므로, 여기서는 차량이 단일 관리하는 윈도우만 다시 본다.
+	 */
+	virtual bool ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext) override;
 
 	/** 스포너가 스폰 직후 호출. 주행할 차선과 개체별 편차를 지정한다. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Vehicle")
@@ -51,6 +58,13 @@ public:
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetVehicleLength() const;
+
+	/**
+	 * 차체 표면에서 Point 까지의 거리(cm). 박스 안쪽이면 0.
+	 * 근접 판정에 원점 거리를 쓰면 트럭이 승용차보다 불리해지므로 표면 기준으로 잰다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetDistanceToPoint(const FVector& Point) const;
 
 	/** 피격·패링 연출 분기에 쓰이는 차종 ID. 수신 측이 차종별 분기에 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")

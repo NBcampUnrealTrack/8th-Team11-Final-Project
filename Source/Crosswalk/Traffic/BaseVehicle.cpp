@@ -109,6 +109,34 @@ bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImp
 	return true;
 }
 
+float ABaseVehicle::GetDistanceToPoint(const FVector& Point) const
+{
+	if (CollisionBox)
+	{
+		FVector ClosestPointOnBody = FVector::ZeroVector;
+		const float SurfaceDistance = CollisionBox->GetClosestPointOnCollision(Point, ClosestPointOnBody);
+
+		// 콜리전 바디를 못 찾으면 음수가 온다. 그때만 원점 거리로 대체한다.
+		if (SurfaceDistance >= 0.f)
+		{
+			return SurfaceDistance;
+		}
+	}
+
+	return FVector::Dist(GetActorLocation(), Point);
+}
+
+bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext)
+{
+	// 클라에서 통과시키면 그 클라에서만 차가 멈춘다. 판정은 서버만 한다.
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	return TryParry(ParryAttemptContext.Parrier);
+}
+
 bool ABaseVehicle::TryParry(AActor* Parrier)
 {
 	if (!CanBeParried() || !Parrier)
