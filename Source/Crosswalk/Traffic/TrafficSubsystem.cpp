@@ -233,6 +233,25 @@ bool UTrafficSubsystem::PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParr
 	return true;
 }
 
+void UTrafficSubsystem::GetVehiclesNearPoint(const FVector& Point, float Radius, TArray<ABaseVehicle*>& OutVehicles) const
+{
+	OutVehicles.Reset();
+
+	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	{
+		ABaseVehicle* Vehicle = VehiclePtr.Get();
+		if (Vehicle == nullptr)
+		{
+			continue;
+		}
+
+		if (Vehicle->GetDistanceToPoint(Point) <= Radius)
+		{
+			OutVehicles.Add(Vehicle);
+		}
+	}
+}
+
 int32 UTrafficSubsystem::GetActiveVehicleCount() const
 {
 	int32 Count = 0;
