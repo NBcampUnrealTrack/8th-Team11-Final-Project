@@ -356,11 +356,6 @@ void ACWPlayerCharacter::Interact()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] Interact 입력 수신. 대상 도구=%s"),
-		*GetName(),
-		ToolHolderComponent->GetFocusedTool() != nullptr
-			? *ToolHolderComponent->GetFocusedTool()->GetName()
-			: TEXT("없음"));
 	ToolHolderComponent->Interact();
 }
 

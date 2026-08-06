@@ -151,7 +151,7 @@ protected:
 	float KnockbackUpSpeed = 500.f;
 
 protected:
-	// 아래 5개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
+	// 아래 6개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -167,14 +167,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ParryAction;
 
+	// 미니게임 중 빠져나오는 키(Q). 비워두면 그 기능만 없고 나머지는 정상 동작한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> CancelWorkAction;
+
 private:
 	// 패링만 담은 보조 매핑 컨텍스트. 지정된 컨텍스트는 애셋이라 런타임에 건드리지 않는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> ParryFallbackContext;
-
-	// 첫 이동 입력만 로그로 찍기 위한 플래그. 매 프레임 찍으면 로그를 못 쓰게 된다.
-	bool bLoggedFirstMoveInput = false;
-	// 미니게임 중 빠져나오는 키. 비워두면 그 기능만 없고 나머지는 정상 동작한다.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
-	TObjectPtr<UInputAction> CancelWorkAction;
 };
