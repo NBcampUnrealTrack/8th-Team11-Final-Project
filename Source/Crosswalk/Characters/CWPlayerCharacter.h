@@ -67,6 +67,15 @@ private:
 	void BuildBuiltInInput();
 
 	/**
+	 * 패링 입력이 비어 있으면 C++ 로 채운다.
+	 *
+	 * BP 가 입력 애셋을 물고 있으면 BuildBuiltInInput 이 통째로 건너뛰는데,
+	 * 애셋 쪽에는 아직 패링 액션이 없어서 우클릭이 조용히 죽는다.
+	 * BindAction 은 액션이 null 이어도 경고 없이 넘어가므로 원인을 찾기가 어렵다.
+	 */
+	void BuildParryFallbackInput();
+
+	/**
 	 * MoveAction 에 키 하나를 매핑한다.
 	 * @param bSwizzleToForwardAxis 앞뒤(W/S) 키면 true. 값을 X축에서 Y축으로 옮긴다.
 	 * @param bNegate               반대 방향(S/A) 키면 true.
@@ -116,6 +125,10 @@ protected:
 	TObjectPtr<UInputAction> ParryAction;
 
 private:
+	// 패링만 담은 보조 매핑 컨텍스트. 지정된 컨텍스트는 애셋이라 런타임에 건드리지 않는다.
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> ParryFallbackContext;
+
 	// 첫 이동 입력만 로그로 찍기 위한 플래그. 매 프레임 찍으면 로그를 못 쓰게 된다.
 	bool bLoggedFirstMoveInput = false;
 };
