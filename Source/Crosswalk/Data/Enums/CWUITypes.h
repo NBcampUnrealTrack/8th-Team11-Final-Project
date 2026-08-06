@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "CWUITypes.generated.h"
 
+#pragma region Page
+
 // Screen Layer에 배타적으로 표시할 페이지
 UENUM(BlueprintType)
 enum class ECWUIPage : uint8
@@ -30,3 +32,21 @@ enum class ECWUIPage : uint8
     // 게임 설정 화면
     Settings
 };
+
+#pragma endregion
+
+#pragma region Input
+
+// 로컬 플레이어에게 적용할 UI 입력 방식
+UENUM(BlueprintType)
+enum class ECWUIInputMode : uint8
+{
+    // 게임플레이 입력만 사용
+    GameOnly,
+    // UI 입력만 사용
+    UIOnly,
+    // 게임플레이와 UI 입력을 함께 사용
+    GameAndUI
+};
+
+#pragma endregion

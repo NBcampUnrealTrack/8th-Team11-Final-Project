@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Blueprint/UserWidget.h"
 #include "Data/Enums/CWUITypes.h"
 #include "UI/Core/CWUIRootWidget.h"
 #include "UI/Core/CWUIScreenWidget.h"
@@ -40,6 +41,14 @@ protected:
     // 최초 진입 시 표시할 페이지
     UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
     ECWUIPage InitialPage = ECWUIPage::MainMenu;
+
+    // Page를 열지 않는 화면에서 사용할 초기 입력 모드
+    UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
+    ECWUIInputMode InitialInputMode = ECWUIInputMode::GameOnly;
+
+    // 현재 World에서 시작할 HUD 클래스 목록
+    UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
+    TArray<TSubclassOf<UUserWidget>> InitialHUDClasses;
 
 #pragma endregion
 };

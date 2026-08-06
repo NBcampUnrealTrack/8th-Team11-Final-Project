@@ -153,7 +153,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 
     // 화면 진입 처리 후 페이지 입력 모드 적용
     NewScreen->OnScreenOpened();
-    ApplyInputMode(TargetPage);
+    ApplyInputModeForPage(TargetPage);
 
     // 화면 전환과 입력 차단 종료
     EndTransition();
@@ -234,9 +234,19 @@ bool UCWUISubsystem::EnsureUIRoot()
         return true;
     }
 
-    // 이전 World의 Root와 Screen 참조를 함께 폐기
+    // 이전 화면의 페이지 요청 연결을 해제
+    if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+    {
+        ScreenWidget->OnRequestOpenPage.RemoveDynamic(
+            this,
+            &UCWUISubsystem::HandleRequestOpenPage
+        );
+    }
+
+    // 이전 World의 UI 상태를 함께 초기화
     UIRoot.Reset();
     CurrentScreen.Reset();
+    CurrentPage = ECWUIPage::None;
 
     // UI Root를 소유할 LocalPlayer 확인
     ULocalPlayer* LocalPlayer = GetLocalPlayer();
@@ -342,7 +352,7 @@ void UCWUISubsystem::EndTransition()
 
 #pragma region Input
 
-void UCWUISubsystem::ApplyInputMode(ECWUIPage Page)
+void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 {
     // 입력 모드를 적용할 LocalPlayer 확인
     ULocalPlayer* LocalPlayer = GetLocalPlayer();
@@ -352,7 +362,7 @@ void UCWUISubsystem::ApplyInputMode(ECWUIPage Page)
         return;
     }
 
-    // 마우스와 입력 모드를 제어할 PlayerController 확인
+    // 입력과 마우스 커서를 제어할 PlayerController 확인
     APlayerController* PlayerController =
         LocalPlayer->GetPlayerController(GetWorld());
 
@@ -361,16 +371,23 @@ void UCWUISubsystem::ApplyInputMode(ECWUIPage Page)
         return;
     }
 
-    // 페이지 종류에 따라 입력 모드 선택
-    switch (Page)
+    // 요청받은 정책에 따라 입력 방식 변경
+    switch (InInputMode)
     {
-        // 메뉴 계열 페이지는 같은 UI 전용 입력 모드 사용
-    case ECWUIPage::MainMenu:
-    case ECWUIPage::Settings:
+    case ECWUIInputMode::GameOnly:
+    {
+        FInputModeGameOnly InputMode;
+
+        PlayerController->SetInputMode(InputMode);
+        PlayerController->SetShowMouseCursor(false);
+        break;
+    }
+
+    case ECWUIInputMode::UIOnly:
     {
         FInputModeUIOnly InputMode;
 
-        // 현재 화면의 캐시된 Slate Widget으로 키보드 포커스 설정
+        // 현재 화면이 있으면 키보드 포커스 대상으로 지정
         if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
         {
             const TSharedPtr<SWidget> CachedWidget =
@@ -382,15 +399,106 @@ void UCWUISubsystem::ApplyInputMode(ECWUIPage Page)
             }
         }
 
-        // 게임 입력을 막고 UI 입력과 마우스 커서 활성화
         PlayerController->SetInputMode(InputMode);
         PlayerController->SetShowMouseCursor(true);
         break;
     }
 
-    // 아직 입력 정책이 정해지지 않은 페이지는 변경하지 않음
+    case ECWUIInputMode::GameAndUI:
+    {
+        FInputModeGameAndUI InputMode;
+
+        // 현재 화면이 있으면 UI 포커스 대상으로 지정
+        if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+        {
+            const TSharedPtr<SWidget> CachedWidget =
+                ScreenWidget->GetCachedWidget();
+
+            if (CachedWidget.IsValid())
+            {
+                InputMode.SetWidgetToFocus(CachedWidget);
+            }
+        }
+
+        PlayerController->SetInputMode(InputMode);
+        PlayerController->SetShowMouseCursor(true);
+        break;
+    }
+
     default:
         break;
+    }
+}
+
+void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)
+{
+    // 페이지 종류에 따라 입력 모드 선택
+    switch (Page)
+    {
+    case ECWUIPage::Title:
+    case ECWUIPage::MainMenu:
+    case ECWUIPage::CreateRoom:
+    case ECWUIPage::JoinRoom:
+    case ECWUIPage::Lobby:
+    case ECWUIPage::StageSelect:
+    case ECWUIPage::Result:
+    case ECWUIPage::Settings:
+        ApplyInputMode(ECWUIInputMode::UIOnly);
+        break;
+
+        // TODO: Loading 화면 구현 시 마우스 커서 숨김 여부를 확정한다.
+    case ECWUIPage::Loading:
+        ApplyInputMode(ECWUIInputMode::UIOnly);
+        break;
+
+    case ECWUIPage::None:
+    default:
+        break;
+    }
+}
+
+#pragma endregion
+
+#pragma region HUD
+
+bool UCWUISubsystem::AddHUDWidget(UUserWidget* InWidget)
+{
+    if (!IsValid(InWidget) || !EnsureUIRoot())
+    {
+        return false;
+    }
+
+    // 실제 HUD 부착은 Root에 위임
+    if (UCWUIRootWidget* RootWidget = UIRoot.Get())
+    {
+        return RootWidget->AddHUDWidget(InWidget);
+    }
+
+    return false;
+}
+
+bool UCWUISubsystem::RemoveHUDWidget(UUserWidget* InWidget)
+{
+    if (!IsValid(InWidget))
+    {
+        return false;
+    }
+
+    // 실제 HUD 제거는 Root에 위임
+    if (UCWUIRootWidget* RootWidget = UIRoot.Get())
+    {
+        return RootWidget->RemoveHUDWidget(InWidget);
+    }
+
+    return false;
+}
+
+void UCWUISubsystem::ClearHUDWidgets()
+{
+    // 현재 Root의 HUD Widget을 모두 정리
+    if (UCWUIRootWidget* RootWidget = UIRoot.Get())
+    {
+        RootWidget->ClearHUDWidgets();
     }
 }
 
