@@ -60,6 +60,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Work")
 	bool ConsumeDirectionInput(const FVector2D& MoveInput);
 
+	/**
+	 * 작업 취소 키. 미니게임을 빠져나와 다시 움직일 수 있게 한다.
+	 *
+	 * 서버 확정을 기다리면 그 사이 이동이 막혀 차를 못 피한다.
+	 * 그래서 이동 잠금만 로컬에서 즉시 풀고, 존 상태 정리는 서버에 맡긴다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Work")
+	void CancelWork();
+
 	/** 차량에 치여 다운되면 true, 일어나면 false. 다운 중에는 작업이 진행되지 않는다. */
 	UFUNCTION(BlueprintCallable, Category = "Work")
 	void SetWorkBlocked(bool bNewBlocked);
@@ -77,6 +86,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsWorkBlocked() const { return bWorkBlocked; }
 
+	/**
+	 * 이 컴포넌트가 이 기계에서 조종 중인 플레이어의 것인가.
+	 * 로컬로 시뮬레이션하는 존이 "내가 돌려야 할 작업인지" 판단하는 데 쓴다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsLocalWorker() const;
+
+	/**
+	 * 로컬에서 계산한 진행도를 서버에 올린다. 테두리 미니게임처럼
+	 * 진행 자체는 본인 기계에서 돌고 결과만 공유하면 되는 존이 쓴다.
+	 */
+	void ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
+
 private:
 	/** 작업 키를 눌렀는지 서버에 알린다. 진행도는 서버만 올릴 수 있다. */
 	UFUNCTION(Server, Reliable)
@@ -92,6 +114,17 @@ private:
 	/** 미니게임 방향 전환 요청. 어느 존인지 같이 보내야 서버가 대상을 특정할 수 있다. */
 	UFUNCTION(Server, Reliable)
 	void Server_SubmitDirectionInput(ACWBaseWorkZone* Zone, FVector2D MoveInput);
+
+	/**
+	 * 로컬에서 계산한 진행도 보고.
+	 * 중간 값은 몇 개 유실돼도 다음 것이 덮으므로 Unreliable 로 둔다.
+	 */
+	UFUNCTION(Server, Unreliable)
+	void Server_ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
+
+	/** 완주 보고. 이건 놓치면 작업이 영영 안 끝나므로 Reliable 이어야 한다. */
+	UFUNCTION(Server, Reliable)
+	void Server_ReportWorkCompleted(ACWBaseWorkZone* Zone);
 
 	/**
 	 * 지금 작업할 수 있는 존과 작업 지점을 찾는다.
@@ -143,6 +176,10 @@ private:
 
 	// 작업 지점을 마지막으로 올려보낸 시각. 소유 클라이언트에서만 쓴다.
 	float LastWorkLocationSendTime = -1000.f;
+
+	// 취소를 눌렀는가. 서버 응답을 기다리지 않고 이동 잠금을 즉시 풀기 위한 로컬 플래그다.
+	// 리플리케이트하지 않는다. 작업을 다시 시작할 때 풀린다.
+	bool bCancelRequested = false;
 
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Work")
