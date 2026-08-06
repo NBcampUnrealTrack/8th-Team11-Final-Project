@@ -17,6 +17,7 @@
 #include "Painting/CWWorkerComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
+#include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 ACWPlayerCharacter::ACWPlayerCharacter()
@@ -51,6 +52,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 
 	WorkerComponent = CreateDefaultSubobject<UCWWorkerComponent>(TEXT("WorkerComponent"));
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
+	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -98,6 +100,9 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::StartWork);
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Completed, this, &ACWPlayerCharacter::StopWork);
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Canceled, this, &ACWPlayerCharacter::StopWork);
+
+	// 패링은 누르는 순간 한 번만 판정한다. 연타 제한은 패링 컴포넌트의 쿨타임이 맡는다.
+	EnhancedInput->BindAction(ParryAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::Parry);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
@@ -119,6 +124,9 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	WorkAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Work"));
 	WorkAction->ValueType = EInputActionValueType::Boolean;
 
+	ParryAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Parry"));
+	ParryAction->ValueType = EInputActionValueType::Boolean;
+
 	UInputMappingContext* Context = NewObject<UInputMappingContext>(this, TEXT("BuiltIn_MappingContext"));
 
 	// Axis2D 에서 X = 좌우, Y = 앞뒤.
@@ -133,6 +141,10 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	// 기획서 3.1 에 작업 키가 좌클릭 / Space 두 가지로 적혀 있어 둘 다 넣는다.
 	Context->MapKey(WorkAction, EKeys::SpaceBar);
 	Context->MapKey(WorkAction, EKeys::LeftMouseButton);
+
+	// 좌클릭과 Space 가 작업 키라서 패링은 우클릭에 뒀다.
+	// 기획서에 패링 키가 따로 정해지면 이 줄만 바꾸면 된다.
+	Context->MapKey(ParryAction, EKeys::RightMouseButton);
 
 	DefaultMappingContext = Context;
 }
@@ -252,4 +264,28 @@ void ACWPlayerCharacter::StartWork()
 void ACWPlayerCharacter::StopWork()
 {
 	WorkerComponent->StopWork();
+}
+
+void ACWPlayerCharacter::Parry()
+{
+	ParryComponent->RequestParry(ResolveCursorWorldLocation());
+}
+
+FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
+{
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (PlayerController == nullptr)
+	{
+		return GetActorLocation();
+	}
+
+	// 작업 지점을 잡을 때와 같은 방식이다. 커서 아래 지형을 찍어 방향의 기준으로 쓴다.
+	FHitResult Hit;
+	if (PlayerController->GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit) && Hit.bBlockingHit)
+	{
+		return Hit.ImpactPoint;
+	}
+
+	return GetActorLocation();
 }
