@@ -8,7 +8,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
-#include "UI/Screens/CWBorderSketchWidget.h"
+#include "Painting/Screens/CWBorderSketchWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/CWWorkerComponent.h"
 
