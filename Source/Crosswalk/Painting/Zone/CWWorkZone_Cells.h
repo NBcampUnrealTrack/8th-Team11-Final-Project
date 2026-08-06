@@ -59,10 +59,21 @@ public:
 	 * 외부에서 칸을 추가한다. 차량이 마르지 않은 페인트를 밟고 지나갈 때 쓴다.
 	 * (3단계+ 정리 존에 이걸 호출하면 정리할 대상이 생긴다)
 	 *
+	 * @param bSpillOnly true 면 Area 바깥 고리에만 찍는다. 채우기 모드 존에 찍을 때 반드시 필요하다.
+	 *                   안 그러면 차가 지나갈 때마다 도색 진행도가 올라간다.
+	 *
 	 * 서버에서만 유효하다. 클라이언트에서 부르면 조용히 무시된다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Work")
-	void AddCellsAt(const FVector& WorldLocation, float Radius);
+	void AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly = false);
+
+	/** 칸을 채우는 존인가. (3단계 도색) 지우는 존이면 false. */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsFillMode() const { return WorkMode == ECWCellWorkMode::FillCells; }
+
+	/** Area 바깥으로 칠할 수 있는 여유 폭(cm). 0 이면 바깥 고리가 없다. */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	float GetOverspillMargin() const { return OverspillMargin; }
 
 	/** 이 도구가 삐져나간 페인트를 지우는 도구인가. (검은색 롤러) */
 	UFUNCTION(BlueprintPure, Category = "Work")
@@ -217,10 +228,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle")
 	bool bStainsVehicles = false;
 
-	// 자국을 남길 존. 3단계+ 정리 존을 지정한다.
+	// 자국을 남길 존. 자기 자신을 지정해도 된다.
 	//
-	// 자기 자신을 지정하면 안 된다. 차가 지나갈 때마다 도색 진행도가 공짜로 올라간다.
-	// (횡단보도는 도로 위에 있어서 차량이 상시 지나간다)
+	// 대상이 채우기 모드(도색 존)면 자국은 Area 바깥 고리에만 찍힌다.
+	// 점수 영역까지 채우면 차가 지나갈 때마다 도색이 저절로 완성되기 때문이다.
+	// 그래서 자기 자신을 가리키면 "횡단보도 가장자리에 페인트가 묻는" 그림이 되고,
+	// 넓은 정리 존(지우기 모드)을 가리키면 "도로에 자국이 길게 남는" 그림이 된다.
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Work|Vehicle")
 	TObjectPtr<ACWWorkZone_Cells> VehicleStainZone;
 

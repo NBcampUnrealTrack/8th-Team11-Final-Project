@@ -12,6 +12,7 @@ void ACWGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ACWGameState, CompletedObjectiveCount);
 	DOREPLIFETIME(ACWGameState, TotalObjectiveCount);
 	DOREPLIFETIME(ACWGameState, StageState);
+	DOREPLIFETIME(ACWGameState, Objectives);
 }
 
 void ACWGameState::SetObjectiveCounts(int32 InCompletedCount, int32 InTotalCount)
@@ -45,6 +46,20 @@ void ACWGameState::SetStageState(ECWStageState NewStageState)
 	OnStageStateChanged.Broadcast(this, StageState);
 }
 
+bool ACWGameState::SetObjectives(const TArray<FCWStageObjective>& NewObjectives)
+{
+	if (!HasAuthority() || Objectives == NewObjectives)
+	{
+		return false;
+	}
+
+	Objectives = NewObjectives;
+
+	OnStageObjectivesChanged.Broadcast(this);
+
+	return true;
+}
+
 float ACWGameState::GetStageProgress() const
 {
 	if (TotalObjectiveCount <= 0)
@@ -63,4 +78,9 @@ void ACWGameState::OnRep_ObjectiveCounts()
 void ACWGameState::OnRep_StageState()
 {
 	OnStageStateChanged.Broadcast(this, StageState);
+}
+
+void ACWGameState::OnRep_Objectives()
+{
+	OnStageObjectivesChanged.Broadcast(this);
 }

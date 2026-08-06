@@ -62,17 +62,18 @@ void ACWWorkZone_Cells::BeginPlay()
 		return;
 	}
 
-	if (VehicleStainZone == this)
-	{
-		// 횡단보도는 도로 위에 있어서 차량이 상시 지나간다. 자기 자신에 자국을 남기면
-		// 아무도 칠하지 않아도 도색이 끝나버린다.
-		UE_LOG(LogTemp, Warning, TEXT("[%s] VehicleStainZone 이 자기 자신입니다. 자국 남기기를 끕니다."), *GetName());
-		return;
-	}
-
 	if (VehicleStainZone == nullptr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[%s] bStainsVehicles 가 켜져 있지만 VehicleStainZone 이 비어 있습니다."), *GetName());
+		return;
+	}
+
+	// 채우기 모드 존에는 바깥 고리에만 찍는다. 고리가 없으면 자국이 남을 자리가 없다.
+	if (VehicleStainZone->IsFillMode() && VehicleStainZone->GetOverspillMargin() <= 0.f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 자국 대상 '%s' 는 채우기 모드인데 OverspillMargin 이 0 입니다. 자국이 남을 자리가 없습니다."),
+			*GetName(), *VehicleStainZone->GetName());
 		return;
 	}
 
@@ -102,6 +103,11 @@ void ACWWorkZone_Cells::UpdateVehicleStains()
 	}
 
 	// 2. 묻은 차량이 지나는 자리에 자국을 남긴다. 존 밖으로 나가도 시간이 남아 있으면 계속 남는다.
+	//
+	// 대상이 채우기 모드면 바깥 고리에만 찍는다. 점수 영역까지 채우면 차가 지나갈 때마다
+	// 도색이 저절로 완성된다. 지우기 모드(정리 존)는 채워진 칸이 곧 치울 대상이라 그대로 찍는다.
+	const bool bSpillOnly = VehicleStainZone->IsFillMode();
+
 	for (TMap<TWeakObjectPtr<AActor>, float>::TIterator It(StainedVehicles); It; ++It)
 	{
 		const AActor* Vehicle = It.Key().Get();
@@ -111,7 +117,7 @@ void ACWWorkZone_Cells::UpdateVehicleStains()
 			continue;
 		}
 
-		VehicleStainZone->AddCellsAt(Vehicle->GetActorLocation(), VehicleStainRadius);
+		VehicleStainZone->AddCellsAt(Vehicle->GetActorLocation(), VehicleStainRadius, bSpillOnly);
 
 		It.Value() -= VehicleStainInterval;
 		if (It.Value() <= 0.f)
@@ -210,7 +216,7 @@ void ACWWorkZone_Cells::ReceiveBrushStroke(const FVector& WorldLocation, float R
 	}
 }
 
-void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius)
+void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly)
 {
 	// 차량이 페인트를 밟는 판정은 서버가 한다. 클라이언트가 멋대로 칸을 늘리면 그림이 갈라진다.
 	if (!HasAuthority())
@@ -218,9 +224,9 @@ void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius)
 		return;
 	}
 
-	if (ApplyBrush(WorldLocation, Radius, true, false))
+	if (ApplyBrush(WorldLocation, Radius, true, bSpillOnly))
 	{
-		Multicast_ApplyBrush(WorldLocation, Radius, true, false);
+		Multicast_ApplyBrush(WorldLocation, Radius, true, bSpillOnly);
 	}
 }
 

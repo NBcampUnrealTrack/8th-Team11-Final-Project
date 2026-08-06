@@ -49,7 +49,7 @@ void ACWGameMode::CollectWorkZones()
 		Zone->OnWorkProgress.AddDynamic(this, &ACWGameMode::HandleZoneProgress);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[Stage] 작업 목표 %d개를 찾았습니다."), WorkZones.Num());
+	UE_LOG(LogTemp, Log, TEXT("[Stage] 작업 존 %d개를 찾았습니다."), WorkZones.Num());
 
 	RefreshStageProgress();
 }
@@ -65,6 +65,10 @@ void ACWGameMode::RefreshStageProgress()
 	int32 CompletedCount = 0;
 	int32 TotalCount = 0;
 
+	// 이름이 같은 존은 체크리스트에서 한 줄로 묶는다. (기획서 3.6)
+	// 횡단보도 줄무늬처럼 같은 작업을 여러 존으로 쪼개 놓으면 존 개수만큼 줄이 늘어난다.
+	TArray<FCWStageObjective> Objectives;
+
 	for (const TObjectPtr<ACWBaseWorkZone>& Zone : WorkZones)
 	{
 		if (Zone == nullptr)
@@ -74,13 +78,55 @@ void ACWGameMode::RefreshStageProgress()
 
 		++TotalCount;
 
-		if (Zone->IsCompleted())
+		const bool bZoneCompleted = Zone->IsCompleted();
+		if (bZoneCompleted)
 		{
 			++CompletedCount;
 		}
+
+		const FText ObjectiveName = Zone->GetObjectiveName();
+
+		FCWStageObjective* Objective = Objectives.FindByPredicate(
+			[&ObjectiveName](const FCWStageObjective& Candidate)
+			{
+				return Candidate.DisplayName.IdenticalTo(ObjectiveName);
+			});
+
+		if (Objective == nullptr)
+		{
+			Objective = &Objectives.AddDefaulted_GetRef();
+			Objective->DisplayName = ObjectiveName;
+			Objective->WorkOrder = Zone->GetWorkOrder();
+		}
+
+		// 같은 묶음에서 가장 이른 순서를 대표값으로 쓴다. 체크리스트가 작업 순서대로 선다.
+		Objective->WorkOrder = FMath::Min(Objective->WorkOrder, Zone->GetWorkOrder());
+		Objective->TotalCount += 1;
+		Objective->CompletedCount += bZoneCompleted ? 1 : 0;
 	}
 
+	Objectives.Sort(
+		[](const FCWStageObjective& A, const FCWStageObjective& B)
+		{
+			return A.WorkOrder < B.WorkOrder;
+		});
+
 	CrosswalkGameState->SetObjectiveCounts(CompletedCount, TotalCount);
+
+	// 목표 구성이나 달성 수가 바뀔 때마다 현황을 찍는다.
+	// 상태 변경 때만 찍으면 시작 시점(이미 InProgress)에는 아무것도 나오지 않아
+	// 존 설정이 맞는지 확인할 방법이 없다.
+	if (CrosswalkGameState->SetObjectives(Objectives))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Stage] 목표 %d줄 (존 %d/%d)"), Objectives.Num(), CompletedCount, TotalCount);
+
+		for (const FCWStageObjective& Objective : Objectives)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Stage]   [%s] %s (%d/%d)"),
+				Objective.IsCompleted() ? TEXT("O") : TEXT(" "),
+				*Objective.DisplayName.ToString(), Objective.CompletedCount, Objective.TotalCount);
+		}
+	}
 
 	// 존이 하나도 없는 맵에서 시작하자마자 클리어가 뜨지 않게 막는다.
 	// 트래픽 테스트 맵처럼 작업 존을 두지 않는 레벨이 실제로 있다.
@@ -97,7 +143,7 @@ void ACWGameMode::RefreshStageProgress()
 	{
 		CrosswalkGameState->SetStageState(NewState);
 
-		UE_LOG(LogTemp, Log, TEXT("[Stage] 상태 변경: %s (%d/%d)"),
+		UE_LOG(LogTemp, Log, TEXT("[Stage] 상태 변경: %s (존 %d/%d)"),
 			bAllCompleted ? TEXT("클리어") : TEXT("진행 중"), CompletedCount, TotalCount);
 	}
 }
