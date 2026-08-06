@@ -5,7 +5,16 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/Structs/CWParrySyncData.h"
 #include "CWParryComponent.generated.h"
+
+class ABaseVehicle;
+
+/**
+ * 서버가 확정한 패링 결과를 모든 머신에서 발행.
+ * 이펙트 / 사운드 / 카메라 흔들림 같은 연출은 수신 측이 붙인다.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnParrySucceededSignature, const FCWParrySyncData&, ParrySyncData);
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class CROSSWALK_API UCWParryComponent : public UActorComponent
@@ -24,9 +33,16 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation);
 
+	// 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_ParrySucceeded(const FCWParrySyncData& ParrySyncData);
+
 private:
 	// 서버에서 쿨타임을 확인하고 주변 위협 차량에 패링 판정을 시도
 	void HandleServerParryRequest(const FVector& CursorWorldLocation);
+
+	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
+	FCWParrySyncData BuildParrySyncData(const AActor& Parrier, ABaseVehicle& ParriedVehicle) const;
 
 	// 로컬 입력 남발을 막기 위한 클라이언트 측 쿨타임 검사
 	bool CanUseLocalCooldown() const;
@@ -47,4 +63,9 @@ private:
 	float LastLocalParryRequestTime = -999.f;
 
 	float LastServerParryRequestTime = -999.f;
+
+	// 델리게이트는 최하단에 배치
+public:
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Parry")
+	FOnParrySucceededSignature OnParrySucceeded;
 };

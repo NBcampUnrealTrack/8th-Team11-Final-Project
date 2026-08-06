@@ -52,6 +52,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetVehicleLength() const;
 
+	/** 피격·패링 연출 분기에 쓰이는 차종 ID. 수신 측이 차종별 분기에 쓴다. */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	FName GetVehicleType() const { return VehicleType; }
+
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	ATrafficLane* GetCurrentLane() const { return CurrentLane; }
 
