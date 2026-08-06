@@ -14,6 +14,7 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
+#include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Painting/CWWorkerComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
@@ -53,6 +54,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	WorkerComponent = CreateDefaultSubobject<UCWWorkerComponent>(TEXT("WorkerComponent"));
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
+	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -74,6 +76,73 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 		GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 		GetMesh()->AnimClass = PlaceholderAnim.Class;
 	}
+}
+
+void ACWPlayerCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
+	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
+}
+
+void ACWPlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	// 기획서 6.2 - 다운 2초는 착지한 뒤부터 흐른다. 컴포넌트가 서버 권한을 다시 확인한다.
+	HitReactionComponent->NotifyLanded();
+}
+
+void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitContext& HitContext)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 이미 쓰러져 있으면 컴포넌트가 알아서 무시한다. 넉백을 두 번 먹이지 않도록 여기서도 막는다.
+	if (HitReactionComponent->IsHitLocked())
+	{
+		return;
+	}
+
+	HitReactionComponent->HandleVehicleHit(HitContext);
+
+	// 차가 밀고 나가던 방향으로 날린다. 세기는 차량 속도에 비례시킨다.
+	const FVector LaunchDirection = HitContext.HitDirection.GetSafeNormal2D();
+	const FVector LaunchVelocity = LaunchDirection * HitContext.VehicleSpeed * KnockbackSpeedScale
+		+ FVector::UpVector * KnockbackUpSpeed;
+
+	Multicast_ApplyHitKnockback(LaunchVelocity);
+}
+
+void ACWPlayerCharacter::Multicast_ApplyHitKnockback_Implementation(FVector_NetQuantize LaunchVelocity)
+{
+	// 두 인자를 모두 true 로 줘야 기존 속도를 덮어쓰고 확실히 날아간다.
+	LaunchCharacter(LaunchVelocity, true, true);
+}
+
+void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*HitReactionComp*/, bool bHitLocked)
+{
+	// 작업 중단 상태는 복제되므로 서버에서만 바꾼다. 도구 드롭도 서버 전용이다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	WorkerComponent->SetWorkBlocked(bHitLocked);
+
+	// 기획서 6.2 - 치이면 들고 있던 도구를 떨어뜨린다. 일어설 때 다시 주워야 한다.
+	if (bHitLocked)
+	{
+		ToolHolderComponent->DropHeldTool();
+	}
+}
+
+bool ACWPlayerCharacter::IsHitLocked() const
+{
+	return HitReactionComponent->IsHitLocked();
 }
 
 void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -266,6 +335,12 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 		return;
 	}
 
+	// 기획서 6.2 - 쓰러져 있는 동안은 아무 행동도 할 수 없다.
+	if (IsHitLocked())
+	{
+		return;
+	}
+
 	// 테두리 스케치 미니게임 중이면 WASD 는 선의 방향 전환에 쓰이고 캐릭터는 제자리에 선다.
 	// 미니게임이 없는 존이나 평소에는 false 가 돌아와 그냥 이동한다.
 	if (WorkerComponent->ConsumeDirectionInput(MoveInput))
@@ -282,6 +357,11 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 
 void ACWPlayerCharacter::Interact()
 {
+	if (IsHitLocked())
+	{
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[%s] Interact 입력 수신. 대상 도구=%s"),
 		*GetName(),
 		ToolHolderComponent->GetFocusedTool() != nullptr
@@ -293,6 +373,11 @@ void ACWPlayerCharacter::Interact()
 
 void ACWPlayerCharacter::StartWork()
 {
+	if (IsHitLocked())
+	{
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[%s] Work 입력 수신"), *GetName());
 
 	WorkerComponent->StartWork();
@@ -305,6 +390,11 @@ void ACWPlayerCharacter::StopWork()
 
 void ACWPlayerCharacter::Parry()
 {
+	if (IsHitLocked())
+	{
+		return;
+	}
+
 	const FVector CursorWorldLocation = ResolveCursorWorldLocation();
 
 	// 이 줄이 안 찍히면 입력이 여기까지 오지 않은 것이고,
