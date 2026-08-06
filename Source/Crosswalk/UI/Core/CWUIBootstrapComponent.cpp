@@ -1,8 +1,10 @@
 ﻿// CWUIBootstrapComponent.cpp
 
 #include "CWUIBootstrapComponent.h"
+#include "Blueprint/UserWidget.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "UI/Core/CWUIRootWidget.h" 
 #include "UI/Core/CWUISubsystem.h"
 
 #pragma region ActorComponentLifecycle

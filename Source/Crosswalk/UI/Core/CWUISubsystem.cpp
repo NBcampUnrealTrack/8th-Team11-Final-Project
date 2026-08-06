@@ -161,8 +161,8 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
     UE_LOG(
         LogTemp,
         Log,
-        TEXT("UISubsystem: page opened. Page=%d"),
-        static_cast<int32>(TargetPage)
+        TEXT("UISubsystem: page opened. Page=%s"),
+        *UEnum::GetValueAsString(TargetPage)
     );
 
     return true;
@@ -234,20 +234,6 @@ bool UCWUISubsystem::EnsureUIRoot()
         return true;
     }
 
-    // 이전 화면의 페이지 요청 연결을 해제
-    if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
-    {
-        ScreenWidget->OnRequestOpenPage.RemoveDynamic(
-            this,
-            &UCWUISubsystem::HandleRequestOpenPage
-        );
-    }
-
-    // 이전 World의 UI 상태를 함께 초기화
-    UIRoot.Reset();
-    CurrentScreen.Reset();
-    CurrentPage = ECWUIPage::None;
-
     // UI Root를 소유할 LocalPlayer 확인
     ULocalPlayer* LocalPlayer = GetLocalPlayer();
 
@@ -306,6 +292,20 @@ bool UCWUISubsystem::EnsureUIRoot()
 
         return false;
     }
+
+    // 생성이 확정된 뒤에 이전 화면의 페이지 요청 연결을 해제
+    if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+    {
+        ScreenWidget->OnRequestOpenPage.RemoveDynamic(
+            this,
+            &UCWUISubsystem::HandleRequestOpenPage
+        );
+    }
+
+    // 이전 World의 UI 상태를 폐기
+    UIRoot.Reset();
+    CurrentScreen.Reset();
+    CurrentPage = ECWUIPage::None;
 
     // Root의 Viewport ZOrder를 명시해 화면에 추가
     NewRoot->AddToPlayerScreen(0);

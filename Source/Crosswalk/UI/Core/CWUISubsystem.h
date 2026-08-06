@@ -5,9 +5,11 @@
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "Data/Enums/CWUITypes.h"
-#include "UI/Core/CWUIRootWidget.h"
-#include "UI/Core/CWUIScreenWidget.h"
 #include "CWUISubsystem.generated.h"
+
+class UCWUIRootWidget;
+class UCWUIScreenWidget;
+class UUserWidget;
 
 UCLASS()
 class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
@@ -32,16 +34,16 @@ public:
     // 요청한 페이지로 화면을 전환
     UFUNCTION(BlueprintCallable, Category = "CW|UI")
     bool OpenPage(ECWUIPage TargetPage);
-
-    // 현재 페이지를 닫고 참조를 정리
-    UFUNCTION(BlueprintCallable, Category = "CW|UI")
-    void CloseCurrentPage();
-
+    
     // 현재 표시 중인 페이지를 반환
     UFUNCTION(BlueprintPure, Category = "CW|UI")
     ECWUIPage GetCurrentPage() const;
 
 private:
+    // 현재 페이지를 닫고 참조를 정리
+    UFUNCTION(BlueprintCallable, Category = "CW|UI")
+    void CloseCurrentPage();
+    
     // 화면의 페이지 전환 요청을 처리
     UFUNCTION()
     void HandleRequestOpenPage(ECWUIPage TargetPage);
