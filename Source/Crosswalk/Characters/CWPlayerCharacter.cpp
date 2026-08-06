@@ -17,6 +17,7 @@
 #include "Painting/CWWorkerComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
+#include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 ACWPlayerCharacter::ACWPlayerCharacter()
@@ -51,6 +52,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 
 	WorkerComponent = CreateDefaultSubobject<UCWWorkerComponent>(TEXT("WorkerComponent"));
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
+	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -90,6 +92,15 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 		return;
 	}
 
+	// BindAction 은 액션이 비어 있어도 경고 없이 넘어가고, 그 입력만 조용히 죽는다.
+	// 원인을 찾기 어려운 실패라 바인딩 전에 먼저 찍는다.
+	if (MoveAction == nullptr || InteractAction == nullptr || WorkAction == nullptr || ParryAction == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 비어 있는 InputAction 이 있습니다. Move=%d Interact=%d Work=%d Parry=%d (0 인 입력은 동작하지 않습니다)"),
+			*GetName(), MoveAction != nullptr, InteractAction != nullptr, WorkAction != nullptr, ParryAction != nullptr);
+	}
+
 	EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ACWPlayerCharacter::Move);
 	EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::Interact);
 
@@ -98,15 +109,21 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::StartWork);
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Completed, this, &ACWPlayerCharacter::StopWork);
 	EnhancedInput->BindAction(WorkAction, ETriggerEvent::Canceled, this, &ACWPlayerCharacter::StopWork);
+
+	// 패링은 누르는 순간 한 번만 판정한다. 연타 제한은 패링 컴포넌트의 쿨타임이 맡는다.
+	EnhancedInput->BindAction(ParryAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::Parry);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
 {
 	// 애셋이 이미 지정돼 있으면 그쪽을 그대로 쓴다.
+	// 단 패링은 애셋에 아직 없으므로 아래에서 따로 채운다.
 	if (DefaultMappingContext != nullptr)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[%s] 지정된 매핑 컨텍스트 애셋 '%s' 를 사용합니다."),
 			*GetName(), *DefaultMappingContext.GetName());
+
+		BuildParryFallbackInput();
 		return;
 	}
 
@@ -118,6 +135,9 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 
 	WorkAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Work"));
 	WorkAction->ValueType = EInputActionValueType::Boolean;
+
+	ParryAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Parry"));
+	ParryAction->ValueType = EInputActionValueType::Boolean;
 
 	UInputMappingContext* Context = NewObject<UInputMappingContext>(this, TEXT("BuiltIn_MappingContext"));
 
@@ -134,7 +154,30 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	Context->MapKey(WorkAction, EKeys::SpaceBar);
 	Context->MapKey(WorkAction, EKeys::LeftMouseButton);
 
+	// 좌클릭과 Space 가 작업 키라서 패링은 우클릭에 뒀다.
+	// 기획서에 패링 키가 따로 정해지면 이 줄만 바꾸면 된다.
+	Context->MapKey(ParryAction, EKeys::RightMouseButton);
+
 	DefaultMappingContext = Context;
+}
+
+void ACWPlayerCharacter::BuildParryFallbackInput()
+{
+	if (ParryAction != nullptr)
+	{
+		return;
+	}
+
+	ParryAction = NewObject<UInputAction>(this, TEXT("Fallback_Parry"));
+	ParryAction->ValueType = EInputActionValueType::Boolean;
+
+	// 지정된 컨텍스트는 애셋이라 런타임에 매핑을 추가하면 안 된다. 패링만 담은 것을 따로 얹는다.
+	ParryFallbackContext = NewObject<UInputMappingContext>(this, TEXT("Fallback_ParryMappingContext"));
+	ParryFallbackContext->MapKey(ParryAction, EKeys::RightMouseButton);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[%s] 패링 InputAction 이 비어 있어 C++ 이 우클릭 매핑을 대신 만들었습니다. IA_Parry 애셋을 만들어 BP 에 지정하면 이 경로는 꺼집니다."),
+		*GetName());
 }
 
 void ACWPlayerCharacter::AddMoveKeyMapping(UInputMappingContext* Context, const FKey& Key, bool bSwizzleToForwardAxis, bool bNegate)
@@ -185,6 +228,12 @@ void ACWPlayerCharacter::ApplyMappingContext()
 	// 나중에 UI 전용 매핑 컨텍스트를 쓰게 되면, 그것까지 지워버리므로 이 줄을 걷어내야 한다.
 	InputSubsystem->ClearAllMappings();
 	InputSubsystem->AddMappingContext(DefaultMappingContext, 0);
+
+	// 패링 폴백은 지정된 컨텍스트를 건드리지 않고 위에 얹는다.
+	if (ParryFallbackContext != nullptr)
+	{
+		InputSubsystem->AddMappingContext(ParryFallbackContext, 1);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[%s] 매핑 컨텍스트 '%s' 등록 완료. 매핑 %d개"),
 		*GetName(), *DefaultMappingContext.GetName(), DefaultMappingContext->GetMappings().Num());
@@ -252,4 +301,35 @@ void ACWPlayerCharacter::StartWork()
 void ACWPlayerCharacter::StopWork()
 {
 	WorkerComponent->StopWork();
+}
+
+void ACWPlayerCharacter::Parry()
+{
+	const FVector CursorWorldLocation = ResolveCursorWorldLocation();
+
+	// 이 줄이 안 찍히면 입력이 여기까지 오지 않은 것이고,
+	// 커서가 캐릭터 위치와 같으면 커서 트레이스가 지형을 못 맞힌 것이다.
+	UE_LOG(LogTemp, Log, TEXT("[%s] 패링 입력 수신. 커서=%s 캐릭터=%s"),
+		*GetName(), *CursorWorldLocation.ToCompactString(), *GetActorLocation().ToCompactString());
+
+	ParryComponent->RequestParry(CursorWorldLocation);
+}
+
+FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
+{
+	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	if (PlayerController == nullptr)
+	{
+		return GetActorLocation();
+	}
+
+	// 작업 지점을 잡을 때와 같은 방식이다. 커서 아래 지형을 찍어 방향의 기준으로 쓴다.
+	FHitResult Hit;
+	if (PlayerController->GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(ECC_Visibility), false, Hit) && Hit.bBlockingHit)
+	{
+		return Hit.ImpactPoint;
+	}
+
+	return GetActorLocation();
 }

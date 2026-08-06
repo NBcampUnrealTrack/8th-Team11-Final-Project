@@ -37,8 +37,21 @@ void ABaseVehicle::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 주행은 서버만 계산한다. 패링당한 차량은 정지 상태이므로 진행하지 않는다.
-	if (!HasAuthority() || !CurrentLane || bParried)
+	// 주행은 서버만 계산한다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
+	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다.
+	if (bParried)
+	{
+		AddActorWorldOffset(GetActorForwardVector() * GetEffectiveSpeed() * DeltaSeconds);
+		return;
+	}
+
+	if (!CurrentLane)
 	{
 		return;
 	}
@@ -79,8 +92,9 @@ bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImp
 {
 	OutTimeToImpact = 0.f;
 
+	// 튕겨나가는 중인 차량도 예측 대상이다. 날아오는 차를 다시 패링할 수 있어야 한다.
 	const float EffectiveSpeed = GetEffectiveSpeed();
-	if (!Target || bParried || EffectiveSpeed <= KINDA_SMALL_NUMBER)
+	if (!Target || EffectiveSpeed <= KINDA_SMALL_NUMBER)
 	{
 		return false;
 	}
@@ -109,7 +123,36 @@ bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImp
 	return true;
 }
 
-bool ABaseVehicle::TryParry(AActor* Parrier)
+float ABaseVehicle::GetDistanceToPoint(const FVector& Point) const
+{
+	if (CollisionBox)
+	{
+		FVector ClosestPointOnBody = FVector::ZeroVector;
+		const float SurfaceDistance = CollisionBox->GetClosestPointOnCollision(Point, ClosestPointOnBody);
+
+		// 콜리전 바디를 못 찾으면 음수가 온다. 그때만 원점 거리로 대체한다.
+		if (SurfaceDistance >= 0.f)
+		{
+			return SurfaceDistance;
+		}
+	}
+
+	return FVector::Dist(GetActorLocation(), Point);
+}
+
+bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext)
+{
+	// 클라에서 통과시키면 그 클라에서만 차가 멈춘다. 판정은 서버만 한다.
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	// 튕겨나갈 방향은 플레이어가 찍은 커서 방향이다. (기획서 8.1)
+	return TryParry(ParryAttemptContext.Parrier, ParryAttemptContext.AttemptDirection);
+}
+
+bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 {
 	if (!CanBeParried() || !Parrier)
 	{
@@ -122,18 +165,28 @@ bool ABaseVehicle::TryParry(AActor* Parrier)
 		return false;
 	}
 
+	// 방향을 틀기 전에 판정해야 한다. 예측이 지금 진행 방향을 기준으로 하기 때문이다.
 	float TimeToImpact = 0.f;
 	if (!PredictTimeToImpact(Parrier, TimeToImpact) || TimeToImpact > ParryWindow)
 	{
 		return false;
 	}
 
+	// 기획서 8.1 - 정지가 아니라 커서 방향으로 튕겨나간다.
+	// 방향이 비어 있으면 온 길로 되돌려 보낸다.
+	const FVector LaunchForward = LaunchDirection.GetSafeNormal2D();
+	SetActorRotation((LaunchForward.IsNearlyZero() ? -GetActorForwardVector().GetSafeNormal2D() : LaunchForward).Rotation());
+
 	bParried = true;
 
-	// 패링에 성공한 대상은 정지 이후에도 겹칠 수 있으므로 피격 대상에서 제외한다.
+	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
+	CurrentLane = nullptr;
+
+	// 쳐낸 사람은 튕겨나가는 차와 아직 겹쳐 있으므로 피격 대상에서 제외한다.
 	HitActors.Add(Parrier);
 
-	// 정지한 차가 차선에 남아 있으면 뒤차가 전부 막히므로 잠시 뒤 치운다.
+	// 기획서 8.1 - 튕겨나간 뒤 2초간 이동하고 사라진다.
+	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 2초가 새로 시작된다.
 	if (ParriedDespawnDelay > 0.f)
 	{
 		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ABaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
@@ -234,7 +287,9 @@ void ABaseVehicle::UpdateTransformOnLane()
 void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (!HasAuthority() || bParried || !OtherActor || OtherActor == this)
+	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
+	// 기획서 8.2 가 노리는 그림이다. 쳐낸 사람만 HitActors 로 제외된다.
+	if (!HasAuthority() || !OtherActor || OtherActor == this)
 	{
 		return;
 	}

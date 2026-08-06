@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Data/Structs/CWParryAttemptContext.h"
 #include "TrafficSubsystem.generated.h"
 
 class ABaseVehicle;
@@ -42,13 +43,23 @@ public:
 
 	/**
 	 * 패링 입력 한 번을 처리한다. 성공 시 패링당한 차량을 반환.
-	 * 쿨타임(3초)과 입력 바인딩은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
+	 *
+	 * 대상 선별(반경·각도·임박도)까지만 여기서 하고, 최종 판정은 고른 차량의
+	 * ReceiveParryAttempt 가 내린다. 차종별 예외는 차량이 스스로 결정해야 하기 때문이다.
+	 * 쿨타임(1초)과 입력 바인딩은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	ABaseVehicle* TryParryNearestThreat(AActor* Parrier);
+	ABaseVehicle* TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext);
 
 	UFUNCTION(BlueprintPure, Category = "Traffic")
 	int32 GetActiveVehicleCount() const;
+
+private:
+	/**
+	 * 시도 정보 기준으로 이 차량이 패링 후보인지 본다.
+	 * 통과하면 OutTimeToImpact 에 충돌까지 남은 시간을 낸다.
+	 */
+	bool PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext, float& OutTimeToImpact) const;
 
 private:
 	TArray<TWeakObjectPtr<ABaseVehicle>> ActiveVehicles;

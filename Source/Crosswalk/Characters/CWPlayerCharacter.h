@@ -6,6 +6,7 @@
 #include "CWPlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UCWParryComponent;
 class UCWToolHolderComponent;
 class UCWWorkerComponent;
 class UInputAction;
@@ -19,6 +20,7 @@ struct FInputActionValue;
  * 작업/도구 로직은 컴포넌트가 들고 있고, 이 클래스는 입력을 그쪽으로 넘기는 역할만 한다.
  *   - UCWWorkerComponent     : 작업 키를 누르고 있는 동안 존 게이지를 올린다
  *   - UCWToolHolderComponent : E 로 도구를 집고 놓는다
+ *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -51,9 +53,27 @@ protected:
 	/** 작업 키를 뗀 순간. */
 	void StopWork();
 
+	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
+	void Parry();
+
 private:
+	/**
+	 * 커서 아래 월드 지점을 찾는다. 패링 방향의 기준점이 된다.
+	 * 트레이스가 빗나가면 캐릭터 위치를 그대로 낸다. 그러면 패링 컴포넌트가 정면으로 대체한다.
+	 */
+	FVector ResolveCursorWorldLocation() const;
+
 	/** 애셋이 지정되지 않았으면 IA/IMC 를 C++ 로 만들어 채운다. */
 	void BuildBuiltInInput();
+
+	/**
+	 * 패링 입력이 비어 있으면 C++ 로 채운다.
+	 *
+	 * BP 가 입력 애셋을 물고 있으면 BuildBuiltInInput 이 통째로 건너뛰는데,
+	 * 애셋 쪽에는 아직 패링 액션이 없어서 우클릭이 조용히 죽는다.
+	 * BindAction 은 액션이 null 이어도 경고 없이 넘어가므로 원인을 찾기가 어렵다.
+	 */
+	void BuildParryFallbackInput();
 
 	/**
 	 * MoveAction 에 키 하나를 매핑한다.
@@ -84,8 +104,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Tool")
 	TObjectPtr<UCWToolHolderComponent> ToolHolderComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parry")
+	TObjectPtr<UCWParryComponent> ParryComponent;
+
 protected:
-	// 아래 4개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
+	// 아래 5개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -98,7 +121,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> WorkAction;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ParryAction;
+
 private:
+	// 패링만 담은 보조 매핑 컨텍스트. 지정된 컨텍스트는 애셋이라 런타임에 건드리지 않는다.
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> ParryFallbackContext;
+
 	// 첫 이동 입력만 로그로 찍기 위한 플래그. 매 프레임 찍으면 로그를 못 쓰게 된다.
 	bool bLoggedFirstMoveInput = false;
 };
