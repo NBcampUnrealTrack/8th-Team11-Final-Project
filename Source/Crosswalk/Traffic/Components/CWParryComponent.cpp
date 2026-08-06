@@ -66,9 +66,9 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		return;
 	}
 
-	// 차량 정지와 2초 뒤 제거는 ABaseVehicle::TryParry가 이미 끝냈다.
+	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ABaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.
-	Multicast_ParrySucceeded(BuildParrySyncData(*OwnerActor, *ParriedVehicle));
+	Multicast_ParrySucceeded(BuildParrySyncData(ParryAttemptContext, *ParriedVehicle));
 }
 
 FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation, float ClientInputTime) const
@@ -96,7 +96,7 @@ void UCWParryComponent::Multicast_ParrySucceeded_Implementation(const FCWParrySy
 	OnParrySucceeded.Broadcast(ParrySyncData);
 }
 
-FCWParrySyncData UCWParryComponent::BuildParrySyncData(const AActor& Parrier, ABaseVehicle& ParriedVehicle) const
+FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ABaseVehicle& ParriedVehicle) const
 {
 	FCWParrySyncData ParrySyncData;
 	ParrySyncData.TargetVehicle = &ParriedVehicle;
@@ -106,13 +106,11 @@ FCWParrySyncData UCWParryComponent::BuildParrySyncData(const AActor& Parrier, AB
 	// 연출 기준점은 클라이언트가 보낸 커서가 아니라 서버가 확정한 차량 위치다.
 	ParrySyncData.ParryLocation = ParriedVehicle.GetActorLocation();
 
-	// 차량이 밀려나는 방향. 두 위치가 겹칠 만큼 가까우면 차량 진행 반대 방향으로 대체한다.
-	const FVector ParrierToVehicle = ParrySyncData.ParryLocation - Parrier.GetActorLocation();
-	ParrySyncData.ParryDirection = ParrierToVehicle.IsNearlyZero()
-		? -ParriedVehicle.GetActorForwardVector()
-		: ParrierToVehicle.GetSafeNormal();
+	// 차량이 튕겨나가는 방향 = 커서 방향. (기획서 8.1)
+	// 차량은 이미 이 방향으로 회전한 뒤이므로 실제 진행 방향과 같은 값이다.
+	ParrySyncData.ParryDirection = ParryAttemptContext.AttemptDirection;
 
-	// 연출 강도는 차량이 실제로 내던 속도를 그대로 넘긴다. 세기 환산은 수신 측이 정한다.
+	// 연출 강도는 차량이 튕겨나가는 속도를 그대로 넘긴다. 세기 환산은 수신 측이 정한다.
 	ParrySyncData.VehicleReactionStrength = ParriedVehicle.GetEffectiveSpeed();
 
 	return ParrySyncData;

@@ -51,9 +51,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Vehicle")
 	void InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleSpawnParams& Params);
 
-	/** 차종 기본 속도에 개체 배율을 적용한 실제 주행 속도(cm/s). */
+	/**
+	 * 차종 기본 속도에 개체 배율을 적용한 실제 주행 속도(cm/s).
+	 * 튕겨나가는 중이면 패링 배율까지 곱한다. 충돌 예측도 이 값을 쓰므로 한곳에서 낸다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier; }
+	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier * (bParried ? ParriedSpeedMultiplier : 1.f); }
 
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
@@ -84,15 +87,18 @@ public:
 	bool PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact) const;
 
 	/**
-	 * 패링 시도. 성공하면 차량이 정지하고 true.
-	 * 입력 처리와 쿨타임(3초)은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
+	 * 패링 시도. 성공하면 차량이 LaunchDirection 으로 튕겨나가고 true.
+	 * 입력 처리와 쿨타임(1초)은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	bool TryParry(AActor* Parrier);
+	bool TryParry(AActor* Parrier, const FVector& LaunchDirection);
 
-	/** 패링 가능 차종인지. 트럭·긴급차량은 자식 BP에서 bCanBeParried를 끈다. */
+	/**
+	 * 패링 가능 차종인지. 트럭·긴급차량은 자식 BP에서 bCanBeParried를 끈다.
+	 * 이미 튕겨나가는 중이어도 막지 않는다. 날아오는 차를 다시 쳐내는 게 기획서 8.2 다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
-	bool CanBeParried() const { return bCanBeParried && !bParried; }
+	bool CanBeParried() const { return bCanBeParried; }
 
 	/** 패링 입력이 유효 판정되는 충돌 전 시간(초). 기획 값이므로 차량 쪽에서 단일 관리한다. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
@@ -165,11 +171,18 @@ protected:
 	bool bCanBeParried = true;
 
 	/**
-	 * 패링당해 정지한 뒤 사라지기까지의 시간(초).
-	 * 정지한 차가 차선에 남으면 뒤차가 전부 막혀 트래픽이 멈춘다.
+	 * 패링당해 튕겨나간 뒤 사라지기까지의 시간(초). 기획서 8.1 의 임시값 2초.
+	 * 무한정 날아가면 맵 밖까지 나가고, 뒤차가 볼 앞차 목록에서도 계속 남는다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParriedDespawnDelay = 2.f;
+
+	/**
+	 * 튕겨나갈 때 주행 속도에 곱하는 배율. 1이면 원래 속도 그대로 날아간다.
+	 * 튕김 세기는 기획서에 값이 없어 테스트로 잡는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	float ParriedSpeedMultiplier = 1.f;
 
 	/** 현재 주행 중인 차선. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
@@ -187,7 +200,7 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	float LaneLateralOffset = 0.f;
 
-	/** 패링당해 정지한 상태. */
+	/** 패링당해 튕겨나가는 중인 상태. 차선을 벗어나 직진한다. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Parry")
 	bool bParried = false;
 

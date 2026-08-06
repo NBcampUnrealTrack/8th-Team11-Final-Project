@@ -46,7 +46,7 @@ public:
 	 *
 	 * 대상 선별(반경·각도·임박도)까지만 여기서 하고, 최종 판정은 고른 차량의
 	 * ReceiveParryAttempt 가 내린다. 차종별 예외는 차량이 스스로 결정해야 하기 때문이다.
-	 * 쿨타임(3초)과 입력 바인딩은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
+	 * 쿨타임(1초)과 입력 바인딩은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
 	ABaseVehicle* TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext);

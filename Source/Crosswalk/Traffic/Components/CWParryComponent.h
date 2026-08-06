@@ -46,7 +46,7 @@ private:
 	FCWParryAttemptContext BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation, float ClientInputTime) const;
 
 	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
-	FCWParrySyncData BuildParrySyncData(const AActor& Parrier, ABaseVehicle& ParriedVehicle) const;
+	FCWParrySyncData BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ABaseVehicle& ParriedVehicle) const;
 
 	// 로컬 입력 남발을 막기 위한 클라이언트 측 쿨타임 검사
 	bool CanUseLocalCooldown() const;
