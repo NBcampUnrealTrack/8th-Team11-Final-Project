@@ -12,6 +12,7 @@ class UCWToolHolderComponent;
 class UCWVehicleHitReactionComponent;
 class UCWWorkerComponent;
 class UInputAction;
+enum class EInputActionValueType : uint8;
 class UInputMappingContext;
 class USpringArmComponent;
 struct FInputActionValue;
@@ -91,17 +92,20 @@ private:
 	 */
 	FVector ResolveCursorWorldLocation() const;
 
-	/** 애셋이 지정되지 않았으면 IA/IMC 를 C++ 로 만들어 채운다. */
+	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
 
+	/** 비어 있으면 만들고, 이미 지정돼 있으면 그대로 둔다. */
+	void EnsureInputAction(TObjectPtr<UInputAction>& Action, const TCHAR* ActionName, EInputActionValueType ValueType);
+
 	/**
-	 * 패링 입력이 비어 있으면 C++ 로 채운다.
+	 * 지정된 IMC 애셋이 다루지 않는 액션만 기본 키로 매핑해 둔다.
 	 *
-	 * BP 가 입력 애셋을 물고 있으면 BuildBuiltInInput 이 통째로 건너뛰는데,
-	 * 애셋 쪽에는 아직 패링 액션이 없어서 우클릭이 조용히 죽는다.
-	 * BindAction 은 액션이 null 이어도 경고 없이 넘어가므로 원인을 찾기가 어렵다.
+	 * BP 가 IMC 를 물고 있어도 그 안에 빠진 입력이 있으면 조용히 죽는데,
+	 * BindAction 은 액션이 null 이어도 경고 없이 넘어가서 원인을 찾기가 어렵다.
+	 * 지정된 컨텍스트는 애셋이라 런타임에 매핑을 추가하면 안 되므로 별도 컨텍스트에 담는다.
 	 */
-	void BuildParryFallbackInput();
+	void BuildSupplementContext();
 
 	/**
 	 * MoveAction 에 키 하나를 매핑한다.
@@ -172,7 +176,7 @@ protected:
 	TObjectPtr<UInputAction> CancelWorkAction;
 
 private:
-	// 패링만 담은 보조 매핑 컨텍스트. 지정된 컨텍스트는 애셋이라 런타임에 건드리지 않는다.
+	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
 	UPROPERTY(Transient)
-	TObjectPtr<UInputMappingContext> ParryFallbackContext;
+	TObjectPtr<UInputMappingContext> SupplementContext;
 };

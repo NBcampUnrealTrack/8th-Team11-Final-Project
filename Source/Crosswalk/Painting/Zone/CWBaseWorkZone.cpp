@@ -2,7 +2,10 @@
 
 #include "Components/BoxComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 
 ACWBaseWorkZone::ACWBaseWorkZone()
 {
@@ -47,12 +50,95 @@ void ACWBaseWorkZone::BeginPlay()
 		return;
 	}
 
-	// 선행 존이 있으면, 그게 끝날 때까지 잠가둔다.
-	if (PrerequisiteZone != nullptr && !PrerequisiteZone->IsCompleted())
+	CollectWatchedZones();
+
+	for (ACWBaseWorkZone* Zone : WatchedZones)
 	{
-		bLocked = true;
-		PrerequisiteZone->OnWorkCompleted.AddDynamic(this, &ACWBaseWorkZone::HandlePrerequisiteCompleted);
+		Zone->OnWorkProgress.AddDynamic(this, &ACWBaseWorkZone::HandleWatchedZoneProgress);
 	}
+
+	// 기다릴 존이 하나라도 있으면 일단 잠가둔다.
+	// 이 시점에는 앞 존의 BeginPlay 가 아직 안 돌았을 수 있어서 진행도를 믿을 수 없다.
+	bLocked = (WatchedZones.Num() > 0);
+
+	// 전원의 BeginPlay 가 끝난 뒤에 제대로 판정한다.
+	// 존의 시작 진행도는 각자의 BeginPlay 에서 정해지는데(칸 존의 BuildGrid) 액터의
+	// BeginPlay 순서는 보장되지 않는다. 한 틱 미루면 순서를 신경 쓸 필요가 없다.
+	GetWorldTimerManager().SetTimerForNextTick(this, &ACWBaseWorkZone::RefreshLock);
+}
+
+void ACWBaseWorkZone::CollectWatchedZones()
+{
+	WatchedZones.Reset();
+
+	// WorkOrder 로 표현 못 하는 예외 의존. 순서와 무관하게 항상 기다린다.
+	if (PrerequisiteZone != nullptr && PrerequisiteZone != this)
+	{
+		WatchedZones.Add(PrerequisiteZone);
+	}
+
+	// 0 이면 아무것도 기다리지 않는다. 순서를 안 쓰는 존은 여기서 끝난다.
+	if (WorkOrder <= 0)
+	{
+		return;
+	}
+
+	// 레벨의 존은 많아야 5~6개라 전부 훑어도 부담이 없다.
+	for (TActorIterator<ACWBaseWorkZone> ZoneIter(GetWorld()); ZoneIter; ++ZoneIter)
+	{
+		ACWBaseWorkZone* Zone = *ZoneIter;
+		if (Zone == nullptr || Zone == this || Zone->WorkGroup != WorkGroup)
+		{
+			continue;
+		}
+
+		// 나보다 앞 순서만. 같은 값을 준 존들은 서로를 기다리지 않고 동시에 열린다.
+		if (Zone->WorkOrder <= 0 || Zone->WorkOrder >= WorkOrder)
+		{
+			continue;
+		}
+
+		WatchedZones.AddUnique(Zone);
+	}
+}
+
+void ACWBaseWorkZone::RefreshLock()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const bool bNewLocked = ShouldBeLocked();
+	if (bLocked == bNewLocked)
+	{
+		return;
+	}
+
+	bLocked = bNewLocked;
+
+	// 잠금이 바뀌면 HUD 체크리스트의 "지금 할 수 있는 작업" 표시도 따라와야 한다.
+	OnWorkProgress.Broadcast(this, Progress);
+
+	ShowDebugProgress();
+}
+
+bool ACWBaseWorkZone::ShouldBeLocked() const
+{
+	for (const ACWBaseWorkZone* Zone : WatchedZones)
+	{
+		if (Zone != nullptr && !Zone->IsCompleted())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void ACWBaseWorkZone::HandleWatchedZoneProgress(ACWBaseWorkZone* Zone, float InProgress)
+{
+	RefreshLock();
 }
 
 void ACWBaseWorkZone::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
@@ -169,16 +255,17 @@ void ACWBaseWorkZone::ShowDebugProgress() const
 		return;
 	}
 
+	// 존을 겹쳐 놓으면 뷰포트만 봐서는 어느 단계가 열려 있는지 알 수 없다.
+	// 순서와 잠금 상태를 같이 찍어야 순서 설정이 틀렸는지 바로 보인다.
+	const FColor LineColor = bLocked ? FColor::Silver : (bCompleted ? FColor::Green : FColor::Yellow);
+	const TCHAR* StateText = bLocked ? TEXT(" [잠김]") : TEXT("");
+
 	// 키를 액터별로 고정해야 존이 여러 개일 때 각자 한 줄씩 갱신된다. (매 프레임 새 줄이 쌓이지 않음)
 	// GetUniqueID() 는 uint32 라서 uint64 / int32 오버로드 양쪽에 걸린다. 캐스트로 하나를 지정해야 한다.
 	GEngine->AddOnScreenDebugMessage(
 		static_cast<uint64>(GetUniqueID()),
 		2.f,
-		bCompleted ? FColor::Green : FColor::Yellow,
-		FString::Printf(TEXT("%s : %.0f%%"), *ObjectiveName.ToString(), Progress * 100.f));
+		LineColor,
+		FString::Printf(TEXT("%d. %s : %.0f%%%s"), WorkOrder, *ObjectiveName.ToString(), Progress * 100.f, StateText));
 }
 
-void ACWBaseWorkZone::HandlePrerequisiteCompleted(ACWBaseWorkZone* Zone)
-{
-	bLocked = false;
-}

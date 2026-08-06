@@ -81,6 +81,11 @@ void UCWWorkerComponent::StartWork()
 	bWorking = true;
 	bCancelRequested = false;
 
+	// 다음 틱에 커서 위치가 바로 올라가게 한다.
+	// 여기서 좌표를 실어 보내지 않는 이유: ReceivedWorkLocation 은 서버가 쓰는 값이라
+	// 클라이언트에서는 언제나 0 이다. 그대로 보내면 서버가 붓질 시작 지점을 0 으로 잡는다.
+	LastWorkLocationSendTime = -1000.f;
+
 	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
 	{
 		Server_SetWorking(true, ReceivedWorkLocation);
@@ -284,6 +289,30 @@ void UCWWorkerComponent::Server_ReportWorkCompleted_Implementation(ACWBaseWorkZo
 	if (Zone != nullptr)
 	{
 		Zone->ReceiveReportedProgress(1.f);
+	}
+}
+
+void UCWWorkerComponent::SubmitBrushStroke(ACWBaseWorkZone* Zone, const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
+{
+	if (Zone == nullptr)
+	{
+		return;
+	}
+
+	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
+	{
+		Zone->ReceiveBrushStroke(WorldLocation, Radius, bFilled, bSpillOnly);
+		return;
+	}
+
+	Server_SubmitBrushStroke(Zone, WorldLocation, Radius, bFilled, bSpillOnly);
+}
+
+void UCWWorkerComponent::Server_SubmitBrushStroke_Implementation(ACWBaseWorkZone* Zone, FVector_NetQuantize WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
+{
+	if (Zone != nullptr)
+	{
+		Zone->ReceiveBrushStroke(WorldLocation, Radius, bFilled, bSpillOnly);
 	}
 }
 

@@ -70,13 +70,30 @@ public:
 	 */
 	void ReceiveReportedProgress(float NewProgress);
 
+	/**
+	 * 소유 클라이언트가 자기 기계에서 확정한 붓질 하나를 서버가 받는다.
+	 *
+	 * 서버가 커서 좌표를 샘플링해서 붓질을 재현하면 안 되기 때문이다.
+	 * 좌표는 초당 10번밖에 올라오지 않는데 클라이언트는 매 프레임 칠한다. 그 차이만큼
+	 * 서버에 안 칠해진 구멍이 남고, 되돌릴 경로가 없어서 화면이 영영 어긋난다.
+	 * 그래서 "어디를 칠했다"를 클라이언트가 직접 올려보내고 서버는 그대로 적용만 한다.
+	 *
+	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
+	 */
+	virtual void ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly) {}
+
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")
-	bool CanUseTool(ECWToolType ToolType) const;
+	virtual bool CanUseTool(ECWToolType ToolType) const;
 
-	/** 지금 작업 입력을 받아줄 상태인가. (잠기지 않았고, 완료되지 않았고, 도구가 맞음) */
+	/**
+	 * 지금 작업 입력을 받아줄 상태인가. (잠기지 않았고, 완료되지 않았고, 도구가 맞음)
+	 *
+	 * virtual 인 이유: 완료된 뒤에도 계속 받아야 하는 작업이 있다.
+	 * 도색이 끝난 존에도 삐져나간 페인트는 남아 있어서 검은색 롤러는 계속 들어와야 한다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
-	bool CanWorkNow(ECWToolType ToolType) const;
+	virtual bool CanWorkNow(ECWToolType ToolType) const;
 
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetProgress() const { return Progress; }
@@ -89,6 +106,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Work")
 	FText GetObjectiveName() const { return ObjectiveName; }
+
+	UFUNCTION(BlueprintPure, Category = "Work")
+	int32 GetWorkOrder() const { return WorkOrder; }
+
+	UFUNCTION(BlueprintPure, Category = "Work")
+	FName GetWorkGroup() const { return WorkGroup; }
 
 	/**
 	 * 어떤 지점에서 이 존까지의 거리(제곱).
@@ -119,6 +142,15 @@ protected:
 	virtual void OnProgressChanged(float NewProgress);
 
 private:
+	/** 같은 WorkGroup 안에서 나보다 WorkOrder 가 작은 존을 모아 잠금 감시 대상으로 등록한다. */
+	void CollectWatchedZones();
+
+	/** 감시 중인 존이 전부 끝났는지 다시 보고 잠금을 갱신한다. 서버에서만 유효하다. */
+	void RefreshLock();
+
+	/** 지금 잠겨 있어야 하는가. 앞 순서 존이 하나라도 안 끝났으면 true. */
+	bool ShouldBeLocked() const;
+
 	/** 진행도를 화면에 띄운다. HUD 가 붙기 전까지 프로토타입 확인용. */
 	void ShowDebugProgress() const;
 
@@ -131,8 +163,15 @@ private:
 	UFUNCTION()
 	void OnRep_Completed();
 
+	/**
+	 * 앞 순서 존의 진행도가 바뀔 때마다 잠금을 다시 계산한다.
+	 *
+	 * OnWorkCompleted 가 아니라 OnWorkProgress 에 붙는 이유:
+	 * 완료는 풀릴 수도 있다. 차량이 페인트를 또 밟으면 끝났던 존이 다시 미완료가 되고,
+	 * 그러면 뒤 단계는 다시 잠겨야 한다. 완료 델리게이트만 봐서는 그 순간을 잡을 수 없다.
+	 */
 	UFUNCTION()
-	void HandlePrerequisiteCompleted(ACWBaseWorkZone* Zone);
+	void HandleWatchedZoneProgress(ACWBaseWorkZone* Zone, float Progress);
 
 public:
 	// 작업 영역. 루트 컴포넌트다.
@@ -150,8 +189,26 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	TArray<ECWToolType> AcceptedTools;
 
-	// 먼저 끝나야 하는 존. 지정하면 그 존이 완료될 때까지 잠긴다.
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Work")
+	// 작업 순서. 값이 작을수록 먼저 한다.
+	//
+	// 같은 WorkGroup 안에서 이 값보다 작은 존이 하나라도 안 끝났으면 잠긴다.
+	// 존을 서로 겹쳐 놓아도 순서대로만 열리므로, 겹친 위치에서 엉뚱한 단계가 잡히지 않는다.
+	// 기획서 3.2 기준으로 1 = 도로 청소, 2 = 가이드라인 스케치, 3 = 도색 이다.
+	//
+	// 순서를 바꾸고 싶으면 이 숫자만 고치면 된다. 존끼리 서로를 가리키지 않으므로
+	// 중간에 단계를 하나 끼워 넣어도 나머지를 다시 연결할 필요가 없다.
+	// 같은 값을 준 존들은 동시에 열린다. 0 이면 아무것도 기다리지 않는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Order")
+	int32 WorkOrder = 0;
+
+	// 순서를 함께 따지는 존 묶음. 횡단보도가 여러 개면 각각 다른 이름을 준다.
+	// 비워두면 레벨의 모든 존이 한 묶음이다. (프로토타입 맵은 횡단보도가 하나라 비워도 된다)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Order")
+	FName WorkGroup;
+
+	// 순서와 별개로 반드시 먼저 끝나야 하는 존. WorkOrder 로 표현하기 어려운
+	// 예외적인 의존이 생겼을 때만 쓴다. 보통은 비워두고 WorkOrder 만 쓰면 된다.
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Work|Order")
 	TObjectPtr<ACWBaseWorkZone> PrerequisiteZone;
 
 	// 캐릭터가 Area 박스에서 이 거리보다 멀면 작업할 수 없다. (cm)
@@ -180,6 +237,11 @@ protected:
 	// 진행도를 화면 좌상단에 띄운다. HUD 가 생기면 끄면 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
 	bool bShowDebugProgress = true;
+
+private:
+	// 잠금을 풀기 위해 끝나기를 기다리는 존들. 서버에서만 채운다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<ACWBaseWorkZone>> WatchedZones;
 
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Work")
