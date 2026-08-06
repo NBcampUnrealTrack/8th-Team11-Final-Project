@@ -24,7 +24,7 @@ public:
 
     // 서버가 패링 대상을 찾을 때 사용할 기본 반경
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
-    float ParryRadius = 150.f;
+    float ParryRadius = 225.f;
 
     // 패링 판정이 허용되는 각도
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
