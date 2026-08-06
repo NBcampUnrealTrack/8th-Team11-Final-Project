@@ -61,10 +61,15 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	}
 
 	// 진행도를 실제로 올리는 것은 서버뿐이다.
-	if (!bIsServer || !bWorking || bWorkBlocked || FoundZone == nullptr)
+	if (!bWorking || bWorkBlocked || FoundZone == nullptr)
 	{
 		return;
 	}
+
+	// 여기서 서버/클라이언트를 가르지 않는다. 권위 모델은 존마다 다르기 때문이다.
+	//   게이지·칸·먼지 존 : 서버가 진행도를 올린다 (다 같이 작업하는 대상)
+	//   테두리 미니게임   : 그리는 본인 기계에서만 돌고 결과만 서버에 올린다
+	// 어느 쪽인지는 각 존의 ApplyWork 가 스스로 판단한다.
 
 	// 존이 게이지 방식이든 칸 방식이든 미니게임이든 이 한 줄로 끝난다.
 	FoundZone->ApplyWork(this, WorkLocation, DeltaTime);
@@ -74,6 +79,7 @@ void UCWWorkerComponent::StartWork()
 {
 	// 소유 클라이언트에서는 즉시 반영한다. 미니게임 선의 로컬 가속이 이 값을 본다.
 	bWorking = true;
+	bCancelRequested = false;
 
 	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
 	{
@@ -102,9 +108,29 @@ void UCWWorkerComponent::Server_UpdateWorkLocation_Implementation(FVector_NetQua
 	ReceivedWorkLocation = WorkLocation;
 }
 
+void UCWWorkerComponent::CancelWork()
+{
+	// 이동 잠금은 로컬에서 바로 푼다. 서버 왕복을 기다리면 그 사이 차를 못 피한다.
+	bCancelRequested = true;
+	bWorking = false;
+
+	// 미니게임은 이 기계에서 돌고 있으므로 여기서 바로 끈다.
+	// 서버에 취소를 요청하는 게 아니다. 서버에는 돌고 있는 미니게임이 없다.
+	if (TargetZone != nullptr)
+	{
+		TargetZone->CancelWork();
+	}
+
+	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
+	{
+		Server_SetWorking(false, ReceivedWorkLocation);
+	}
+}
+
 bool UCWWorkerComponent::ConsumeDirectionInput(const FVector2D& MoveInput)
 {
-	if (TargetZone == nullptr)
+	// 취소를 눌렀으면 존이 정리될 때까지 입력을 붙잡지 않는다.
+	if (TargetZone == nullptr || bCancelRequested)
 	{
 		return false;
 	}
@@ -220,6 +246,50 @@ void UCWWorkerComponent::SetTargetZone(ACWBaseWorkZone* NewZone)
 
 	TargetZone = NewZone;
 	OnTargetZoneChanged.Broadcast(this, TargetZone);
+}
+
+void UCWWorkerComponent::ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress)
+{
+	if (Zone == nullptr)
+	{
+		return;
+	}
+
+	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
+	{
+		Zone->ReceiveReportedProgress(NewProgress);
+		return;
+	}
+
+	// 완주는 놓치면 작업이 끝나지 않으므로 신뢰 채널로 따로 보낸다.
+	if (NewProgress >= 1.f)
+	{
+		Server_ReportWorkCompleted(Zone);
+		return;
+	}
+
+	Server_ReportWorkProgress(Zone, NewProgress);
+}
+
+void UCWWorkerComponent::Server_ReportWorkProgress_Implementation(ACWBaseWorkZone* Zone, float NewProgress)
+{
+	if (Zone != nullptr)
+	{
+		Zone->ReceiveReportedProgress(NewProgress);
+	}
+}
+
+void UCWWorkerComponent::Server_ReportWorkCompleted_Implementation(ACWBaseWorkZone* Zone)
+{
+	if (Zone != nullptr)
+	{
+		Zone->ReceiveReportedProgress(1.f);
+	}
+}
+
+bool UCWWorkerComponent::IsLocalWorker() const
+{
+	return IsLocallyControlledWorker();
 }
 
 bool UCWWorkerComponent::IsLocallyControlledWorker() const

@@ -8,7 +8,6 @@
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
-#include "Net/UnrealNetwork.h"
 #include "UI/Screens/CWBorderSketchWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/CWWorkerComponent.h"
@@ -53,17 +52,6 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	WidgetClass = UCWBorderSketchWidget::StaticClass();
 }
 
-void ACWWorkZone_BorderSketch::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(ACWWorkZone_BorderSketch, DrawnLength);
-	DOREPLIFETIME(ACWWorkZone_BorderSketch, CurrentSegmentIndex);
-	DOREPLIFETIME(ACWWorkZone_BorderSketch, bMinigameActive);
-	DOREPLIFETIME(ACWWorkZone_BorderSketch, bWaitingAtCorner);
-	DOREPLIFETIME(ACWWorkZone_BorderSketch, ActiveWorker);
-}
-
 void ACWWorkZone_BorderSketch::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
@@ -89,35 +77,39 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 	// 도색 완료 전환은 모든 인스턴스에서 돌아야 한다.
 	UpdateBorderVisual(DeltaSeconds);
 
+	// 서버가 완료를 확정했으면 로컬 잠금은 역할을 다했다.
+	// 이후에는 CanWorkNow 가 알아서 막으므로 잠금을 들고 있을 이유가 없다.
+	if (bLocallyCompleted && IsCompleted())
+	{
+		bLocallyCompleted = false;
+	}
+
+	// 위젯 표시는 OnRep 에만 기대지 않고 매 프레임 현재 상태로 다시 맞춘다.
+	// 서버가 한 업데이트 안에서 상태를 껐다 켜면 OnRep 이 아예 안 오는 경우가 있고,
+	// 그때 OnRep 만 믿으면 UI 가 잘못된 상태로 굳는다.
+	// Show/HideWidget 은 이미 맞는 상태면 바로 빠져나오므로 비용은 없다.
+	RefreshWidget();
+
 	if (!bMinigameActive)
 	{
 		return;
 	}
 
-	if (HasAuthority())
+	// 도구를 놓거나 존에서 벗어나면 UI 를 내리고 멈춘다. 진행도는 남으므로 이어서 할 수 있다.
+	if (!IsWorkerEligible())
 	{
-		// 도구를 놓거나 존에서 벗어나면 UI 를 내리고 멈춘다. 진행도는 남으므로 이어서 할 수 있다.
-		if (!IsWorkerEligible())
-		{
-			StopMinigame();
-			return;
-		}
-
-		// 꼭짓점에서는 올바른 방향키가 들어올 때까지 선이 멈춰 있는다.
-		if (!bWaitingAtCorner)
-		{
-			const bool bBoosting = GetWorld()->TimeSince(LastBoostTime) <= 2.f * DeltaSeconds;
-			AdvanceLine(DrawSpeed * (bBoosting ? BoostMultiplier : 1.f) * DeltaSeconds);
-		}
-
+		StopMinigame();
 		return;
 	}
 
-	// 서버가 아닌데 내가 그리는 중이면, 선을 로컬로 진행시켜 핑만큼 끊기는 것을 막는다.
-	if (IsLocalDrawer())
+	// 꼭짓점에서는 올바른 방향키가 들어올 때까지 선이 멈춰 있는다.
+	if (!bWaitingAtCorner)
 	{
-		TickPrediction(DeltaSeconds);
+		const bool bBoosting = GetWorld()->TimeSince(LastBoostTime) <= 2.f * DeltaSeconds;
+		AdvanceLine(DrawSpeed * (bBoosting ? BoostMultiplier : 1.f) * DeltaSeconds);
 	}
+
+	ReportProgressIfDue(false);
 }
 
 void ACWWorkZone_BorderSketch::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -129,8 +121,15 @@ void ACWWorkZone_BorderSketch::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ACWWorkZone_BorderSketch::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
 {
-	// 미니게임 상태는 서버만 만든다.
-	if (!HasAuthority() || Worker == nullptr || !CanWorkNow(Worker->GetHeldTool()))
+	// 미니게임은 그리는 본인 기계에서만 돈다.
+	// 서버가 원격 플레이어 몫까지 돌리면 같은 게임이 두 벌 돌아가며 서로 어긋난다.
+	if (Worker == nullptr || !Worker->IsLocalWorker() || !CanWorkNow(Worker->GetHeldTool()))
+	{
+		return;
+	}
+
+	// 이미 한 바퀴를 끝냈으면 서버가 완료를 확정해 줄 때까지 다시 시작하지 않는다.
+	if (bLocallyCompleted)
 	{
 		return;
 	}
@@ -157,6 +156,17 @@ bool ACWWorkZone_BorderSketch::ConsumeDirectionInput(const FVector2D& MoveInput)
 		return false;
 	}
 
+	// 이동 입력은 누르고 있는 내내 매 프레임 들어온다.
+	// 한 프레임이라도 끊겼다면 키를 뗐다가 새로 누른 것이다.
+	const float Now = GetWorld()->GetTimeSeconds();
+	const bool bContinuedHold = (Now - LastDirectionInputTime) <= DirectionInputHoldWindow;
+	LastDirectionInputTime = Now;
+
+	if (!bContinuedHold)
+	{
+		bSuppressCancelUntilRelease = false;
+	}
+
 	// 이 함수는 서버와 그리는 클라이언트 양쪽에서 돈다.
 	// 클라이언트 쪽 변경은 예측이고, 서버 값이 리플리케이트되면 정정된다.
 	// 꼭짓점에서 올바른 방향이면 선을 돌린다. 이 입력만 소비하므로 캐릭터는 제자리에 선다.
@@ -168,20 +178,27 @@ bool ACWWorkZone_BorderSketch::ConsumeDirectionInput(const FVector2D& MoveInput)
 			++CurrentSegmentIndex;
 			bWaitingAtCorner = false;
 
+			// 전환에 쓴 키는 보통 몇 프레임 더 눌려 있다.
+			// 그걸 중단으로 받으면 방향을 꺾자마자 작업이 끊긴다.
+			bSuppressCancelUntilRelease = true;
+
 			return true;
 		}
 	}
 
-	// 그 밖의 이동 입력은 "작업을 놓고 움직인다" 로 해석한다.
-	// 입력을 소비하지 않고 돌려주므로 같은 프레임에 캐릭터가 바로 그 방향으로 출발한다.
-	if (bMovementCancelsMinigame)
-	{
-		StopMinigame();
-
-		return false;
-	}
-
+	// 미니게임 중에는 이동 입력을 전부 여기서 소비한다. 캐릭터는 제자리에 선다.
+	//
+	// 이동 입력을 중단 신호로도 쓰던 때는 방향을 꺾자마자 작업이 끊기고,
+	// 꼭짓점에서 키를 잘못 누르면 UI 가 닫혀 조작이 계속 튕겼다.
+	// 중단은 전용 입력(CancelWork) 하나로만 받는다.
 	return true;
+}
+
+void ACWWorkZone_BorderSketch::CancelWork()
+{
+	// 미니게임 상태는 전부 로컬이라 이 기계에서 바로 끄면 된다.
+	// 서버 확정을 기다릴 이유가 없다. UI 는 누른 프레임에 사라진다.
+	StopMinigame();
 }
 
 void ACWWorkZone_BorderSketch::GetFullPath(TArray<FVector2D>& OutPoints) const
@@ -198,7 +215,7 @@ void ACWWorkZone_BorderSketch::GetDrawnPath(TArray<FVector2D>& OutPoints) const
 	OutPoints.Reset(GetSegmentCount() + 1);
 	OutPoints.Add(GetPathPoint(0));
 
-	float Remaining = GetDisplayDrawnLength();
+	float Remaining = DrawnLength;
 
 	for (int32 SegmentIndex = 0; SegmentIndex < GetSegmentCount(); ++SegmentIndex)
 	{
@@ -236,38 +253,23 @@ FVector2D ACWWorkZone_BorderSketch::GetRequiredCornerInput() const
 	return FVector2D(NextDirection.X, -NextDirection.Y);
 }
 
-void ACWWorkZone_BorderSketch::OnRep_MinigameState()
+void ACWWorkZone_BorderSketch::ReportProgressIfDue(bool bForce)
 {
-	// 예측이 서버 값과 크게 벌어졌으면 즉시 맞춘다. (미니게임이 새로 시작/종료된 경우 포함)
-	if (!bMinigameActive || FMath::Abs(PredictedDrawnLength - DrawnLength) > PredictionSnapTolerance)
-	{
-		PredictedDrawnLength = DrawnLength;
-	}
-
-	RefreshWidget();
-}
-
-void ACWWorkZone_BorderSketch::TickPrediction(float DeltaSeconds)
-{
-	// 서버보다 뒤처져 그려지는 일은 없어야 한다.
-	PredictedDrawnLength = FMath::Max(PredictedDrawnLength, DrawnLength);
-
-	if (bWaitingAtCorner)
+	if (ActiveWorker == nullptr)
 	{
 		return;
 	}
 
-	const bool bBoosting = (ActiveWorker != nullptr) && ActiveWorker->IsWorking();
-	PredictedDrawnLength += DrawSpeed * (bBoosting ? BoostMultiplier : 1.f) * DeltaSeconds;
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (!bForce && Now - LastProgressReportTime < ProgressReportInterval)
+	{
+		return;
+	}
 
-	// 서버가 아직 승인하지 않은 꼭짓점을 넘어 그려지면 안 된다.
-	PredictedDrawnLength = FMath::Min(PredictedDrawnLength, GetSegmentEndLength(CurrentSegmentIndex));
-}
+	LastProgressReportTime = Now;
 
-float ACWWorkZone_BorderSketch::GetDisplayDrawnLength() const
-{
-	// 서버(리슨 서버 호스트 포함)는 권위값이 곧 표시값이다. 예측할 이유가 없다.
-	return HasAuthority() ? DrawnLength : PredictedDrawnLength;
+	// 서버에 올리는 건 숫자 하나뿐이다. 되돌아오는 값을 게임플레이에 쓰지 않으므로 정정이 없다.
+	ActiveWorker->ReportWorkProgress(this, DrawnLength / GetTotalLength());
 }
 
 bool ACWWorkZone_BorderSketch::IsLocalDrawer() const
@@ -287,21 +289,30 @@ void ACWWorkZone_BorderSketch::StartMinigame(UCWWorkerComponent* Worker)
 	ActiveWorker = Worker;
 	bMinigameActive = true;
 	bWaitingAtCorner = false;
+	bSuppressCancelUntilRelease = false;
 
-	// 완료 상태에서 다시 시작하지는 않지만(CanWorkNow 가 막는다),
-	// 중간에 그만뒀다가 돌아온 경우에는 남아 있던 진행도에서 이어야 한다.
-	if (DrawnLength <= 0.f)
+	// 선 상태는 로컬이라 이 기계에는 남아 있지 않을 수 있다.
+	// (다른 사람이 그리다 만 것을 이어받는 경우, 또는 이 존을 처음 만지는 경우)
+	// 모두가 공유하는 진행도에서 선 위치를 역산해 이어 그린다.
+	DrawnLength = FMath::Clamp(GetProgress(), 0.f, 1.f) * GetTotalLength();
+
+	CurrentSegmentIndex = 0;
+	while (CurrentSegmentIndex < GetSegmentCount() - 1
+		&& DrawnLength >= GetSegmentEndLength(CurrentSegmentIndex))
 	{
-		CurrentSegmentIndex = 0;
+		++CurrentSegmentIndex;
 	}
-
-	PredictedDrawnLength = DrawnLength;
 
 	RefreshWidget();
 }
 
 void ACWWorkZone_BorderSketch::StopMinigame()
 {
+	// 어떤 이유로 멈추든(완주 · 취소 · 존 이탈) 마지막 진행도는 올려보낸다.
+	// 안 그러면 마지막 보고 이후에 그린 만큼이 버려져서, 다시 왔을 때 조금 뒤로 밀려 있다.
+	// ActiveWorker 를 지우기 전에 해야 한다. 보고 경로가 그걸 통해 나간다.
+	ReportProgressIfDue(true);
+
 	bMinigameActive = false;
 	ActiveWorker = nullptr;
 
@@ -345,17 +356,17 @@ void ACWWorkZone_BorderSketch::AdvanceLine(float Amount)
 	if (NewLength < SegmentEndLength)
 	{
 		DrawnLength = NewLength;
-		SetProgress(DrawnLength / GetTotalLength());
 		return;
 	}
 
 	// 꼭짓점에 딱 맞춰 세운다. 넘어간 만큼은 버린다. (그래야 꼭짓점을 지나쳐 그려지지 않는다)
 	DrawnLength = SegmentEndLength;
-	SetProgress(DrawnLength / GetTotalLength());
 
 	if (CurrentSegmentIndex >= GetSegmentCount() - 1)
 	{
 		// 마지막 변 끝 = 시작점 복귀 = 한 바퀴 완주.
+		// StopMinigame 이 100% 를 즉시 신뢰 채널로 올려보낸다.
+		bLocallyCompleted = true;
 		StopMinigame();
 		return;
 	}

@@ -54,6 +54,22 @@ public:
 	 */
 	virtual bool ConsumeDirectionInput(const FVector2D& MoveInput) { return false; }
 
+	/**
+	 * 플레이어가 작업을 그만두겠다고 알렸을 때. (취소 키)
+	 *
+	 * 미니게임처럼 입력을 붙잡고 있는 존만 오버라이드하면 된다.
+	 * 게이지나 칸 채우기 존은 작업 키를 떼는 것으로 충분해서 할 일이 없다.
+	 */
+	virtual void CancelWork() {}
+
+	/**
+	 * 로컬에서 진행하는 존이 올려보낸 진행도를 서버가 받는다.
+	 *
+	 * 되돌아가지 않게 최대값만 취한다. 패킷이 순서 없이 도착해도 진행도가 튀지 않는다.
+	 * 프로토타입이라 값 자체는 검증하지 않는다. 협동 PvE 이고 서로 속일 이유가 없다.
+	 */
+	void ReceiveReportedProgress(float NewProgress);
+
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool CanUseTool(ECWToolType ToolType) const;

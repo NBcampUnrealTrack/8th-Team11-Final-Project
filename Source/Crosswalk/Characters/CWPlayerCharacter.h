@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
@@ -64,6 +64,9 @@ protected:
 
 	/** 작업 키를 뗀 순간. */
 	void StopWork();
+
+	/** 취소 키(Q). 미니게임을 빠져나와 다시 움직일 수 있게 한다. */
+	void CancelWork();
 
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
@@ -171,4 +174,7 @@ private:
 
 	// 첫 이동 입력만 로그로 찍기 위한 플래그. 매 프레임 찍으면 로그를 못 쓰게 된다.
 	bool bLoggedFirstMoveInput = false;
+	// 미니게임 중 빠져나오는 키. 비워두면 그 기능만 없고 나머지는 정상 동작한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> CancelWorkAction;
 };

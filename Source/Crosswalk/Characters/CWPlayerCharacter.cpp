@@ -1,4 +1,4 @@
-#include "Characters/CWPlayerCharacter.h"
+﻿#include "Characters/CWPlayerCharacter.h"
 
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
@@ -16,7 +16,6 @@
 #include "InputModifiers.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Painting/CWWorkerComponent.h"
-#include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -227,6 +226,10 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	// 기획서에 패링 키가 따로 정해지면 이 줄만 바꾸면 된다.
 	Context->MapKey(ParryAction, EKeys::RightMouseButton);
 
+	// 미니게임 중에는 WASD 가 방향 전환에 묶여 캐릭터가 움직이지 않는다.
+	// 차를 피하려면 이 키로 먼저 빠져나와야 한다.
+	Context->MapKey(CancelWorkAction, EKeys::Q);
+
 	DefaultMappingContext = Context;
 }
 
@@ -321,15 +324,6 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 {
 	const FVector2D MoveInput = Value.Get<FVector2D>();
 
-	// 첫 입력만 한 번 찍는다. 이 줄이 안 보이면 입력이 여기까지 오지 않는다는 뜻이고,
-	// (0.00, 0.00) 으로 찍히면 Swizzle/Negate 설정이 잘못된 것이다.
-	if (!bLoggedFirstMoveInput)
-	{
-		bLoggedFirstMoveInput = true;
-		UE_LOG(LogTemp, Log, TEXT("[%s] 첫 Move 입력 수신: X=%.2f Y=%.2f"),
-			*GetName(), MoveInput.X, MoveInput.Y);
-	}
-
 	if (MoveInput.IsNearlyZero())
 	{
 		return;
@@ -367,8 +361,12 @@ void ACWPlayerCharacter::Interact()
 		ToolHolderComponent->GetFocusedTool() != nullptr
 			? *ToolHolderComponent->GetFocusedTool()->GetName()
 			: TEXT("없음"));
-
 	ToolHolderComponent->Interact();
+}
+
+void ACWPlayerCharacter::CancelWork()
+{
+	WorkerComponent->CancelWork();
 }
 
 void ACWPlayerCharacter::StartWork()

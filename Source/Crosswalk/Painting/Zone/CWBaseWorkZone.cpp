@@ -97,21 +97,31 @@ void ACWBaseWorkZone::SetProgress(float NewProgress)
 	}
 
 	Progress = NewClamped;
+
+	// 완료 여부를 먼저 정하고 나서 연출과 화면 표시를 갱신해야 한다.
+	// 순서가 반대면 100% 가 된 프레임의 표시가 "미완료" 색으로 그려지고,
+	// 그 뒤로는 진행도가 안 바뀌어 다시 그릴 일이 없으니 영영 그 색으로 남는다.
+	//
+	// 완료가 풀릴 수도 있다. 차량이 페인트를 또 밟으면 "정리" 목표가 다시 열린다.
+	const bool bWasCompleted = bCompleted;
+	bCompleted = (Progress >= CompleteThreshold);
+
 	HandleProgressChanged();
 
-	if (Progress >= CompleteThreshold)
+	if (bCompleted && !bWasCompleted)
 	{
-		if (!bCompleted)
-		{
-			bCompleted = true;
-			OnWorkCompleted.Broadcast(this);
-		}
+		OnWorkCompleted.Broadcast(this);
 	}
-	else
+}
+
+void ACWBaseWorkZone::ReceiveReportedProgress(float NewProgress)
+{
+	if (!HasAuthority())
 	{
-		// 완료를 취소할 수도 있다. 차량이 페인트를 또 밟으면 "정리" 목표가 다시 열린다.
-		bCompleted = false;
+		return;
 	}
+
+	SetProgress(FMath::Max(Progress, NewProgress));
 }
 
 void ACWBaseWorkZone::HandleProgressChanged()

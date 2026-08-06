@@ -23,9 +23,13 @@ class UMaterialInstanceDynamic;
  * (차량이 오면 피해야 하므로, 멈춤 자체가 시간 손실이라는 압박이 된다)
  *
  * 중단 방법
- *   꼭짓점 방향 전환이 아닌 이동 입력을 넣으면 작업을 놓고 그 방향으로 움직인다.
- *   전용 취소 키를 두지 않은 이유: 차량을 피해야 하는 순간에 손이 먼저 가는 곳이 WASD 다.
- *   도구를 내려놓거나(E) 존에서 멀어져도 중단된다. 어느 쪽이든 진행도는 남는다.
+ *   미니게임 중 WASD 는 방향 전환 전용이고 캐릭터는 제자리에 선다.
+ *   빠져나오려면 취소 키(Q)를 누른다. 도구를 내려놓거나(E) 차량에 치여도 중단된다.
+ *   어느 쪽이든 그려둔 진행도는 남으므로 돌아와서 이어서 할 수 있다.
+ *
+ *   이동 입력을 중단 신호로 겸용하지 않는 이유:
+ *   방향을 꺾은 키가 몇 프레임 더 눌려 있는 것과 "이제 그만두겠다" 를 구분할 수 없어서,
+ *   꼭짓점을 돌 때마다 작업이 끊기고 UI 가 닫혔다.
  *
  * UI 는 도구를 든 플레이어 화면에만 뜬다. 완료 여부는 부모의 진행도/델리게이트를 타고
  * 모두에게 공유되므로 결과는 전원이 볼 수 있다.
@@ -33,11 +37,18 @@ class UMaterialInstanceDynamic;
  * 좌표계: 경로는 정규화 좌표로 다룬다. 가로 1.0, 세로 RectHeightRatio, Y 는 화면처럼 아래로 증가.
  * 실제 픽셀 변환은 위젯이 담당한다. 존은 화면 해상도를 몰라도 된다.
  *
- * 네트워크
- *   선은 서버가 진행시키고, 그 결과(DrawnLength / CurrentSegmentIndex / bWaitingAtCorner)를 전파한다.
- *   다만 서버 값만 따라가면 그리는 사람 화면에서 선이 핑만큼 끊겨 보인다.
- *   그래서 그리는 클라이언트만 같은 속도로 선을 로컬 진행시키고(PredictedDrawnLength),
- *   서버 값이 도착하면 그쪽으로 정정한다. 나머지 플레이어는 UI 가 아예 없으므로 예측이 필요 없다.
+ * 네트워크 — 미니게임은 그리는 본인 기계에서만 돈다.
+ *
+ *   선 위치, 현재 변, 꼭짓점 대기 상태는 전부 로컬이고 리플리케이트하지 않는다.
+ *   그 화면을 보는 사람이 한 명뿐이라 남에게 보낼 이유가 없기 때문이다.
+ *   서버로는 진행도 숫자만 초당 몇 번 올려보내고(완주는 신뢰 채널로 따로),
+ *   서버가 그걸 부모의 Progress 에 반영하면 월드의 가이드 라인과 목표 체크리스트가
+ *   모두에게 갱신된다.
+ *
+ *   값이 클라이언트 → 서버 한 방향으로만 흐르므로 되돌아오는 정정이 없다.
+ *   그래서 예측/보정 로직 자체가 필요 없고, 꼭짓점 전환도 핑과 무관하게 즉시 반응한다.
+ *
+ *   협동 PvE 라 진행도 값을 검증하지 않는다. 서로 속일 이유가 없는 구조다.
  */
 UCLASS()
 class CROSSWALK_API ACWWorkZone_BorderSketch : public ACWBaseWorkZone
@@ -46,8 +57,6 @@ class CROSSWALK_API ACWWorkZone_BorderSketch : public ACWBaseWorkZone
 
 public:
 	ACWWorkZone_BorderSketch();
-
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	virtual void OnConstruction(const FTransform& Transform) override;
 
@@ -60,6 +69,8 @@ public:
 	virtual void ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds) override;
 
 	virtual bool ConsumeDirectionInput(const FVector2D& MoveInput) override;
+
+	virtual void CancelWork() override;
 
 	/** 도형 전체 경로(정규화 좌표). 위젯이 밑그림을 그리는 데 쓴다. */
 	void GetFullPath(TArray<FVector2D>& OutPoints) const;
@@ -81,14 +92,8 @@ public:
 	FVector2D GetRequiredCornerInput() const;
 
 private:
-	UFUNCTION()
-	void OnRep_MinigameState();
-
-	/** 그리는 사람 화면에서만 선을 로컬로 진행시킨다. */
-	void TickPrediction(float DeltaSeconds);
-
-	/** 위젯이 실제로 그릴 길이. 서버는 권위값, 그리는 클라이언트는 예측값을 쓴다. */
-	float GetDisplayDrawnLength() const;
+	/** 진행도를 서버에 올린다. bForce 면 주기를 무시하고 즉시 보낸다. */
+	void ReportProgressIfDue(bool bForce);
 
 	/** 지금 상태에 맞게 위젯을 띄우거나 내린다. */
 	void RefreshWidget();
@@ -147,8 +152,11 @@ protected:
 	float BorderThickness = 12.f;
 
 	// 작업 전 상태. 반투명하게 띄워 "여기를 칠해야 한다" 를 알린다.
+	//
+	// 에디터 컬러 픽커의 Hex(sRGB) 기준 FFE200 에 해당하는 값이다.
+	// FLinearColor 는 선형 색이라 sRGB 값을 그대로 넣으면 실제보다 밝게 나온다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	FLinearColor GuideColor = FLinearColor(0.25f, 0.85f, 1.f, 1.f);
+	FLinearColor GuideColor = FLinearColor(1.f, 0.76f, 0.f, 1.f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float GuideOpacity = 0.35f;
@@ -184,16 +192,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch", meta = (ClampMin = "1.0"))
 	float BoostMultiplier = 3.f;
 
-	// 예측값이 서버 값과 이만큼 벌어지면 보간하지 않고 즉시 맞춘다. (정규화 길이)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch", meta = (ClampMin = "0.01"))
-	float PredictionSnapTolerance = 0.25f;
+	// 진행도를 서버에 올리는 간격(초). 월드의 가이드 라인이 이 주기로 갱신된다.
+	// 완주는 이 주기와 무관하게 즉시 신뢰 채널로 보낸다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch", meta = (ClampMin = "0.02"))
+	float ProgressReportInterval = 0.1f;
 
-	// 꼭짓점 방향 전환이 아닌 이동 입력을 "작업 중단" 으로 받아들인다.
-	//
-	// 끄면 미니게임 중 WASD 가 전부 방향 전환용으로 소비되어 캐릭터가 제자리에 고정된다.
-	// 그 경우 도구를 내려놓는 것(E) 외에는 빠져나갈 방법이 없어지므로 기본값은 켬이다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch")
-	bool bMovementCancelsMinigame = true;
+	// 이동 입력이 이 시간 안에 다시 들어오면 "계속 누르고 있는 중" 으로 본다. (초)
+	// 이동 입력은 누르는 내내 매 프레임 들어오므로, 한 프레임만 끊겨도 키를 뗀 것이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch", meta = (ClampMin = "0.02"))
+	float DirectionInputHoldWindow = 0.15f;
+
 
 	// 도구를 든 플레이어 화면에 띄울 위젯. 비워두면 C++ 기본 위젯이 쓰인다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sketch")
@@ -214,25 +222,34 @@ private:
 	// 시작 시점에 가속으로 오판하지 않도록 충분히 과거로 초기화한다.
 	float LastBoostTime = -1000.f;
 
-	// 아래 4개는 서버가 정하고 전파한다. 미니게임의 실제 상태다.
-	UPROPERTY(ReplicatedUsing = OnRep_MinigameState)
+	// 아래는 전부 미니게임을 돌리는 기계에만 있는 로컬 상태다. 리플리케이트하지 않는다.
 	float DrawnLength = 0.f;
 
-	UPROPERTY(ReplicatedUsing = OnRep_MinigameState)
 	int32 CurrentSegmentIndex = 0;
 
-	UPROPERTY(ReplicatedUsing = OnRep_MinigameState)
 	bool bMinigameActive = false;
 
-	UPROPERTY(ReplicatedUsing = OnRep_MinigameState)
 	bool bWaitingAtCorner = false;
 
-	// 누가 그리고 있는지. 각 클라이언트는 이게 자기 것인지 보고 UI 표시를 결정한다.
-	UPROPERTY(ReplicatedUsing = OnRep_MinigameState)
+	// 누가 그리고 있는지. UI 표시 대상을 정하는 데 쓴다.
+	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> ActiveWorker;
 
-	// 그리는 클라이언트에서만 쓰는 로컬 진행값. 위젯은 이 값을 그린다.
-	float PredictedDrawnLength = 0.f;
+	// 진행도를 마지막으로 서버에 올린 시각.
+	float LastProgressReportTime = -1000.f;
+
+	// 이 기계에서 한 바퀴를 끝냈는가.
+	//
+	// 완료를 서버에 올려도 bCompleted 가 리플리케이트되어 돌아오기까지 한 왕복이 걸린다.
+	// 그동안 CanWorkNow 는 아직 true 라서, 작업 키를 누르고 있으면 미니게임이 다시 시작된다.
+	// 그러면 선이 마지막으로 받은 진행도까지 뒤로 물러났다가 다시 채워진다.
+	// 서버 확정이 올 때까지 재시작을 막는 로컬 잠금이다.
+	bool bLocallyCompleted = false;
+
+	float LastDirectionInputTime = -1000.f;
+
+	// 방향 전환에 쓴 키를 아직 떼지 않았는가. 떼기 전까지는 중단 입력으로 보지 않는다.
+	bool bSuppressCancelUntilRelease = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCWBorderSketchWidget> Widget;
