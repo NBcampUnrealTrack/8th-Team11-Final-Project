@@ -41,8 +41,11 @@ public:
 	/** 스테이지 상태를 바꾼다. 서버에서만 유효하다. */
 	void SetStageState(ECWStageState NewStageState);
 
-	/** 목표 체크리스트를 갱신한다. 내용이 같으면 아무 일도 하지 않는다. 서버에서만 유효하다. */
-	void SetObjectives(const TArray<FCWStageObjective>& NewObjectives);
+	/**
+	 * 목표 체크리스트를 갱신한다. 내용이 같으면 아무 일도 하지 않는다. 서버에서만 유효하다.
+	 * @return 실제로 바뀌었으면 true
+	 */
+	bool SetObjectives(const TArray<FCWStageObjective>& NewObjectives);
 
 	/** HUD 체크리스트용 목표 목록. 작업 순서대로 정렬돼 있다. */
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Stage")

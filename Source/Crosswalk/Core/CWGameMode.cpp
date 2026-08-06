@@ -112,7 +112,21 @@ void ACWGameMode::RefreshStageProgress()
 		});
 
 	CrosswalkGameState->SetObjectiveCounts(CompletedCount, TotalCount);
-	CrosswalkGameState->SetObjectives(Objectives);
+
+	// 목표 구성이나 달성 수가 바뀔 때마다 현황을 찍는다.
+	// 상태 변경 때만 찍으면 시작 시점(이미 InProgress)에는 아무것도 나오지 않아
+	// 존 설정이 맞는지 확인할 방법이 없다.
+	if (CrosswalkGameState->SetObjectives(Objectives))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Stage] 목표 %d줄 (존 %d/%d)"), Objectives.Num(), CompletedCount, TotalCount);
+
+		for (const FCWStageObjective& Objective : Objectives)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Stage]   [%s] %s (%d/%d)"),
+				Objective.IsCompleted() ? TEXT("O") : TEXT(" "),
+				*Objective.DisplayName.ToString(), Objective.CompletedCount, Objective.TotalCount);
+		}
+	}
 
 	// 존이 하나도 없는 맵에서 시작하자마자 클리어가 뜨지 않게 막는다.
 	// 트래픽 테스트 맵처럼 작업 존을 두지 않는 레벨이 실제로 있다.
@@ -131,13 +145,6 @@ void ACWGameMode::RefreshStageProgress()
 
 		UE_LOG(LogTemp, Log, TEXT("[Stage] 상태 변경: %s (존 %d/%d)"),
 			bAllCompleted ? TEXT("클리어") : TEXT("진행 중"), CompletedCount, TotalCount);
-
-		for (const FCWStageObjective& Objective : CrosswalkGameState->GetObjectives())
-		{
-			UE_LOG(LogTemp, Log, TEXT("[Stage]   [%s] %s (%d/%d)"),
-				Objective.IsCompleted() ? TEXT("O") : TEXT(" "),
-				*Objective.DisplayName.ToString(), Objective.CompletedCount, Objective.TotalCount);
-		}
 	}
 }
 

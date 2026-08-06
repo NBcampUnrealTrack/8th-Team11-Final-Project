@@ -46,16 +46,18 @@ void ACWGameState::SetStageState(ECWStageState NewStageState)
 	OnStageStateChanged.Broadcast(this, StageState);
 }
 
-void ACWGameState::SetObjectives(const TArray<FCWStageObjective>& NewObjectives)
+bool ACWGameState::SetObjectives(const TArray<FCWStageObjective>& NewObjectives)
 {
 	if (!HasAuthority() || Objectives == NewObjectives)
 	{
-		return;
+		return false;
 	}
 
 	Objectives = NewObjectives;
 
 	OnStageObjectivesChanged.Broadcast(this);
+
+	return true;
 }
 
 float ACWGameState::GetStageProgress() const
