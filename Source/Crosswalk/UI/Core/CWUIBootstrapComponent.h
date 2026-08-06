@@ -4,11 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Blueprint/UserWidget.h"
 #include "Data/Enums/CWUITypes.h"
-#include "UI/Core/CWUIRootWidget.h"
-#include "UI/Core/CWUIScreenWidget.h"
 #include "CWUIBootstrapComponent.generated.h"
+
+class UCWUIRootWidget;
+class UCWUIScreenWidget;
+class UUserWidget;
 
 UCLASS(
     ClassGroup = (CW),
