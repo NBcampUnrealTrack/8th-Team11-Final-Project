@@ -68,6 +68,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsCleanupTool(ECWToolType ToolType) const;
 
+	/**
+	 * 이 월드 지점의 칸이 칠해져 있는가. 격자 밖이면 false.
+	 * 차량이 젖은 페인트를 밟았는지 판정하는 데 쓴다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsFilledAt(const FVector& WorldLocation) const;
+
 	virtual bool CanUseTool(ECWToolType ToolType) const override;
 
 	virtual bool CanWorkNow(ECWToolType ToolType) const override;
@@ -87,6 +94,15 @@ public:
 	int32 GetSpillCellCount() const { return FilledCellCount - CountedFilledCount; }
 
 private:
+	/**
+	 * 젖은 페인트를 밟은 차량을 찾고, 이미 묻은 차량이 지나는 자리에 자국을 남긴다.
+	 * 서버에서만 돌고, bStainsVehicles 를 켠 존만 타이머를 건다. (기획서 3.2 "차량이 밟아서 튄 페인트")
+	 */
+	void UpdateVehicleStains();
+
+	/** 차량을 찾을 반경. 존 크기에 자국 반경만큼 여유를 더한다. */
+	float GetVehicleSearchRadius() const;
+
 	/** 격자를 만들고 초기 상태(bStartFilled)를 적용한다. */
 	void BuildGrid();
 
@@ -197,6 +213,29 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual")
 	TObjectPtr<UMaterialInterface> CellMaterial;
 
+	// 차량이 이 존의 젖은 페인트를 밟고 지나가면 자국을 남기는가. (3단계 도색 존에서 켠다)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle")
+	bool bStainsVehicles = false;
+
+	// 자국을 남길 존. 3단계+ 정리 존을 지정한다.
+	//
+	// 자기 자신을 지정하면 안 된다. 차가 지나갈 때마다 도색 진행도가 공짜로 올라간다.
+	// (횡단보도는 도로 위에 있어서 차량이 상시 지나간다)
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Work|Vehicle")
+	TObjectPtr<ACWWorkZone_Cells> VehicleStainZone;
+
+	// 차량이 남기는 자국 하나의 반경(cm).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "1.0"))
+	float VehicleStainRadius = 60.f;
+
+	// 한 번 묻은 페인트가 바퀴에서 떨어질 때까지의 시간(초). 이 시간만큼 자국이 이어진다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "0.0"))
+	float VehicleStainDuration = 1.5f;
+
+	// 차량 위치를 확인하고 자국을 찍는 간격(초). 짧을수록 자국이 촘촘하다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "0.02"))
+	float VehicleStainInterval = 0.1f;
+
 private:
 	// 칸별 채움 상태. 이게 이 존의 전부다. 바깥 고리를 포함한 전체 격자 크기다.
 	TArray<bool> CellFilled;
@@ -215,4 +254,9 @@ private:
 
 	// 지우기 모드에서 진행도의 분모로 쓴다. 지금까지 최대로 채워졌던 점수 영역 칸 수.
 	int32 PeakCountedFilledCount = 0;
+
+	// 페인트가 묻은 차량과 남은 시간(초). 서버에서만 채운다.
+	TMap<TWeakObjectPtr<AActor>, float> StainedVehicles;
+
+	FTimerHandle VehicleStainTimerHandle;
 };

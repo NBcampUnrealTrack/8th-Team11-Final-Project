@@ -51,6 +51,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
 	ABaseVehicle* TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext);
 
+	/**
+	 * 지정 지점에서 Radius 안에 있는 차량을 모은다. 차체 표면 기준으로 잰다.
+	 *
+	 * 도로 위에서 차량과 상호작용하는 다른 파트를 위한 조회 창구다.
+	 * (젖은 페인트를 밟고 지나가는 차량을 찾는 데 쓴다)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Traffic")
+	void GetVehiclesNearPoint(const FVector& Point, float Radius, TArray<ABaseVehicle*>& OutVehicles) const;
+
 	UFUNCTION(BlueprintPure, Category = "Traffic")
 	int32 GetActiveVehicleCount() const;
 

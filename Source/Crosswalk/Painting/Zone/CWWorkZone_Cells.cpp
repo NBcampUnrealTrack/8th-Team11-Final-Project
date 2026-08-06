@@ -3,8 +3,11 @@
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/CWWorkerComponent.h"
+#include "Traffic/BaseVehicle.h"
+#include "Traffic/TrafficSubsystem.h"
 
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {
@@ -52,6 +55,104 @@ void ACWWorkZone_Cells::BeginPlay()
 
 	ApplyCellMaterial();
 	BuildGrid();
+
+	// 페인트를 밟고 지나가는 차량 추적은 서버가 한다. 클라이언트가 칸을 늘리면 그림이 갈라진다.
+	if (!HasAuthority() || !bStainsVehicles)
+	{
+		return;
+	}
+
+	if (VehicleStainZone == this)
+	{
+		// 횡단보도는 도로 위에 있어서 차량이 상시 지나간다. 자기 자신에 자국을 남기면
+		// 아무도 칠하지 않아도 도색이 끝나버린다.
+		UE_LOG(LogTemp, Warning, TEXT("[%s] VehicleStainZone 이 자기 자신입니다. 자국 남기기를 끕니다."), *GetName());
+		return;
+	}
+
+	if (VehicleStainZone == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[%s] bStainsVehicles 가 켜져 있지만 VehicleStainZone 이 비어 있습니다."), *GetName());
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		VehicleStainTimerHandle, this, &ACWWorkZone_Cells::UpdateVehicleStains, VehicleStainInterval, true);
+}
+
+void ACWWorkZone_Cells::UpdateVehicleStains()
+{
+	UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this);
+	if (TrafficSubsystem == nullptr || VehicleStainZone == nullptr)
+	{
+		return;
+	}
+
+	// 1. 젖은 페인트를 밟고 있는 차량에 페인트를 묻힌다.
+	//    이미 묻은 차가 다시 밟으면 시간이 갱신되어 자국이 더 길게 이어진다.
+	TArray<ABaseVehicle*> NearbyVehicles;
+	TrafficSubsystem->GetVehiclesNearPoint(GetActorLocation(), GetVehicleSearchRadius(), NearbyVehicles);
+
+	for (ABaseVehicle* Vehicle : NearbyVehicles)
+	{
+		if (Vehicle != nullptr && IsFilledAt(Vehicle->GetActorLocation()))
+		{
+			StainedVehicles.Add(Vehicle, VehicleStainDuration);
+		}
+	}
+
+	// 2. 묻은 차량이 지나는 자리에 자국을 남긴다. 존 밖으로 나가도 시간이 남아 있으면 계속 남는다.
+	for (TMap<TWeakObjectPtr<AActor>, float>::TIterator It(StainedVehicles); It; ++It)
+	{
+		const AActor* Vehicle = It.Key().Get();
+		if (Vehicle == nullptr)
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		VehicleStainZone->AddCellsAt(Vehicle->GetActorLocation(), VehicleStainRadius);
+
+		It.Value() -= VehicleStainInterval;
+		if (It.Value() <= 0.f)
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+float ACWWorkZone_Cells::GetVehicleSearchRadius() const
+{
+	// 차체 표면 기준 거리라, 존 경계에 걸친 차량까지 잡으려면 존 반경에 여유를 더한다.
+	return Area->Bounds.SphereRadius + VehicleStainRadius;
+}
+
+bool ACWWorkZone_Cells::IsFilledAt(const FVector& WorldLocation) const
+{
+	if (CellFilled.Num() == 0)
+	{
+		return false;
+	}
+
+	const FVector2D CellSize = GetCellSize();
+	if (CellSize.X <= KINDA_SMALL_NUMBER || CellSize.Y <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// GetCellWorldLocation 의 역산이다. 그쪽이 바뀌면 여기도 같이 바꿔야 한다.
+	const FVector AreaSize = Area->GetUnscaledBoxExtent() * 2.f;
+	const FVector LocalLocation = Area->GetComponentTransform().InverseTransformPosition(WorldLocation);
+
+	const int32 CellX = CountedOrigin.X + FMath::FloorToInt((LocalLocation.X + AreaSize.X * 0.5f) / CellSize.X);
+	const int32 CellY = CountedOrigin.Y + FMath::FloorToInt((LocalLocation.Y + AreaSize.Y * 0.5f) / CellSize.Y);
+
+	if (CellX < 0 || CellX >= FullGridSize.X || CellY < 0 || CellY >= FullGridSize.Y)
+	{
+		return false;
+	}
+
+	return CellFilled[GetCellIndex(CellX, CellY)];
 }
 
 void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
