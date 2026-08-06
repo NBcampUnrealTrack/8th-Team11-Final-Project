@@ -180,76 +180,88 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 	// 패링은 누르는 순간 한 번만 판정한다. 연타 제한은 패링 컴포넌트의 쿨타임이 맡는다.
 	EnhancedInput->BindAction(ParryAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::Parry);
+
+	// 미니게임에서 빠져나오는 키. 이 바인딩이 빠지면 Q 를 눌러도 아무 일도 안 일어난다.
+	EnhancedInput->BindAction(CancelWorkAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::CancelWork);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
 {
-	// 애셋이 이미 지정돼 있으면 그쪽을 그대로 쓴다.
-	// 단 패링은 애셋에 아직 없으므로 아래에서 따로 채운다.
-	if (DefaultMappingContext != nullptr)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[%s] 지정된 매핑 컨텍스트 애셋 '%s' 를 사용합니다."),
-			*GetName(), *DefaultMappingContext.GetName());
+	// 예전에는 DefaultMappingContext 가 지정돼 있으면 이 함수를 통째로 건너뛰었다.
+	// 그랬더니 BP 가 IMC 만 물고 액션 매핑을 일부 빼먹었을 때 그 입력이 조용히 죽었다.
+	// (실제로 IMC 에 IA_Interact / IA_Work 가 빠져 있어 E 와 Space 가 먹지 않았다)
+	//
+	// 그래서 "전부 아니면 전무" 대신 빠진 것만 채우는 방식으로 바꿨다.
+	// 애셋이 다루는 액션은 그대로 두고, 빠진 액션만 C++ 이 기본 키로 보완한다.
+	EnsureInputAction(MoveAction, TEXT("BuiltIn_Move"), EInputActionValueType::Axis2D);
+	EnsureInputAction(InteractAction, TEXT("BuiltIn_Interact"), EInputActionValueType::Boolean);
+	EnsureInputAction(WorkAction, TEXT("BuiltIn_Work"), EInputActionValueType::Boolean);
+	EnsureInputAction(ParryAction, TEXT("BuiltIn_Parry"), EInputActionValueType::Boolean);
+	EnsureInputAction(CancelWorkAction, TEXT("BuiltIn_CancelWork"), EInputActionValueType::Boolean);
 
-		BuildParryFallbackInput();
-		return;
-	}
-
-	MoveAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Move"));
-	MoveAction->ValueType = EInputActionValueType::Axis2D;
-
-	InteractAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Interact"));
-	InteractAction->ValueType = EInputActionValueType::Boolean;
-
-	WorkAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Work"));
-	WorkAction->ValueType = EInputActionValueType::Boolean;
-
-	ParryAction = NewObject<UInputAction>(this, TEXT("BuiltIn_Parry"));
-	ParryAction->ValueType = EInputActionValueType::Boolean;
-
-	UInputMappingContext* Context = NewObject<UInputMappingContext>(this, TEXT("BuiltIn_MappingContext"));
-
-	// Axis2D 에서 X = 좌우, Y = 앞뒤.
-	// 키 하나는 값 1.0 을 X 축에만 넣으므로, 앞뒤 키는 Swizzle 로 값을 Y 축으로 옮겨야 한다.
-	AddMoveKeyMapping(Context, EKeys::W, true, false);
-	AddMoveKeyMapping(Context, EKeys::S, true, true);
-	AddMoveKeyMapping(Context, EKeys::D, false, false);
-	AddMoveKeyMapping(Context, EKeys::A, false, true);
-
-	Context->MapKey(InteractAction, EKeys::E);
-
-	// 기획서 3.1 에 작업 키가 좌클릭 / Space 두 가지로 적혀 있어 둘 다 넣는다.
-	Context->MapKey(WorkAction, EKeys::SpaceBar);
-	Context->MapKey(WorkAction, EKeys::LeftMouseButton);
-
-	// 좌클릭과 Space 가 작업 키라서 패링은 우클릭에 뒀다.
-	// 기획서에 패링 키가 따로 정해지면 이 줄만 바꾸면 된다.
-	Context->MapKey(ParryAction, EKeys::RightMouseButton);
-
-	// 미니게임 중에는 WASD 가 방향 전환에 묶여 캐릭터가 움직이지 않는다.
-	// 차를 피하려면 이 키로 먼저 빠져나와야 한다.
-	Context->MapKey(CancelWorkAction, EKeys::Q);
-
-	DefaultMappingContext = Context;
+	BuildSupplementContext();
 }
 
-void ACWPlayerCharacter::BuildParryFallbackInput()
+void ACWPlayerCharacter::EnsureInputAction(TObjectPtr<UInputAction>& Action, const TCHAR* ActionName, EInputActionValueType ValueType)
 {
-	if (ParryAction != nullptr)
+	if (Action != nullptr)
 	{
 		return;
 	}
 
-	ParryAction = NewObject<UInputAction>(this, TEXT("Fallback_Parry"));
-	ParryAction->ValueType = EInputActionValueType::Boolean;
+	Action = NewObject<UInputAction>(this, ActionName);
+	Action->ValueType = ValueType;
+}
 
-	// 지정된 컨텍스트는 애셋이라 런타임에 매핑을 추가하면 안 된다. 패링만 담은 것을 따로 얹는다.
-	ParryFallbackContext = NewObject<UInputMappingContext>(this, TEXT("Fallback_ParryMappingContext"));
-	ParryFallbackContext->MapKey(ParryAction, EKeys::RightMouseButton);
+void ACWPlayerCharacter::BuildSupplementContext()
+{
+	// 지정된 IMC 가 이미 다루고 있는 액션을 모아둔다.
+	// 지정된 컨텍스트는 애셋이라 런타임에 매핑을 추가하면 안 되므로, 보완분은 별도 컨텍스트에 담는다.
+	TSet<const UInputAction*> AlreadyMapped;
+	if (DefaultMappingContext != nullptr)
+	{
+		for (const FEnhancedActionKeyMapping& Mapping : DefaultMappingContext->GetMappings())
+		{
+			AlreadyMapped.Add(Mapping.Action.Get());
+		}
+	}
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("[%s] 패링 InputAction 이 비어 있어 C++ 이 우클릭 매핑을 대신 만들었습니다. IA_Parry 애셋을 만들어 BP 에 지정하면 이 경로는 꺼집니다."),
-		*GetName());
+	SupplementContext = NewObject<UInputMappingContext>(this, TEXT("BuiltIn_SupplementContext"));
+
+	if (!AlreadyMapped.Contains(MoveAction))
+	{
+		// Axis2D 에서 X = 좌우, Y = 앞뒤.
+		// 키 하나는 값 1.0 을 X 축에만 넣으므로, 앞뒤 키는 Swizzle 로 값을 Y 축으로 옮겨야 한다.
+		AddMoveKeyMapping(SupplementContext, EKeys::W, true, false);
+		AddMoveKeyMapping(SupplementContext, EKeys::S, true, true);
+		AddMoveKeyMapping(SupplementContext, EKeys::D, false, false);
+		AddMoveKeyMapping(SupplementContext, EKeys::A, false, true);
+	}
+
+	if (!AlreadyMapped.Contains(InteractAction))
+	{
+		SupplementContext->MapKey(InteractAction, EKeys::E);
+	}
+
+	if (!AlreadyMapped.Contains(WorkAction))
+	{
+		// 기획서 3.1 에 작업 키가 좌클릭 / Space 두 가지로 적혀 있어 둘 다 넣는다.
+		SupplementContext->MapKey(WorkAction, EKeys::SpaceBar);
+		SupplementContext->MapKey(WorkAction, EKeys::LeftMouseButton);
+	}
+
+	if (!AlreadyMapped.Contains(ParryAction))
+	{
+		// 좌클릭과 Space 가 작업 키라서 패링은 우클릭에 뒀다.
+		SupplementContext->MapKey(ParryAction, EKeys::RightMouseButton);
+	}
+
+	if (!AlreadyMapped.Contains(CancelWorkAction))
+	{
+		// 미니게임 중에는 WASD 가 방향 전환에 묶여 캐릭터가 움직이지 않는다.
+		// 차를 피하려면 이 키로 먼저 빠져나와야 한다.
+		SupplementContext->MapKey(CancelWorkAction, EKeys::Q);
+	}
 }
 
 void ACWPlayerCharacter::AddMoveKeyMapping(UInputMappingContext* Context, const FKey& Key, bool bSwizzleToForwardAxis, bool bNegate)
@@ -274,12 +286,8 @@ void ACWPlayerCharacter::ApplyMappingContext()
 {
 	// 아래 실패 경로는 전부 로그를 남긴다.
 	// 조용히 return 하면 "키는 눌리는데 아무 일도 안 일어나는" 상태가 되어 원인을 찾을 수 없다.
-	if (DefaultMappingContext == nullptr)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 매핑 컨텍스트가 없습니다."), *GetName());
-		return;
-	}
-
+	//
+	// DefaultMappingContext 가 비어 있어도 문제없다. 그 경우 보완 컨텍스트가 전부를 담고 있다.
 	const APlayerController* PlayerController = Cast<APlayerController>(GetController());
 	if (PlayerController == nullptr)
 	{
@@ -296,27 +304,15 @@ void ACWPlayerCharacter::ApplyMappingContext()
 		return;
 	}
 
-	// 템플릿에서 딸려온 컨텍스트가 남아 조작이 섞이는 걸 막는다.
-	// 나중에 UI 전용 매핑 컨텍스트를 쓰게 되면, 그것까지 지워버리므로 이 줄을 걷어내야 한다.
-	InputSubsystem->ClearAllMappings();
-	InputSubsystem->AddMappingContext(DefaultMappingContext, 0);
-
-	// 패링 폴백은 지정된 컨텍스트를 건드리지 않고 위에 얹는다.
-	if (ParryFallbackContext != nullptr)
+	// ClearAllMappings 를 부르지 않는다. 보완 컨텍스트까지 같이 지워버리기 때문이다.
+	if (DefaultMappingContext != nullptr)
 	{
-		InputSubsystem->AddMappingContext(ParryFallbackContext, 1);
+		InputSubsystem->AddMappingContext(DefaultMappingContext, 0);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] 매핑 컨텍스트 '%s' 등록 완료. 매핑 %d개"),
-		*GetName(), *DefaultMappingContext.GetName(), DefaultMappingContext->GetMappings().Num());
-
-	// 어떤 키가 어떤 액션에 걸려 있는지 그대로 찍는다. 애셋을 눈으로 보는 것보다 확실하다.
-	for (const FEnhancedActionKeyMapping& Mapping : DefaultMappingContext->GetMappings())
+	if (SupplementContext != nullptr && SupplementContext->GetMappings().Num() > 0)
 	{
-		const FString ActionName = (Mapping.Action != nullptr) ? Mapping.Action.GetName() : TEXT("None");
-
-		UE_LOG(LogTemp, Log, TEXT("    %s <- %s (Triggers=%d, Modifiers=%d)"),
-			*ActionName, *Mapping.Key.ToString(), Mapping.Triggers.Num(), Mapping.Modifiers.Num());
+		InputSubsystem->AddMappingContext(SupplementContext, 0);
 	}
 }
 
