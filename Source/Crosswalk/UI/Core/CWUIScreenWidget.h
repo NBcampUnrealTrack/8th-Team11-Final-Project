@@ -19,6 +19,14 @@ class CROSSWALK_API UCWUIScreenWidget : public UUserWidget
 {
     GENERATED_BODY()
 
+#pragma region Constructor
+
+public:
+    // 모든 Screen Page가 UI 포커스를 받을 수 있도록 초기화
+    UCWUIScreenWidget(const FObjectInitializer& ObjectInitializer);
+
+#pragma endregion
+
 #pragma region PublicFunctions
 
 public:

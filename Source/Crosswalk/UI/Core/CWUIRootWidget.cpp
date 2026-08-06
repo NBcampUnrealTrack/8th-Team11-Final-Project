@@ -55,3 +55,58 @@ void UCWUIRootWidget::SetTransitionBlocking(bool bBlocking)
 }
 
 #pragma endregion
+
+#pragma region HUD
+
+bool UCWUIRootWidget::AddHUDWidget(UUserWidget* InWidget)
+{
+    if (!IsValid(Overlay_HUDLayer) || !IsValid(InWidget))
+    {
+        return false;
+    }
+
+    // 같은 Widget의 중복 추가를 방지
+    if (Overlay_HUDLayer->HasChild(InWidget))
+    {
+        return true;
+    }
+
+    // 다른 Panel에 붙은 Widget을 임의로 이동하지 않음
+    if (InWidget->GetParent() != nullptr)
+    {
+        return false;
+    }
+
+    // HUD Widget이 전체 레이어를 채우도록 추가
+    if (UOverlaySlot* AddedSlot =
+        Overlay_HUDLayer->AddChildToOverlay(InWidget))
+    {
+        AddedSlot->SetHorizontalAlignment(HAlign_Fill);
+        AddedSlot->SetVerticalAlignment(VAlign_Fill);
+        return true;
+    }
+
+    return false;
+}
+
+bool UCWUIRootWidget::RemoveHUDWidget(UUserWidget* InWidget)
+{
+    if (!IsValid(Overlay_HUDLayer) || !IsValid(InWidget))
+    {
+        return false;
+    }
+
+    // 지정한 Widget만 HUD 레이어에서 제거
+    return Overlay_HUDLayer->RemoveChild(InWidget);
+}
+
+void UCWUIRootWidget::ClearHUDWidgets()
+{
+    if (IsValid(Overlay_HUDLayer))
+    {
+        // 현재 HUD Widget을 모두 제거
+        Overlay_HUDLayer->ClearChildren();
+    }
+}
+
+#pragma endregion

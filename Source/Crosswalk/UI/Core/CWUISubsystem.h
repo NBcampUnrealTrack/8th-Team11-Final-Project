@@ -69,9 +69,14 @@ private:
 
 #pragma region Input
 
+public:
+    // 로컬 PlayerController에 지정한 입력 모드를 적용
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|Input")
+    void ApplyInputMode(ECWUIInputMode InInputMode);
+
 private:
-    // 페이지에 맞는 입력 모드를 적용
-    void ApplyInputMode(ECWUIPage Page);
+    // 페이지 종류에 대응하는 입력 모드를 선택
+    void ApplyInputModeForPage(ECWUIPage Page);
 
 #pragma endregion
 
@@ -106,4 +111,22 @@ private:
     bool bIsTransitioning = false;
 
 #pragma endregion
+
+#pragma region HUD
+
+public:
+    // 현재 Root의 HUD 레이어에 Widget을 추가
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    bool AddHUDWidget(UUserWidget* InWidget);
+
+    // 현재 Root의 HUD 레이어에서 Widget을 제거
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    bool RemoveHUDWidget(UUserWidget* InWidget);
+
+    // 현재 Root의 HUD 레이어를 모두 정리
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    void ClearHUDWidgets();
+
+#pragma endregion
+
 };

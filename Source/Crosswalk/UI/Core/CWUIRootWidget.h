@@ -31,6 +31,23 @@ public:
 
 #pragma endregion
 
+#pragma region HUD
+
+public:
+    // HUD 레이어에 Widget을 추가
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    bool AddHUDWidget(UUserWidget* InWidget);
+
+    // HUD 레이어에서 Widget을 제거
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    bool RemoveHUDWidget(UUserWidget* InWidget);
+
+    // HUD 레이어의 모든 Widget을 제거
+    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+    void ClearHUDWidgets();
+
+#pragma endregion
+
 #pragma region WidgetBindings
 
 protected:

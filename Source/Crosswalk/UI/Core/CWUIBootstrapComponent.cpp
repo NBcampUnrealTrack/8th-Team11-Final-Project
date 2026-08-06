@@ -73,25 +73,14 @@ void UCWUIBootstrapComponent::BeginPlay()
         return;
     }
 
-    // Blueprint에서 페이지 클래스가 등록됐는지 확인
-    if (PageClasses.IsEmpty())
+    // 시작 페이지가 있으면 해당 클래스가 등록됐는지 확인
+    if (InitialPage != ECWUIPage::None &&
+        !PageClasses.Contains(InitialPage))
     {
         UE_LOG(
             LogTemp,
             Error,
-            TEXT("UIBootstrap: PageClasses is empty.")
-        );
-
-        return;
-    }
-
-    // 시작 페이지가 유효하게 지정됐는지 확인
-    if (InitialPage == ECWUIPage::None)
-    {
-        UE_LOG(
-            LogTemp,
-            Error,
-            TEXT("UIBootstrap: InitialPage is None.")
+            TEXT("UIBootstrap: InitialPage class is not registered.")
         );
 
         return;
@@ -103,8 +92,44 @@ void UCWUIBootstrapComponent::BeginPlay()
         PageClasses
     );
 
-    // 최초 진입일 때만 시작 페이지 표시
-    if (UISubsystem->GetCurrentPage() == ECWUIPage::None)
+    // 설정된 HUD Widget을 현재 HUD 레이어에 추가
+    for (const TSubclassOf<UUserWidget>& HUDClass : InitialHUDClasses)
+    {
+        if (!HUDClass)
+        {
+            continue;
+        }
+
+        UUserWidget* HUDWidget =
+            CreateWidget<UUserWidget>(
+                OwnerPC,
+                HUDClass
+            );
+
+        if (!IsValid(HUDWidget))
+        {
+            UE_LOG(
+                LogTemp,
+                Error,
+                TEXT("UIBootstrap: failed to create HUD Widget.")
+            );
+
+            continue;
+        }
+
+        if (!UISubsystem->AddHUDWidget(HUDWidget))
+        {
+            UE_LOG(
+                LogTemp,
+                Error,
+                TEXT("UIBootstrap: failed to add HUD Widget.")
+            );
+        }
+    }
+
+    // 시작 Page가 지정된 최초 진입에서만 화면을 표시
+    if (InitialPage != ECWUIPage::None &&
+        UISubsystem->GetCurrentPage() == ECWUIPage::None)
     {
         if (!UISubsystem->OpenPage(InitialPage))
         {
@@ -116,6 +141,12 @@ void UCWUIBootstrapComponent::BeginPlay()
 
             return;
         }
+    }
+
+    // HUD 전용 화면은 Page를 열지 않으므로 초기 입력 모드를 직접 적용
+    if (InitialPage == ECWUIPage::None)
+    {
+        UISubsystem->ApplyInputMode(InitialInputMode);
     }
 
     UE_LOG(
