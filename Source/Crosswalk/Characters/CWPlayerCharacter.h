@@ -3,11 +3,13 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "InputCoreTypes.h"
+#include "Traffic/Interfaces/Interface_VehicleHitReceiver.h"
 #include "CWPlayerCharacter.generated.h"
 
 class UCameraComponent;
 class UCWParryComponent;
 class UCWToolHolderComponent;
+class UCWVehicleHitReactionComponent;
 class UCWWorkerComponent;
 class UInputAction;
 class UInputMappingContext;
@@ -21,6 +23,7 @@ struct FInputActionValue;
  *   - UCWWorkerComponent     : 작업 키를 누르고 있는 동안 존 게이지를 올린다
  *   - UCWToolHolderComponent : E 로 도구를 집고 놓는다
  *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
+ *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -31,7 +34,7 @@ struct FInputActionValue;
  * 메쉬도 마네킹 플레이스홀더를 생성자에서 직접 물린다. BP 를 만들지 않아도 바로 플레이된다.
  */
 UCLASS()
-class CROSSWALK_API ACWPlayerCharacter : public ACharacter
+class CROSSWALK_API ACWPlayerCharacter : public ACharacter, public IInterface_VehicleHitReceiver
 {
 	GENERATED_BODY()
 
@@ -39,6 +42,15 @@ public:
 	ACWPlayerCharacter();
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+	/** 넉백으로 날아간 뒤 착지한 시점. 여기서부터 다운 시간이 흐른다. */
+	virtual void Landed(const FHitResult& Hit) override;
+
+	/**
+	 * 차량에 치였을 때 트래픽 쪽에서 들어온다. 서버에서만 유효하다.
+	 * 넉백 물리와 행동 잠금 시작은 여기서, 잠금 해제와 시간 관리는 피격 반응 컴포넌트가 한다.
+	 */
+	virtual void ReceiveVehicleHit_Implementation(const FCWVehicleHitContext& HitContext) override;
 
 protected:
 	/** WASD 8방향 이동. 카메라가 고정돼 있으므로 화면 기준 방향이 그대로 이동 방향이 된다. */
@@ -56,7 +68,20 @@ protected:
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
 
+	/** 넉백을 모든 머신에서 같이 적용한다. 서버에서만 이동시키면 소유 클라 화면이 튄다. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_ApplyHitKnockback(FVector_NetQuantize LaunchVelocity);
+
+	/** 피격 잠금이 걸리고 풀릴 때. 작업 중단과 도구 드롭을 여기서 처리한다. */
+	UFUNCTION()
+	void HandleHitLockChanged(UCWVehicleHitReactionComponent* HitReactionComponent, bool bHitLocked);
+
 private:
+	virtual void BeginPlay() override;
+
+	/** 피격으로 쓰러져 있는 동안인지. 이동·작업·패링이 전부 막힌다. */
+	bool IsHitLocked() const;
+
 	/**
 	 * 커서 아래 월드 지점을 찾는다. 패링 방향의 기준점이 된다.
 	 * 트레이스가 빗나가면 캐릭터 위치를 그대로 낸다. 그러면 패링 컴포넌트가 정면으로 대체한다.
@@ -106,6 +131,21 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parry")
 	TObjectPtr<UCWParryComponent> ParryComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
+	TObjectPtr<UCWVehicleHitReactionComponent> HitReactionComponent;
+
+protected:
+	/**
+	 * 넉백 속도를 차량 속도에서 뽑을 때 쓰는 배율.
+	 * 기획서 6.2 는 "멀리 날아간다"고만 하고 값이 없어 테스트로 잡는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float KnockbackSpeedScale = 1.2f;
+
+	/** 넉백에 섞는 위쪽 속도(cm/s). 0이면 바닥을 미끄러지듯 밀려나 우스꽝스러운 맛이 없다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float KnockbackUpSpeed = 500.f;
 
 protected:
 	// 아래 5개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
