@@ -70,13 +70,30 @@ public:
 	 */
 	void ReceiveReportedProgress(float NewProgress);
 
+	/**
+	 * 소유 클라이언트가 자기 기계에서 확정한 붓질 하나를 서버가 받는다.
+	 *
+	 * 서버가 커서 좌표를 샘플링해서 붓질을 재현하면 안 되기 때문이다.
+	 * 좌표는 초당 10번밖에 올라오지 않는데 클라이언트는 매 프레임 칠한다. 그 차이만큼
+	 * 서버에 안 칠해진 구멍이 남고, 되돌릴 경로가 없어서 화면이 영영 어긋난다.
+	 * 그래서 "어디를 칠했다"를 클라이언트가 직접 올려보내고 서버는 그대로 적용만 한다.
+	 *
+	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
+	 */
+	virtual void ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly) {}
+
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")
-	bool CanUseTool(ECWToolType ToolType) const;
+	virtual bool CanUseTool(ECWToolType ToolType) const;
 
-	/** 지금 작업 입력을 받아줄 상태인가. (잠기지 않았고, 완료되지 않았고, 도구가 맞음) */
+	/**
+	 * 지금 작업 입력을 받아줄 상태인가. (잠기지 않았고, 완료되지 않았고, 도구가 맞음)
+	 *
+	 * virtual 인 이유: 완료된 뒤에도 계속 받아야 하는 작업이 있다.
+	 * 도색이 끝난 존에도 삐져나간 페인트는 남아 있어서 검은색 롤러는 계속 들어와야 한다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
-	bool CanWorkNow(ECWToolType ToolType) const;
+	virtual bool CanWorkNow(ECWToolType ToolType) const;
 
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetProgress() const { return Progress; }

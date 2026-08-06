@@ -99,6 +99,15 @@ public:
 	 */
 	void ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
 
+	/**
+	 * 로컬에서 확정한 붓질 하나를 서버로 올린다. 칸을 칠하는 존이 매 붓질마다 부른다.
+	 *
+	 * 서버가 ReceivedWorkLocation 으로 붓질을 재현하지 않고 이걸 쓰는 이유는
+	 * ACWBaseWorkZone::ReceiveBrushStroke 주석에 적어 뒀다.
+	 * 존이 "바뀐 칸이 있을 때"만 부르므로 붓이 멈춰 있으면 패킷도 나가지 않는다.
+	 */
+	void SubmitBrushStroke(ACWBaseWorkZone* Zone, const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly);
+
 private:
 	/** 작업 키를 눌렀는지 서버에 알린다. 진행도는 서버만 올릴 수 있다. */
 	UFUNCTION(Server, Reliable)
@@ -125,6 +134,13 @@ private:
 	/** 완주 보고. 이건 놓치면 작업이 영영 안 끝나므로 Reliable 이어야 한다. */
 	UFUNCTION(Server, Reliable)
 	void Server_ReportWorkCompleted(ACWBaseWorkZone* Zone);
+
+	/**
+	 * 붓질 보고. 놓치면 그 자리만 영영 안 칠해지거나 안 지워지므로 Reliable 이어야 한다.
+	 * 칸 상태가 실제로 바뀔 때만 나가서, 붓을 대고 가만히 있으면 패킷이 나가지 않는다.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_SubmitBrushStroke(ACWBaseWorkZone* Zone, FVector_NetQuantize WorldLocation, float Radius, bool bFilled, bool bSpillOnly);
 
 	/**
 	 * 지금 작업할 수 있는 존과 작업 지점을 찾는다.
