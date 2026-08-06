@@ -64,13 +64,24 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
 	float ParryCooldown = 1.f;
 
-	// 패링이 닿는 거리(cm). 차체 표면 기준으로 잰다. 0 이면 거리 제한 없음
+	/**
+	 * 패링이 닿는 거리(cm). 차체 표면 기준으로 잰다. 0 이면 거리 제한 없음.
+	 *
+	 * 기본값 0. 기획서에 거리 조건이 없기도 하고, 값을 주면 판정 윈도우와 이중으로 걸린다.
+	 * 윈도우 안에 들어온 차량의 표면 거리는 이미 (속도 x 윈도우)로 정해진다.
+	 * 750cm/s 차량에 윈도우 0.3초면 225cm 이므로, 반경을 그보다 좁게 주면 성공 자체가 불가능하다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
-	float ParryRadius = 150.f;
+	float ParryRadius = 0.f;
 
-	// 커서 방향을 중심으로 한 부채꼴 전체 각(도). 360 이면 방향 제한 없음
+	/**
+	 * 커서 방향을 중심으로 한 부채꼴 전체 각(도). 360 이면 방향 제한 없음.
+	 *
+	 * 기본값 360. 기획서 8.1 에서 커서는 조준이 아니라 차를 튕겨 보낼 방향이다.
+	 * 각도를 좁히면 "차를 저쪽으로 날리려고 반대편을 찍는" 조작이 전부 실패한다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
-	float ParryAngle = 90.f;
+	float ParryAngle = 360.f;
 
 	float LastLocalParryRequestTime = -999.f;
 

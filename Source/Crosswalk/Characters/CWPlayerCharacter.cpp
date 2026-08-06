@@ -305,7 +305,14 @@ void ACWPlayerCharacter::StopWork()
 
 void ACWPlayerCharacter::Parry()
 {
-	ParryComponent->RequestParry(ResolveCursorWorldLocation());
+	const FVector CursorWorldLocation = ResolveCursorWorldLocation();
+
+	// 이 줄이 안 찍히면 입력이 여기까지 오지 않은 것이고,
+	// 커서가 캐릭터 위치와 같으면 커서 트레이스가 지형을 못 맞힌 것이다.
+	UE_LOG(LogTemp, Log, TEXT("[%s] 패링 입력 수신. 커서=%s 캐릭터=%s"),
+		*GetName(), *CursorWorldLocation.ToCompactString(), *GetActorLocation().ToCompactString());
+
+	ParryComponent->RequestParry(CursorWorldLocation);
 }
 
 FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const

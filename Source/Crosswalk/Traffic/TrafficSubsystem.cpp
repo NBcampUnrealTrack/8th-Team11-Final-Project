@@ -183,13 +183,16 @@ bool UTrafficSubsystem::PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParr
 
 	if (!Vehicle.CanBeParried())
 	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 패링 불가 차종"), *Vehicle.GetName());
 		return false;
 	}
 
 	// 손이 닿는 거리. 차체 표면 기준이라 차 길이가 길어도 판정이 불리해지지 않는다.
-	if (ParryAttemptContext.ParryRadius > 0.f &&
-		Vehicle.GetDistanceToPoint(ParryAttemptContext.AttemptLocation) > ParryAttemptContext.ParryRadius)
+	const float SurfaceDistance = Vehicle.GetDistanceToPoint(ParryAttemptContext.AttemptLocation);
+	if (ParryAttemptContext.ParryRadius > 0.f && SurfaceDistance > ParryAttemptContext.ParryRadius)
 	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 반경 밖 (거리 %.0f > %.0f)"),
+			*Vehicle.GetName(), SurfaceDistance, ParryAttemptContext.ParryRadius);
 		return false;
 	}
 
@@ -200,16 +203,28 @@ bool UTrafficSubsystem::PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParr
 	{
 		// ParryAngle 은 부채꼴 전체 각이므로 절반을 기준선으로 쓴다.
 		const float HalfAngle = FMath::Clamp(ParryAttemptContext.ParryAngle, 0.f, 360.f) * 0.5f;
-		if (FVector::DotProduct(AttemptDirection, ToVehicle) < FMath::Cos(FMath::DegreesToRadians(HalfAngle)))
+		const float Dot = FVector::DotProduct(AttemptDirection, ToVehicle);
+		if (Dot < FMath::Cos(FMath::DegreesToRadians(HalfAngle)))
 		{
+			UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
+				*Vehicle.GetName(), FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))), HalfAngle);
 			return false;
 		}
 	}
 
 	// 충돌 직전 윈도우 안이어야 한다. 윈도우 값은 차량이 단일 관리한다.
 	float TimeToImpact = 0.f;
-	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact) || TimeToImpact > Vehicle.GetParryWindow())
+	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact))
 	{
+		// 진행 경로 밖이거나 이미 지나친 차량이다. 도로 위에 서 있지 않으면 여기서 전부 걸린다.
+		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
+		return false;
+	}
+
+	if (TimeToImpact > Vehicle.GetParryWindow())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 타이밍 이름 (충돌까지 %.2f초 > 윈도우 %.2f초)"),
+			*Vehicle.GetName(), TimeToImpact, Vehicle.GetParryWindow());
 		return false;
 	}
 

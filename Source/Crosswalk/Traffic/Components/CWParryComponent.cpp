@@ -16,8 +16,15 @@ UCWParryComponent::UCWParryComponent()
 void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 {
 	AActor* OwnerActor = GetOwner();
-	if (OwnerActor == nullptr || !CanUseLocalCooldown())
+	if (OwnerActor == nullptr)
 	{
+		return;
+	}
+
+	if (!CanUseLocalCooldown())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
+			ParryCooldown - (GetWorld()->GetTimeSeconds() - LastLocalParryRequestTime));
 		return;
 	}
 
@@ -54,8 +61,12 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(OwnerActor);
 	if (TrafficSubsystem == nullptr)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다."));
 		return;
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Parry] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f"),
+		TrafficSubsystem->GetActiveVehicleCount(), ParryRadius, ParryAngle);
 
 	// 어느 차를 칠지 고르고 판정하는 건 트래픽 쪽이다. 여기서는 시도 정보만 만들어 넘긴다.
 	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation, ClientInputTime);
@@ -63,8 +74,11 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	ABaseVehicle* ParriedVehicle = TrafficSubsystem->TryParryWithAttempt(ParryAttemptContext);
 	if (ParriedVehicle == nullptr)
 	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다."));
 		return;
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 성공. 대상=%s"), *ParriedVehicle->GetName());
 
 	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ABaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.
