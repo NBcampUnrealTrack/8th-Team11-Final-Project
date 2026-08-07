@@ -248,6 +248,13 @@ void ACWBaseWorkZone::OnProgressChanged(float NewProgress)
 	// 자식 클래스에서 연출을 넣는 자리.
 }
 
+void ACWBaseWorkZone::NotifyStateChanged()
+{
+	// 진행도가 바뀐 것과 같은 경로를 탄다. 델리게이트를 듣는 쪽은 무엇이 바뀌었는지
+	// 구분할 필요가 없다. 어차피 존에게 현재 상태를 다시 물어보기 때문이다.
+	HandleProgressChanged();
+}
+
 void ACWBaseWorkZone::ShowDebugProgress() const
 {
 	if (!bShowDebugProgress || GEngine == nullptr)
@@ -260,12 +267,21 @@ void ACWBaseWorkZone::ShowDebugProgress() const
 	const FColor LineColor = bLocked ? FColor::Silver : (bCompleted ? FColor::Green : FColor::Yellow);
 	const TCHAR* StateText = bLocked ? TEXT(" [잠김]") : TEXT("");
 
+	// 소수점 한 자리까지 찍는다. 반올림하면 99.6% 가 "100%" 로 나와서
+	// "100% 인데 완료가 안 된다" 로 보인다. 완료 기준(CompleteThreshold)도 같이 찍어야
+	// 덜 칠한 건지 기준이 빡빡한 건지 구분된다.
 	// 키를 액터별로 고정해야 존이 여러 개일 때 각자 한 줄씩 갱신된다. (매 프레임 새 줄이 쌓이지 않음)
 	// GetUniqueID() 는 uint32 라서 uint64 / int32 오버로드 양쪽에 걸린다. 캐스트로 하나를 지정해야 한다.
 	GEngine->AddOnScreenDebugMessage(
 		static_cast<uint64>(GetUniqueID()),
 		2.f,
 		LineColor,
-		FString::Printf(TEXT("%d. %s : %.0f%%%s"), WorkOrder, *ObjectiveName.ToString(), Progress * 100.f, StateText));
+		FString::Printf(TEXT("%d. %s : %.1f%% / %.0f%%%s%s"),
+			WorkOrder,
+			*ObjectiveName.ToString(),
+			Progress * 100.f,
+			CompleteThreshold * 100.f,
+			*GetDebugDetailText(),
+			StateText));
 }
 

@@ -90,6 +90,16 @@ public:
 
 	virtual bool CanWorkNow(ECWToolType ToolType) const override;
 
+	/** 도색과 정리를 겸하는 존이라 "페인트 정리" 줄을 하나 더 낸다. */
+	virtual void GetExtraObjectives(TArray<FCWStageObjective>& OutObjectives) const override;
+
+	/**
+	 * 페인트가 말랐는가. 마르면 차량이 밟아도 더 이상 번지지 않는다.
+	 * 도색이 완료되고 PaintDryDelay 가 지나면 true 가 된다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsPaintDry() const { return bPaintDry; }
+
 	UFUNCTION(BlueprintPure, Category = "Work")
 	int32 GetFilledCellCount() const { return FilledCellCount; }
 
@@ -104,12 +114,30 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	int32 GetSpillCellCount() const { return FilledCellCount - CountedFilledCount; }
 
+protected:
+	virtual void OnProgressChanged(float NewProgress) override;
+
+	/** 디버그 줄에 "칠한 칸 / 전체 칸" 과 삐져나온 칸 수를 덧붙인다. */
+	virtual FString GetDebugDetailText() const override;
+
 private:
 	/**
 	 * 젖은 페인트를 밟은 차량을 찾고, 이미 묻은 차량이 지나는 자리에 자국을 남긴다.
 	 * 서버에서만 돌고, bStainsVehicles 를 켠 존만 타이머를 건다. (기획서 3.2 "차량이 밟아서 튄 페인트")
 	 */
 	void UpdateVehicleStains();
+
+	/** 차량 확인 타이머를 켜고 끈다. 이미 원하는 상태면 아무것도 하지 않는다. */
+	void SetVehicleStainTimerEnabled(bool bEnabled);
+
+	/**
+	 * 도색 완료 여부를 보고 마름 대기를 시작하거나 취소한다.
+	 * 진행도가 바뀔 때마다 불린다. 서버에서만 유효하다.
+	 */
+	void RefreshPaintDryState();
+
+	/** 마름 대기가 끝났다. 이 시점부터 차량에 페인트가 묻지 않는다. */
+	void HandlePaintDried();
 
 	/** 차량을 찾을 반경. 존 크기에 자국 반경만큼 여유를 더한다. */
 	float GetVehicleSearchRadius() const;
@@ -194,6 +222,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	TArray<ECWToolType> CleanupTools;
 
+	// 삐져나간 페인트 정리를 체크리스트에 별도 줄로 낼 때 쓸 이름. ("페인트 정리")
+	//
+	// 이 존은 도색과 정리를 겸한다. Area 안쪽 칸은 ObjectiveName("도색 작업") 의 진행도가 되고,
+	// 바깥 고리에 묻은 페인트는 이 이름으로 한 줄이 더 생긴다. 바깥 고리가 깨끗해지면 완료다.
+	// 줄이 서는 위치는 이 존의 WorkOrder 바로 다음이다. (도색 작업 → 페인트 정리)
+	//
+	// 비워두면 줄이 생기지 않는다. 청소/테두리 존은 비워 두면 된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	FText CleanupObjectiveName;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	ECWCellWorkMode WorkMode = ECWCellWorkMode::FillCells;
 
@@ -249,6 +287,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "0.02"))
 	float VehicleStainInterval = 0.1f;
 
+	// 도색이 완료되고 이 시간이 지나면 페인트가 마른다. (초)
+	// 마른 뒤에는 차량이 밟아도 페인트가 묻지 않는다.
+	//
+	// 이게 없으면 차량이 5~8초마다 계속 새 자국을 만들어서 "페인트 정리" 목표가
+	// 끝나지 않고, 전 목표 동시 완료를 요구하는 스테이지 클리어가 뜨지 않는다.
+	// 0 이면 완료 즉시 마른다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "0.0"))
+	float PaintDryDelay = 5.f;
+
 private:
 	// 칸별 채움 상태. 이게 이 존의 전부다. 바깥 고리를 포함한 전체 격자 크기다.
 	TArray<bool> CellFilled;
@@ -272,4 +319,9 @@ private:
 	TMap<TWeakObjectPtr<AActor>, float> StainedVehicles;
 
 	FTimerHandle VehicleStainTimerHandle;
+
+	// 페인트가 말랐는가. 서버에서만 쓴다. 자국을 찍는 것도 서버뿐이라 리플리케이트하지 않는다.
+	bool bPaintDry = false;
+
+	FTimerHandle PaintDryTimerHandle;
 };
