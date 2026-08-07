@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+ï»¿// Copyright Crosswalk Team. All Rights Reserved.
 // CWGameInstance.h
 
 #pragma once
@@ -7,198 +7,322 @@
 #include "Engine/GameInstance.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "Data/Enums/CWSessionTypes.h"
+#include "Data/Structs/CWRoomSummary.h"
 #include "CWGameInstance.generated.h"
 
+// ì„¸ì…˜ ê²€ìƒ‰ì„ ì–´ë–¤ ëª©ì ìœ¼ë¡œ ì‹¤í–‰í–ˆëŠ”ì§€ êµ¬ë¶„
 enum class ECWSessionFindPurpose : uint8
 {
-    None,
-    CheckRoomCodeForCreate,
-    JoinByRoomCode,
-    ManualRefresh
+	None,
+	CheckRoomCodeForCreate,
+	JoinByRoomCode,
+	ManualRefresh
 };
+
+// ë¡œê·¸ì¸ ê²°ê³¼ë¥¼ UIì— ì „ë‹¬
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FCWOnLoginStateChangedSignature,
+	bool,
+	bSuccess,
+	const FString&,
+	DisplayName,
+	ECWLoginFailure,
+	Failure
+);
+
+// ì„¸ì…˜ ì‘ì—… ê²°ê³¼ë¥¼ UIì— ì „ë‹¬
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FCWOnSessionOperationCompletedSignature,
+	ECWSessionOperation,
+	Operation,
+	bool,
+	bSuccess,
+	ECWSessionFailure,
+	Failure
+);
+
+// ìˆ˜ë™ ê²€ìƒ‰ìœ¼ë¡œ ê°±ì‹ ëœ ë°© ëª©ë¡ì„ UIì— ì „ë‹¬
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCWOnRoomListUpdatedSignature,
+	const TArray<FCWRoomSummary>&,
+	Rooms
+);
 
 UCLASS()
 class CROSSWALK_API UCWGameInstance : public UGameInstance
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 public:
-    UCWGameInstance();
+	UCWGameInstance();
 
-    // °ÔÀÓ ½ÃÀÛ ½Ã ¿Â¶óÀÎ ¼­ºê½Ã½ºÅÛ ÀÎÅÍÆäÀÌ½º¸¦ Ä³½Ì
-    virtual void Init() override;
+	// ê²Œì„ ì‹œì‘ ì‹œ ì˜¨ë¼ì¸ ì„œë¸Œì‹œìŠ¤í…œ ì¸í„°í˜ì´ìŠ¤ë¥¼ ìºì‹±
+	virtual void Init() override;
 
-    // °ÔÀÓ Á¾·á ½Ã µî·ÏµÈ ¿Â¶óÀÎ µ¨¸®°ÔÀÌÆ®¸¦ Á¤¸®
-    virtual void Shutdown() override;
+	// ê²Œì„ ì¢…ë£Œ ì‹œ ë“±ë¡í•œ ì˜¨ë¼ì¸ ë¸ë¦¬ê²Œì´íŠ¸ë¥¼ ì •ë¦¬
+	virtual void Shutdown() override;
 
-    // Epic Account PortalÀ» ÅëÇØ ÇöÀç ·ÎÄÃ À¯Àú¸¦ EOS¿¡ ·Î±×ÀÎ
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
-    void LoginWithEpic();
+	// Epic Account Portalì„ í†µí•´ í˜„ì¬ ë¡œì»¬ ìœ ì €ë¥¼ EOSì— ë¡œê·¸ì¸
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
+	void LoginWithEpic();
 
-    // Steam Å¬¶óÀÌ¾ğÆ® ÀÎÁõ Á¤º¸¸¦ »ç¿ëÇØ EOS ·Î±×ÀÎÀ» ¿äÃ»
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
-    void LoginWithSteam();
+	// Steam í´ë¼ì´ì–¸íŠ¸ ì¸ì¦ ì •ë³´ë¥¼ ì‚¬ìš©í•´ EOS ë¡œê·¸ì¸ì„ ìš”ì²­
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
+	void LoginWithSteam();
 
 #pragma region Online Test
 
-    // EOS Developer Authentication Tool Å×½ºÆ® °èÁ¤À¸·Î ·Î±×ÀÎ
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
-    void LoginWithDeveloperTool(const FString& CredentialName);
+	// EOS Developer Authentication Tool í…ŒìŠ¤íŠ¸ ê³„ì •ìœ¼ë¡œ ë¡œê·¸ì¸
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
+	void LoginWithDeveloperTool(const FString& CredentialName);
 
-    // Developer Authentication ToolÀÇ Player1 °èÁ¤À¸·Î ·Î±×ÀÎ
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
-    void LoginAsPlayer1();
+	// Developer Authentication Toolì˜ Player1 ê³„ì •ìœ¼ë¡œ ë¡œê·¸ì¸
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
+	void LoginAsPlayer1();
 
-    // Developer Authentication ToolÀÇ Player2 °èÁ¤À¸·Î ·Î±×ÀÎ
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
-    void LoginAsPlayer2();
+	// Developer Authentication Toolì˜ Player2 ê³„ì •ìœ¼ë¡œ ë¡œê·¸ì¸
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
+	void LoginAsPlayer2();
 
 #pragma endregion
 
-    // »õ ¹æ ÄÚµå¸¦ »ı¼ºÇÏ°í, Áßº¹ ¿©ºÎ¸¦ È®ÀÎÇÑ µÚ ¼¼¼ÇÀ» »ı¼º
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-    void CreateRoom();
+	// ë°© ì½”ë“œë¥¼ ìƒì„±í•˜ê³ , ì¤‘ë³µ ì—¬ë¶€ë¥¼ í™•ì¸í•œ ë’¤ ì„¸ì…˜ì„ ìƒì„±
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
+	void CreateRoom();
 
-    // ÇöÀç °Ë»ö °¡´ÉÇÑ °ø°³ ¼¼¼Ç ¸ñ·ÏÀ» °¡Á®¿È
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-    void FindRooms();
+	// í˜„ì¬ ê²€ìƒ‰ ê°€ëŠ¥í•œ ê³µê°œ ì„¸ì…˜ ëª©ë¡ì„ ê°€ì ¸ì˜´
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
+	void FindRooms();
 
-    // ÀÔ·ÂÇÑ ¹æ ÄÚµå¿Í ÀÏÄ¡ÇÏ´Â ¼¼¼ÇÀ» Ã£¾Æ ÀÔÀå
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-    void JoinRoomByCode(const FString& RoomCode);
+	// ì…ë ¥í•œ ë°© ì½”ë“œì™€ ì¼ì¹˜í•˜ëŠ” ì„¸ì…˜ì„ ì°¾ì•„ ì…ì¥
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
+	void JoinRoomByCode(const FString& RoomCode);
 
-    // ¸¶Áö¸· ¼¼¼Ç °Ë»ö °á°ú Áß Ã¹ ¹øÂ° ¹æ¿¡ ÀÔÀå
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-    void JoinFirstFoundRoom();
+	// ë§ˆì§€ë§‰ ì„¸ì…˜ ê²€ìƒ‰ ê²°ê³¼ ì¤‘ ì²« ë²ˆì§¸ ë°©ì— ì…ì¥
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
+	void JoinFirstFoundRoom();
 
-    // ÇöÀç »ı¼ºÇÏ°Å³ª Âü°¡ ÁßÀÎ ¼¼¼ÇÀ» Á¦°Å
-    UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-    void DestroyRoom();
+	// í˜„ì¬ ìƒì„±í•˜ê±°ë‚˜ ì°¸ê°€ ì¤‘ì¸ ì„¸ì…˜ì„ ì œê±°
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
+	void DestroyRoom();
 
-    // UI¿¡ Ç¥½ÃÇÒ ¸¶Áö¸· ¿Â¶óÀÎ Ã³¸® »óÅÂ ¸Ş½ÃÁö¸¦ ¹İÈ¯
-    UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
-    FString GetLastStatus() const;
+	// UIì— í‘œì‹œí•  ë§ˆì§€ë§‰ ì˜¨ë¼ì¸ ì²˜ë¦¬ ìƒíƒœ ë©”ì‹œì§€ë¥¼ ë°˜í™˜
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
+	FString GetLastStatus() const;
 
-    // È£½ºÆ®°¡ »ı¼ºÇÑ ÇöÀç ¹æ ÄÚµå¸¦ ¹İÈ¯
-    UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
-    FString GetCurrentRoomCode() const;
+	// í˜¸ìŠ¤íŠ¸ê°€ ìƒì„±í•œ í˜„ì¬ ë°© ì½”ë“œë¥¼ ë°˜í™˜
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	FString GetCurrentRoomCode() const;
+
+	// ë¡œì»¬ ìœ ì € 0ë²ˆì´ ì˜¨ë¼ì¸ ì„œë¹„ìŠ¤ì— ë¡œê·¸ì¸ë˜ì–´ ìˆëŠ”ì§€ í™•ì¸
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
+	bool IsLoggedIn() const;
+
+	// UIì— í‘œì‹œí•  í˜„ì¬ ë¡œê·¸ì¸ ê³„ì • ì´ë¦„ì„ ë°˜í™˜
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
+	FString GetLoggedInDisplayName() const;
+
+	// ë°© ìƒì„±, ê²€ìƒ‰, ì°¸ê°€, íŒŒê¸° ìš”ì²­ì´ ì§„í–‰ ì¤‘ì¸ì§€ í™•ì¸
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	bool IsSessionOperationInFlight() const;
+
+	// ë§ˆì§€ë§‰ìœ¼ë¡œ ìˆ˜ë™ ê²€ìƒ‰í•œ ë°© ëª©ë¡ì„ ë°˜í™˜
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	const TArray<FCWRoomSummary>& GetCachedRoomList() const;
 
 protected:
-    // ¼¼¼Ç »ı¼º ¼º°ø ÈÄ ¸®½¼ ¼­¹ö·Î ÀÌµ¿ÇÒ ¸Ê °æ·Î
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
-    FString ListenMapPath;
+	// ì„¸ì…˜ ìƒì„± ì„±ê³µ ì‹œ ë¦¬ìŠ¨ ì„œë²„ë¡œ ì´ë™í•  ë§µ ê²½ë¡œ
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	FString ListenMapPath;
 
-    // ÇÑ ¼¼¼Ç¿¡ ÀÔÀå °¡´ÉÇÑ ÃÖ´ë ÇÃ·¹ÀÌ¾î ¼ö
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
-    int32 MaxPublicConnections;
+	// í•œ ì„¸ì…˜ì— ì…ì¥ ê°€ëŠ¥í•œ ìµœëŒ€ í”Œë ˆì´ì–´ ìˆ˜
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	int32 MaxPublicConnections;
 
-    // ÀÚµ¿ »ı¼ºÇÒ ¹æ ÄÚµåÀÇ ¹®ÀÚ¿­ ±æÀÌ
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
-    int32 RoomCodeLength;
+	// ìë™ ìƒì„±í•  ë°© ì½”ë“œì˜ ë¬¸ì ê¸¸ì´
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	int32 RoomCodeLength;
 
-    // Áßº¹ ¹æ ÄÚµå°¡ ³ª¿ÔÀ» ¶§ ´Ù½Ã »ı¼ºÇÒ ÃÖ´ë È½¼ö
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
-    int32 MaxRoomCodeGenerateAttempts;
-
-private:
-    // ÇöÀç DefaultPlatformServiceÀÇ Identity/Session ÀÎÅÍÆäÀÌ½º¸¦ °¡Á®¿È
-    void CacheOnlineInterfaces();
-
-    // ·ÎÄÃ À¯Àú 0¹øÀÌ ¿Â¶óÀÎ ¼­ºñ½º¿¡ ·Î±×ÀÎµÇ¾î ÀÖ´ÂÁö È®ÀÎ
-    bool IsLoggedIn() const;
-
-    // ·Î±×¿Í È­¸é¿¡ Ç¥½ÃÇÒ »óÅÂ ¸Ş½ÃÁö¸¦ °»½Å
-    void SetStatus(const FString& NewStatus);
-
-    // »ç¶÷ÀÌ ÀĞ±â ½¬¿î ·£´ı ¹æ ÄÚµå¸¦ »ı¼º
-    FString GenerateRoomCode() const;
-
-    // »ç¿ëÀÚ°¡ ÀÔ·ÂÇÑ ¹æ ÄÚµåÀÇ °ø¹éÀ» Á¦°ÅÇÏ°í ´ë¹®ÀÚ·Î ÅëÀÏ
-    FString NormalizeRoomCode(const FString& RoomCode) const;
-
-    // ¸ñÀû¿¡ µû¶ó EOS ¼¼¼Ç °Ë»öÀ» ½ÃÀÛ
-    void StartFindSessions(ECWSessionFindPurpose FindPurpose);
-
-    // È®Á¤µÈ ¹æ ÄÚµå·Î EOS ¼¼¼ÇÀ» »ı¼º
-    void CreateSessionWithRoomCode(const FString& RoomCode);
-
-    // °Ë»ö °á°ú ¾È¿¡ °°Àº ¹æ ÄÚµå°¡ Á¸ÀçÇÏ´ÂÁö È®ÀÎ
-    bool HasRoomCodeInSearchResults(const FString& RoomCode) const;
-
-    // ·Î±×ÀÎ ¿Ï·á Äİ¹éÀ» µî·Ï
-    void BindLoginCompleteDelegate();
-
-    // ·Î±×ÀÎ ¿Ï·á Äİ¹éÀ» ÇØÁ¦
-    void ClearLoginCompleteDelegate();
-
-    // ¼¼¼Ç »ı¼º ¿Ï·á Äİ¹éÀ» µî·Ï
-    void BindCreateSessionCompleteDelegate();
-
-    // ¼¼¼Ç »ı¼º ¿Ï·á Äİ¹éÀ» ÇØÁ¦
-    void ClearCreateSessionCompleteDelegate();
-
-    // ¼¼¼Ç °Ë»ö ¿Ï·á Äİ¹éÀ» µî·Ï
-    void BindFindSessionsCompleteDelegate();
-
-    // ¼¼¼Ç °Ë»ö ¿Ï·á Äİ¹éÀ» ÇØÁ¦
-    void ClearFindSessionsCompleteDelegate();
-
-    // ¼¼¼Ç Âü°¡ ¿Ï·á Äİ¹éÀ» µî·Ï
-    void BindJoinSessionCompleteDelegate();
-
-    // ¼¼¼Ç Âü°¡ ¿Ï·á Äİ¹éÀ» ÇØÁ¦
-    void ClearJoinSessionCompleteDelegate();
-
-    // ¼¼¼Ç Á¦°Å ¿Ï·á Äİ¹éÀ» µî·Ï
-    void BindDestroySessionCompleteDelegate();
-
-    // ¼¼¼Ç Á¦°Å ¿Ï·á Äİ¹éÀ» ÇØÁ¦
-    void ClearDestroySessionCompleteDelegate();
-
-    // ¿Â¶óÀÎ ·Î±×ÀÎ ¿äÃ»ÀÌ ³¡³µÀ» ¶§ È£Ãâ.
-    void OnLoginComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error);
-
-    // ¼¼¼Ç »ı¼º ¿äÃ»ÀÌ ³¡³µÀ» ¶§ È£Ãâ
-    void OnCreateSessionComplete(FName SessionName, bool bWasSuccessful);
-
-    // ¼¼¼Ç °Ë»ö ¿äÃ»ÀÌ ³¡³µÀ» ¶§ È£Ãâ
-    void OnFindSessionsComplete(bool bWasSuccessful);
-
-    // ¼¼¼Ç Âü°¡ ¿äÃ»ÀÌ ³¡³µÀ» ¶§ È£Ãâ
-    void OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
-
-    // ¼¼¼Ç Á¦°Å ¿äÃ»ÀÌ ³¡³µÀ» ¶§ È£Ãâ
-    void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
+	// ì¤‘ë³µ ë°© ì½”ë“œê°€ ë‚˜ì™”ì„ ë•Œ ë‹¤ì‹œ ìƒì„±í•  ìµœëŒ€ íšŸìˆ˜
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	int32 MaxRoomCodeGenerateAttempts;
 
 private:
-    UPROPERTY()
-    FString LastStatus;
+	// í˜„ì¬ DefaultPlatformServiceì˜ Identity/Session ì¸í„°í˜ì´ìŠ¤ë¥¼ ê°€ì ¸ì˜´
+	void CacheOnlineInterfaces();
 
-    UPROPERTY()
-    FString CurrentRoomCode;
+	// ë¡œê·¸ì¸ í™”ë©´ì— í‘œì‹œí•  ìƒíƒœ ë©”ì‹œì§€ë¥¼ ê°±ì‹ 
+	void SetStatus(const FString& NewStatus);
 
-    UPROPERTY()
-    FString PendingRoomCode;
+	// ì‚¬ëŒì´ ì½ê¸° ì‰¬ìš´ ëœë¤ ë°© ì½”ë“œë¥¼ ìƒì„±
+	FString GenerateRoomCode() const;
 
-    UPROPERTY()
-    FString PendingJoinRoomCode;
+	// ì‚¬ìš©ìê°€ ì…ë ¥í•œ ë°© ì½”ë“œì˜ ê³µë°±ì„ ì œê±°í•˜ê³  ëŒ€ë¬¸ìë¡œ í†µì¼
+	FString NormalizeRoomCode(const FString& RoomCode) const;
 
-    IOnlineIdentityPtr IdentityInterface;
-    IOnlineSessionPtr SessionInterface;
-    TSharedPtr<FOnlineSessionSearch> SessionSearch;
+	// ëª©ì ì— ë”°ë¼ EOS ì„¸ì…˜ ê²€ìƒ‰ì„ ì‹œì‘
+	void StartFindSessions(ECWSessionFindPurpose FindPurpose);
 
-    ECWSessionFindPurpose CurrentFindPurpose;
-    int32 RoomCodeGenerateAttemptCount;
+	// í™•ì •ëœ ë°© ì½”ë“œë¡œ EOS ì„¸ì…˜ì„ ìƒì„±
+	void CreateSessionWithRoomCode(const FString& RoomCode);
 
-    FDelegateHandle LoginCompleteDelegateHandle;
-    FDelegateHandle CreateSessionCompleteDelegateHandle;
-    FDelegateHandle FindSessionsCompleteDelegateHandle;
-    FDelegateHandle JoinSessionCompleteDelegateHandle;
-    FDelegateHandle DestroySessionCompleteDelegateHandle;
+	// ê²€ìƒ‰ ê²°ê³¼ ì•ˆì— ê°™ì€ ë°© ì½”ë“œê°€ ì¡´ì¬í•˜ëŠ”ì§€ í™•ì¸
+	bool HasRoomCodeInSearchResults(const FString& RoomCode) const;
 
-    FOnLoginCompleteDelegate LoginCompleteDelegate;
-    FOnCreateSessionCompleteDelegate CreateSessionCompleteDelegate;
-    FOnFindSessionsCompleteDelegate FindSessionsCompleteDelegate;
-    FOnJoinSessionCompleteDelegate JoinSessionCompleteDelegate;
-    FOnDestroySessionCompleteDelegate DestroySessionCompleteDelegate;
+	// ê²€ìƒ‰ ê²°ê³¼ í•œ ê°œë¥¼ UIì—ì„œ ì‚¬ìš©í•  ë°© ìš”ì•½ ì •ë³´ë¡œ ë³€í™˜
+	FCWRoomSummary BuildRoomSummary(const FOnlineSessionSearchResult& SearchResult) const;
+
+	// í˜„ì¬ ì„¸ì…˜ ê²€ìƒ‰ ê²°ê³¼ë¥¼ UI í‘œì‹œìš© ë°© ëª©ë¡ ìºì‹œì— ë°˜ì˜
+	void RefreshCachedRoomList();
+
+	// ì„¸ì…˜ ì‘ì—… ì‹œì‘ ìƒíƒœë¥¼ ê¸°ë¡í•´ UI ì¤‘ë³µ ì…ë ¥ì„ ë§‰ì„ ìˆ˜ ìˆê²Œ í•¨
+	void BeginSessionOperation(ECWSessionOperation Operation);
+
+	// ì„¸ì…˜ ì‘ì—… ì™„ë£Œ ìƒíƒœë¥¼ ê¸°ë¡í•˜ê³  UIì— ê²°ê³¼ë¥¼ ì „ë‹¬
+	void CompleteSessionOperation(ECWSessionOperation Operation, bool bSuccess, ECWSessionFailure Failure);
+
+	// ì„¸ì…˜ ì‘ì—… ì‹¤íŒ¨ ì²˜ë¦¬ë¥¼ í•œ ê³³ì—ì„œ ì •ë¦¬
+	void FailSessionOperation(ECWSessionOperation Operation, ECWSessionFailure Failure, const FString& StatusMessage);
+
+	// EOS ë¡œê·¸ì¸ ì—ëŸ¬ ë¬¸ìì—´ì„ UIìš© ë¡œê·¸ì¸ ì‹¤íŒ¨ íƒ€ì…ìœ¼ë¡œ ë³€í™˜
+	ECWLoginFailure MapLoginFailure(const FString& Error) const;
+
+	// ì„¸ì…˜ ì°¸ê°€ ê²°ê³¼ë¥¼ UIìš© ì„¸ì…˜ ì‹¤íŒ¨ íƒ€ì…ìœ¼ë¡œ ë³€í™˜
+	ECWSessionFailure MapJoinSessionFailure(EOnJoinSessionCompleteResult::Type Result) const;
+
+	// ë¡œê·¸ì¸ ì™„ë£Œ ì½œë°±ì„ ë“±ë¡
+	void BindLoginCompleteDelegate();
+
+	// ë¡œê·¸ì¸ ì™„ë£Œ ì½œë°±ì„ í•´ì œ
+	void ClearLoginCompleteDelegate();
+
+	// ì„¸ì…˜ ìƒì„± ì™„ë£Œ ì½œë°±ì„ ë“±ë¡
+	void BindCreateSessionCompleteDelegate();
+
+	// ì„¸ì…˜ ìƒì„± ì™„ë£Œ ì½œë°±ì„ í•´ì œ
+	void ClearCreateSessionCompleteDelegate();
+
+	// ì„¸ì…˜ ê²€ìƒ‰ ì™„ë£Œ ì½œë°±ì„ ë“±ë¡
+	void BindFindSessionsCompleteDelegate();
+
+	// ì„¸ì…˜ ê²€ìƒ‰ ì™„ë£Œ ì½œë°±ì„ í•´ì œ
+	void ClearFindSessionsCompleteDelegate();
+
+	// ì„¸ì…˜ ì°¸ê°€ ì™„ë£Œ ì½œë°±ì„ ë“±ë¡
+	void BindJoinSessionCompleteDelegate();
+
+	// ì„¸ì…˜ ì°¸ê°€ ì™„ë£Œ ì½œë°±ì„ í•´ì œ
+	void ClearJoinSessionCompleteDelegate();
+
+	// ì„¸ì…˜ ì œê±° ì™„ë£Œ ì½œë°±ì„ ë“±ë¡
+	void BindDestroySessionCompleteDelegate();
+
+	// ì„¸ì…˜ ì œê±° ì™„ë£Œ ì½œë°±ì„ í•´ì œ
+	void ClearDestroySessionCompleteDelegate();
+
+	// ì˜¨ë¼ì¸ ë¡œê·¸ì¸ ìš”ì²­ì´ ëë‚¬ì„ ë•Œ í˜¸ì¶œ
+	void OnLoginComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error);
+
+	// ì„¸ì…˜ ìƒì„± ìš”ì²­ì´ ëë‚¬ì„ ë•Œ í˜¸ì¶œ
+	void OnCreateSessionComplete(FName SessionName, bool bWasSuccessful);
+
+	// ì„¸ì…˜ ê²€ìƒ‰ ìš”ì²­ì´ ëë‚¬ì„ ë•Œ í˜¸ì¶œ
+	void OnFindSessionsComplete(bool bWasSuccessful);
+
+	// ì„¸ì…˜ ì°¸ê°€ ìš”ì²­ì´ ëë‚¬ì„ ë•Œ í˜¸ì¶œ
+	void OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
+
+	// ì„¸ì…˜ ì œê±° ìš”ì²­ì´ ëë‚¬ì„ ë•Œ í˜¸ì¶œ
+	void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
+
+private:
+	// UIì— í‘œì‹œí•  ë§ˆì§€ë§‰ ì˜¨ë¼ì¸ ì²˜ë¦¬ ìƒíƒœ ë©”ì‹œì§€
+	UPROPERTY()
+	FString LastStatus;
+
+	// í˜¸ìŠ¤íŠ¸ê°€ ìƒì„±í•œ í˜„ì¬ ë°© ì½”ë“œ
+	UPROPERTY()
+	FString CurrentRoomCode;
+
+	// ë°© ìƒì„± ì „ ì¤‘ë³µ ê²€ì‚¬ë¥¼ ê¸°ë‹¤ë¦¬ëŠ” ì„ì‹œ ë°© ì½”ë“œ
+	UPROPERTY()
+	FString PendingRoomCode;
+
+	// ë°© ì½”ë“œ ì…ì¥ ì‹œ ê²€ìƒ‰ ì™„ë£Œ í›„ ì‚¬ìš©í•  ì„ì‹œ ë°© ì½”ë“œ
+	UPROPERTY()
+	FString PendingJoinRoomCode;
+
+	// UIì— í‘œì‹œí•  í˜„ì¬ ë¡œê·¸ì¸ ê³„ì • ì´ë¦„
+	UPROPERTY()
+	FString LoggedInDisplayName;
+
+	// ë§ˆì§€ë§‰ ìˆ˜ë™ ê²€ìƒ‰ìœ¼ë¡œ ê°€ì ¸ì˜¨ ë°© ëª©ë¡ ìºì‹œ
+	UPROPERTY()
+	TArray<FCWRoomSummary> CachedRoomList;
+
+	// í˜„ì¬ ì˜¨ë¼ì¸ ì„œë¹„ìŠ¤ì˜ ë¡œê·¸ì¸ ì¸í„°í˜ì´ìŠ¤
+	IOnlineIdentityPtr IdentityInterface;
+
+	// í˜„ì¬ ì˜¨ë¼ì¸ ì„œë¹„ìŠ¤ì˜ ì„¸ì…˜ ì¸í„°í˜ì´ìŠ¤
+	IOnlineSessionPtr SessionInterface;
+
+	// ë§ˆì§€ë§‰ ì„¸ì…˜ ê²€ìƒ‰ ìš”ì²­ ê²°ê³¼
+	TSharedPtr<FOnlineSessionSearch> SessionSearch;
+
+	// í˜„ì¬ ì„¸ì…˜ ê²€ìƒ‰ì´ ì–´ë–¤ ëª©ì ìœ¼ë¡œ ì‹¤í–‰ ì¤‘ì¸ì§€ êµ¬ë¶„
+	ECWSessionFindPurpose CurrentFindPurpose;
+
+	// í˜„ì¬ ì§„í–‰ ì¤‘ì¸ ì„¸ì…˜ ì‘ì—… ì¢…ë¥˜
+	ECWSessionOperation CurrentSessionOperation;
+
+	// ë°© ì½”ë“œ ì¤‘ë³µ ë°œìƒ ì‹œ ì¬ìƒì„±í•œ íšŸìˆ˜
+	int32 RoomCodeGenerateAttemptCount;
+
+	// ì„¸ì…˜ ì‘ì—… ì¤‘ UI ì¤‘ë³µ ìš”ì²­ì„ ë§‰ê¸° ìœ„í•œ ìƒíƒœ
+	bool bSessionOperationInFlight;
+
+	// ë¡œê·¸ì¸ ì™„ë£Œ ë¸ë¦¬ê²Œì´íŠ¸ í•´ì œë¥¼ ìœ„í•œ í•¸ë“¤
+	FDelegateHandle LoginCompleteDelegateHandle;
+
+	// ì„¸ì…˜ ìƒì„± ì™„ë£Œ ë¸ë¦¬ê²Œì´íŠ¸ í•´ì œë¥¼ ìœ„í•œ í•¸ë“¤
+	FDelegateHandle CreateSessionCompleteDelegateHandle;
+
+	// ì„¸ì…˜ ê²€ìƒ‰ ì™„ë£Œ ë¸ë¦¬ê²Œì´íŠ¸ í•´ì œë¥¼ ìœ„í•œ í•¸ë“¤
+	FDelegateHandle FindSessionsCompleteDelegateHandle;
+
+	// ì„¸ì…˜ ì°¸ê°€ ì™„ë£Œ ë¸ë¦¬ê²Œì´íŠ¸ í•´ì œë¥¼ ìœ„í•œ í•¸ë“¤
+	FDelegateHandle JoinSessionCompleteDelegateHandle;
+
+	// ì„¸ì…˜ ì œê±° ì™„ë£Œ ë¸ë¦¬ê²Œì´íŠ¸ í•´ì œë¥¼ ìœ„í•œ í•¸ë“¤
+	FDelegateHandle DestroySessionCompleteDelegateHandle;
+
+	// ë¡œê·¸ì¸ ì™„ë£Œ ì½œë°± ê°ì²´
+	FOnLoginCompleteDelegate LoginCompleteDelegate;
+
+	// ì„¸ì…˜ ìƒì„± ì™„ë£Œ ì½œë°± ê°ì²´
+	FOnCreateSessionCompleteDelegate CreateSessionCompleteDelegate;
+
+	// ì„¸ì…˜ ê²€ìƒ‰ ì™„ë£Œ ì½œë°± ê°ì²´
+	FOnFindSessionsCompleteDelegate FindSessionsCompleteDelegate;
+
+	// ì„¸ì…˜ ì°¸ê°€ ì™„ë£Œ ì½œë°± ê°ì²´
+	FOnJoinSessionCompleteDelegate JoinSessionCompleteDelegate;
+
+	// ì„¸ì…˜ ì œê±° ì™„ë£Œ ì½œë°± ê°ì²´
+	FOnDestroySessionCompleteDelegate DestroySessionCompleteDelegate;
+
+public:
+	// ë¡œê·¸ì¸ ìƒíƒœê°€ ë°”ë€Œì—ˆì„ ë•Œ UIì— ê²°ê³¼ë¥¼ ì „ë‹¬
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Online")
+	FCWOnLoginStateChangedSignature OnLoginStateChanged;
+
+	// ë°© ìƒì„±, ê²€ìƒ‰, ì°¸ê°€, íŒŒê¸° ì‘ì—…ì´ ëë‚¬ì„ ë•Œ UIì— ê²°ê³¼ë¥¼ ì „ë‹¬
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Session")
+	FCWOnSessionOperationCompletedSignature OnSessionOperationCompleted;
+
+	// ìˆ˜ë™ ë°© ëª©ë¡ ê²€ìƒ‰ì´ ëë‚¬ì„ ë•Œ UIì— ìµœì‹  ë°© ëª©ë¡ì„ ì „ë‹¬
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Session")
+	FCWOnRoomListUpdatedSignature OnRoomListUpdated;
+
 };
