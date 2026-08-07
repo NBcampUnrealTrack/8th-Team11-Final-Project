@@ -2,7 +2,10 @@
 
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
@@ -88,6 +91,10 @@ void ACWPlayerCharacter::BeginPlay()
 
 	// 패링 성공 연출. 서버가 멀티캐스트로 뿌리므로 여기서 권한을 따질 필요가 없다.
 	ParryComponent->OnParrySucceeded.AddDynamic(this, &ACWPlayerCharacter::HandleParrySucceeded);
+
+	// 래그돌을 풀 때 되돌릴 기준값을 미리 잡아 둔다.
+	DefaultMeshRelativeTransform = GetMesh()->GetRelativeTransform();
+	DefaultMeshCollisionProfile = GetMesh()->GetCollisionProfileName();
 }
 
 void ACWPlayerCharacter::Landed(const FHitResult& Hit)
@@ -118,13 +125,163 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 	const FVector LaunchVelocity = LaunchDirection * HitContext.VehicleSpeed * KnockbackSpeedScale
 		+ FVector::UpVector * KnockbackUpSpeed;
 
-	Multicast_ApplyHitKnockback(LaunchVelocity);
+	Multicast_StartRagdoll(LaunchVelocity);
 }
 
-void ACWPlayerCharacter::Multicast_ApplyHitKnockback_Implementation(FVector_NetQuantize LaunchVelocity)
+void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(FVector_NetQuantize LaunchVelocity)
 {
-	// 두 인자를 모두 true 로 줘야 기존 속도를 덮어쓰고 확실히 날아간다.
-	LaunchCharacter(LaunchVelocity, true, true);
+	StartRagdoll(LaunchVelocity);
+
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 멈춤 판정은 서버만 한다. 머신마다 물리 결과가 조금씩 달라 기준이 갈리면 안 된다.
+	GetWorldTimerManager().SetTimer(
+		RagdollRestTimerHandle,
+		this,
+		&ACWPlayerCharacter::CheckRagdollRest,
+		RagdollRestCheckInterval,
+		true,
+		RagdollRestCheckDelay
+	);
+}
+
+void ACWPlayerCharacter::Multicast_StopRagdoll_Implementation(FVector_NetQuantize RecoverLocation)
+{
+	StopRagdoll(RecoverLocation);
+}
+
+void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
+{
+	if (bRagdollActive)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (MeshComponent == nullptr || MeshComponent->GetPhysicsAsset() == nullptr)
+	{
+		// 물리 애셋이 없으면 래그돌이 성립하지 않는다. 조용히 넘어가면 원인을 찾기 어렵다.
+		UE_LOG(LogTemp, Warning, TEXT("[%s] 물리 애셋이 없어 래그돌을 켤 수 없습니다. 스켈레탈 메시 설정을 확인하세요."), *GetName());
+		return;
+	}
+
+	bRagdollActive = true;
+
+	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	Movement->StopMovementImmediately();
+	Movement->DisableMovement();
+	Movement->SetComponentTickEnabled(false);
+
+	// 캡슐이 살아 있으면 쓰러진 몸이 자기 캡슐에 걸려 튄다.
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	/**
+	 * 카메라를 쓰러지는 몸통에 붙인다.
+	 *
+	 * 캡슐을 매 프레임 몸통 자리로 옮기는 방법은 쓰면 안 된다. 메시가 캡슐의 자식이라
+	 * 부모를 옮기면 자식 물리 바디까지 끌려가고, 그 결과가 다음 프레임 입력이 되면서
+	 * 몸이 뒤로 튀거나 바닥을 뚫는다. 캡슐은 그대로 두고 카메라만 따라가게 한다.
+	 *
+	 * 붐은 회전이 절대값으로 고정돼 있어 몸이 굴러도 화면 각도는 그대로다.
+	 */
+	CameraBoom->AttachToComponent(
+		MeshComponent,
+		FAttachmentTransformRules::KeepWorldTransform,
+		RagdollPivotBone
+	);
+
+	MeshComponent->SetCollisionProfileName(TEXT("Ragdoll"));
+	MeshComponent->SetSimulatePhysics(true);
+
+	// bVelChange 를 켜서 질량과 무관하게 넉백 속도가 그대로 실리게 한다.
+	MeshComponent->AddImpulse(LaunchVelocity, NAME_None, true);
+
+	// 물리 결과는 머신마다 다르다. 서버 캡슐 위치를 밀어 넣으면 클라 래그돌과 싸운다.
+	if (HasAuthority())
+	{
+		SetReplicateMovement(false);
+	}
+}
+
+void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
+{
+	if (!bRagdollActive)
+	{
+		return;
+	}
+
+	bRagdollActive = false;
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	MeshComponent->SetSimulatePhysics(false);
+	MeshComponent->SetCollisionProfileName(DefaultMeshCollisionProfile);
+
+	// 캡슐을 먼저 세우고 메시를 되돌린다. 순서가 바뀌면 메시가 한 프레임 원점에 찍힌다.
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	SetActorLocation(RecoverLocation, false, nullptr, ETeleportType::TeleportPhysics);
+
+	MeshComponent->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform);
+
+	// 카메라를 캡슐 위로 돌려놓는다. 붐의 원점은 캐릭터 위치여야 한다.
+	CameraBoom->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	CameraBoom->SetRelativeLocation(FVector::ZeroVector);
+
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	Movement->SetComponentTickEnabled(true);
+	Movement->SetMovementMode(MOVE_Walking);
+
+	if (HasAuthority())
+	{
+		SetReplicateMovement(true);
+	}
+}
+
+void ACWPlayerCharacter::CheckRagdollRest()
+{
+	if (!HasAuthority() || !bRagdollActive)
+	{
+		GetWorldTimerManager().ClearTimer(RagdollRestTimerHandle);
+		return;
+	}
+
+	const float PivotSpeed = GetMesh()->GetPhysicsLinearVelocity(RagdollPivotBone).Size();
+	if (PivotSpeed > RagdollRestSpeed)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(RagdollRestTimerHandle);
+
+	// 여기서부터 잠금 시간이 흐른다. 다 지나면 HandleHitLockChanged 로 돌아온다.
+	HitReactionComponent->NotifyLanded();
+}
+
+FVector ACWPlayerCharacter::ResolveRecoverLocation() const
+{
+	const FVector PivotLocation = GetMesh()->GetSocketLocation(RagdollPivotBone);
+	const float CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+
+	// 쓰러진 자리 아래 바닥을 찾아 캡슐을 올려놓는다. 못 찾으면 몸통 높이를 그대로 쓴다.
+	FHitResult Hit;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	const bool bHitGround = GetWorld()->LineTraceSingleByChannel(
+		Hit,
+		PivotLocation,
+		PivotLocation - FVector(0.f, 0.f, 500.f),
+		ECC_Visibility,
+		QueryParams
+	);
+
+	const FVector GroundLocation = bHitGround ? Hit.Location : PivotLocation;
+
+	return GroundLocation + FVector(0.f, 0.f, CapsuleHalfHeight);
 }
 
 void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*HitReactionComp*/, bool bHitLocked)
@@ -147,6 +304,13 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 	if (bHitLocked)
 	{
 		ToolHolderComponent->DropHeldTool();
+		return;
+	}
+
+	// 잠금이 풀리면 일어난다. 자리는 서버가 정해 모든 머신에 같은 값을 준다.
+	if (bRagdollActive)
+	{
+		Multicast_StopRagdoll(ResolveRecoverLocation());
 	}
 }
 

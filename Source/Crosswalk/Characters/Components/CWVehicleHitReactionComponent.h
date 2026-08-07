@@ -78,9 +78,14 @@ private:
 	void OnRep_HitLocked();
 
 private:
-	// 착지 후 행동이 잠기는 시간(초). 기획서 6.2 의 2초
+	/**
+	 * 쓰러진 뒤 행동이 잠기는 시간(초).
+	 *
+	 * 기획서 6.2 는 2초지만 1초로 둔다. 래그돌로 굴러가 멈추기까지가 이미 잠금 시간이라,
+	 * 거기에 2초를 더 얹으면 조작을 못 하는 구간이 체감상 너무 길어진다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Hit", meta = (ClampMin = "0.0"))
-	float HitLockDuration = 2.f;
+	float HitLockDuration = 1.f;
 
 	/**
 	 * 착지 통보를 기다리는 최대 시간(초). 넘기면 착지한 것으로 치고 잠금 시간을 시작한다.
