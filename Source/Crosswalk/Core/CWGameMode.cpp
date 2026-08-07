@@ -7,6 +7,35 @@
 #include "Core/CWGameState.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
+namespace
+{
+	/**
+	 * 이름이 같은 줄을 찾아 돌려주고, 없으면 새로 만든다. (기획서 3.6 체크리스트 묶기)
+	 * 존이 내는 줄과 존이 추가로 내는 줄이 같은 규칙으로 묶이도록 한 곳에 모아 뒀다.
+	 */
+	FCWStageObjective& FindOrAddObjective(TArray<FCWStageObjective>& Objectives, const FText& DisplayName, int32 WorkOrder)
+	{
+		FCWStageObjective* Found = Objectives.FindByPredicate(
+			[&DisplayName](const FCWStageObjective& Candidate)
+			{
+				return Candidate.DisplayName.EqualTo(DisplayName);
+			});
+
+		if (Found != nullptr)
+		{
+			// 같은 묶음에서 가장 이른 순서를 대표값으로 쓴다. 체크리스트가 작업 순서대로 선다.
+			Found->WorkOrder = FMath::Min(Found->WorkOrder, WorkOrder);
+			return *Found;
+		}
+
+		FCWStageObjective& Added = Objectives.AddDefaulted_GetRef();
+		Added.DisplayName = DisplayName;
+		Added.WorkOrder = WorkOrder;
+
+		return Added;
+	}
+}
+
 ACWGameMode::ACWGameMode()
 {
 	DefaultPawnClass = ACWPlayerCharacter::StaticClass();
@@ -69,6 +98,9 @@ void ACWGameMode::RefreshStageProgress()
 	// 횡단보도 줄무늬처럼 같은 작업을 여러 존으로 쪼개 놓으면 존 개수만큼 줄이 늘어난다.
 	TArray<FCWStageObjective> Objectives;
 
+	// 존이 추가로 내는 줄을 받는 임시 버퍼. 반복문 밖에 둬서 매번 새로 할당하지 않는다.
+	TArray<FCWStageObjective> ExtraObjectives;
+
 	for (const TObjectPtr<ACWBaseWorkZone>& Zone : WorkZones)
 	{
 		if (Zone == nullptr)
@@ -76,40 +108,44 @@ void ACWGameMode::RefreshStageProgress()
 			continue;
 		}
 
-		++TotalCount;
-
 		const bool bZoneCompleted = Zone->IsCompleted();
-		if (bZoneCompleted)
+
+		++TotalCount;
+		CompletedCount += bZoneCompleted ? 1 : 0;
+
+		FCWStageObjective& Objective = FindOrAddObjective(Objectives, Zone->GetObjectiveName(), Zone->GetWorkOrder());
+		Objective.TotalCount += 1;
+		Objective.CompletedCount += bZoneCompleted ? 1 : 0;
+
+		// 한 존이 두 가지 일을 겸하면 줄을 더 낸다.
+		// 도색 존은 Area 안쪽으로 "도색 작업" 을, 바깥 고리로 "페인트 정리" 를 동시에 들고 있다.
+		// 삐져나온 페인트는 도색 존의 격자 안에 있어서 별도 존으로 쪼갤 수가 없다.
+		ExtraObjectives.Reset();
+		Zone->GetExtraObjectives(ExtraObjectives);
+
+		for (const FCWStageObjective& Extra : ExtraObjectives)
 		{
-			++CompletedCount;
+			FCWStageObjective& Merged = FindOrAddObjective(Objectives, Extra.DisplayName, Extra.WorkOrder);
+			Merged.TotalCount += Extra.TotalCount;
+			Merged.CompletedCount += Extra.CompletedCount;
+
+			// 클리어 판정에도 들어간다. 체크리스트 한 줄이 곧 작업 목표다. (기획서 3.5, 3.6)
+			TotalCount += Extra.TotalCount;
+			CompletedCount += Extra.CompletedCount;
 		}
-
-		const FText ObjectiveName = Zone->GetObjectiveName();
-
-		FCWStageObjective* Objective = Objectives.FindByPredicate(
-			[&ObjectiveName](const FCWStageObjective& Candidate)
-			{
-				//return Candidate.DisplayName.IdenticalTo(ObjectiveName);
-				return Candidate.DisplayName.EqualTo(ObjectiveName);
-			});
-
-		if (Objective == nullptr)
-		{
-			Objective = &Objectives.AddDefaulted_GetRef();
-			Objective->DisplayName = ObjectiveName;
-			Objective->WorkOrder = Zone->GetWorkOrder();
-		}
-
-		// 같은 묶음에서 가장 이른 순서를 대표값으로 쓴다. 체크리스트가 작업 순서대로 선다.
-		Objective->WorkOrder = FMath::Min(Objective->WorkOrder, Zone->GetWorkOrder());
-		Objective->TotalCount += 1;
-		Objective->CompletedCount += bZoneCompleted ? 1 : 0;
 	}
 
 	Objectives.Sort(
 		[](const FCWStageObjective& A, const FCWStageObjective& B)
 		{
-			return A.WorkOrder < B.WorkOrder;
+			if (A.WorkOrder != B.WorkOrder)
+			{
+				return A.WorkOrder < B.WorkOrder;
+			}
+
+			// 순서가 같을 때 기준이 없으면 줄 순서가 갱신할 때마다 뒤바뀐다.
+			// TArray::Sort 는 안정 정렬이 아니라서 같은 값끼리의 순서를 보장하지 않는다.
+			return A.DisplayName.CompareTo(B.DisplayName) < 0;
 		});
 
 	CrosswalkGameState->SetObjectiveCounts(CompletedCount, TotalCount);
@@ -119,7 +155,7 @@ void ACWGameMode::RefreshStageProgress()
 	// 존 설정이 맞는지 확인할 방법이 없다.
 	if (CrosswalkGameState->SetObjectives(Objectives))
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Stage] 목표 %d줄 (존 %d/%d)"), Objectives.Num(), CompletedCount, TotalCount);
+		UE_LOG(LogTemp, Log, TEXT("[Stage] 목표 %d줄 (%d/%d 달성)"), Objectives.Num(), CompletedCount, TotalCount);
 
 		for (const FCWStageObjective& Objective : Objectives)
 		{

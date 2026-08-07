@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/Enums/CWToolTypes.h"
+#include "Data/Structs/CWStageObjective.h"
 #include "CWBaseWorkZone.generated.h"
 
 class ACWBaseWorkZone;
@@ -107,6 +108,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	FText GetObjectiveName() const { return ObjectiveName; }
 
+	/**
+	 * 이 존이 체크리스트에 추가로 내는 목표 줄. (기획서 3.6)
+	 *
+	 * 보통은 존 하나가 목표 한 줄이다. ObjectiveName 과 IsCompleted 하나씩이면 충분하다.
+	 * 그런데 한 존이 두 가지 일을 겸하는 경우가 있다. 도색 존은 Area 안쪽으로 "도색 작업" 을,
+	 * 바깥 고리로 "페인트 정리" 를 동시에 들고 있다. 삐져나온 페인트는 도색 존의 격자 안에
+	 * 물리적으로 들어 있어서 별도 존으로 쪼갤 수가 없다.
+	 *
+	 * 그래서 겸업하는 존이 이걸 오버라이드해서 줄을 더 낸다. GameMode 는 자기 줄과 똑같이
+	 * 이름으로 묶어서 체크리스트에 올린다. 기본은 아무것도 내지 않는다.
+	 */
+	virtual void GetExtraObjectives(TArray<FCWStageObjective>& OutObjectives) const {}
+
 	UFUNCTION(BlueprintPure, Category = "Work")
 	int32 GetWorkOrder() const { return WorkOrder; }
 
@@ -140,6 +154,24 @@ protected:
 
 	/** 진행도가 바뀔 때마다 호출. 자식 클래스에서 메쉬/머티리얼을 갱신하는 자리. */
 	virtual void OnProgressChanged(float NewProgress);
+
+	/**
+	 * 디버그 줄 끝에 붙일 추가 정보. 자식이 자기 단위를 덧붙이는 자리다.
+	 *
+	 * 퍼센트만으로는 "왜 완료가 안 되는지" 를 알 수 없다. 칸 존이라면 남은 칸이 몇 개인지가
+	 * 보여야 완료 기준이 빡빡한 건지 아직 덜 칠한 건지 구분된다.
+	 */
+	virtual FString GetDebugDetailText() const { return FString(); }
+
+	/**
+	 * 진행도 값은 그대로인데 존 상태가 바뀌었을 때 알린다.
+	 *
+	 * SetProgress 는 값이 같으면 조기 반환하므로, 진행도에 안 잡히는 변화는 아무도 모른다.
+	 * 도색 존의 삐져나온 페인트가 그렇다. 안쪽 칸만 진행도로 세기 때문에 바깥 고리를
+	 * 아무리 칠하고 지워도 Progress 가 안 움직이고, 체크리스트의 "페인트 정리" 줄이
+	 * 갱신되지 않는다. 그런 변화를 만든 쪽이 이걸 직접 불러야 한다.
+	 */
+	void NotifyStateChanged();
 
 private:
 	/** 같은 WorkGroup 안에서 나보다 WorkOrder 가 작은 존을 모아 잠금 감시 대상으로 등록한다. */

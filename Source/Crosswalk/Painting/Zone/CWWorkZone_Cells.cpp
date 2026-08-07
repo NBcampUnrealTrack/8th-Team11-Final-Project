@@ -77,8 +77,7 @@ void ACWWorkZone_Cells::BeginPlay()
 		return;
 	}
 
-	GetWorldTimerManager().SetTimer(
-		VehicleStainTimerHandle, this, &ACWWorkZone_Cells::UpdateVehicleStains, VehicleStainInterval, true);
+	SetVehicleStainTimerEnabled(true);
 }
 
 void ACWWorkZone_Cells::UpdateVehicleStains()
@@ -91,14 +90,20 @@ void ACWWorkZone_Cells::UpdateVehicleStains()
 
 	// 1. 젖은 페인트를 밟고 있는 차량에 페인트를 묻힌다.
 	//    이미 묻은 차가 다시 밟으면 시간이 갱신되어 자국이 더 길게 이어진다.
-	TArray<ABaseVehicle*> NearbyVehicles;
-	TrafficSubsystem->GetVehiclesNearPoint(GetActorLocation(), GetVehicleSearchRadius(), NearbyVehicles);
-
-	for (ABaseVehicle* Vehicle : NearbyVehicles)
+	//
+	//    말랐으면 새로 묻지 않는다. 다만 이미 바퀴에 묻어 있던 차량은 아래에서
+	//    남은 시간만큼 자국을 마저 남긴다. 마르는 순간 자국이 뚝 끊기면 어색하다.
+	if (!bPaintDry)
 	{
-		if (Vehicle != nullptr && IsFilledAt(Vehicle->GetActorLocation()))
+		TArray<ABaseVehicle*> NearbyVehicles;
+		TrafficSubsystem->GetVehiclesNearPoint(GetActorLocation(), GetVehicleSearchRadius(), NearbyVehicles);
+
+		for (ABaseVehicle* Vehicle : NearbyVehicles)
 		{
-			StainedVehicles.Add(Vehicle, VehicleStainDuration);
+			if (Vehicle != nullptr && IsFilledAt(Vehicle->GetActorLocation()))
+			{
+				StainedVehicles.Add(Vehicle, VehicleStainDuration);
+			}
 		}
 	}
 
@@ -125,6 +130,125 @@ void ACWWorkZone_Cells::UpdateVehicleStains()
 			It.RemoveCurrent();
 		}
 	}
+
+	// 말랐고 마지막 자국까지 끝났으면 더 확인할 것이 없다. 타이머를 멈춘다.
+	if (bPaintDry && StainedVehicles.Num() == 0)
+	{
+		SetVehicleStainTimerEnabled(false);
+	}
+}
+
+void ACWWorkZone_Cells::SetVehicleStainTimerEnabled(bool bEnabled)
+{
+	if (!bEnabled)
+	{
+		GetWorldTimerManager().ClearTimer(VehicleStainTimerHandle);
+		return;
+	}
+
+	if (VehicleStainTimerHandle.IsValid())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		VehicleStainTimerHandle, this, &ACWWorkZone_Cells::UpdateVehicleStains, VehicleStainInterval, true);
+}
+
+void ACWWorkZone_Cells::OnProgressChanged(float NewProgress)
+{
+	Super::OnProgressChanged(NewProgress);
+
+	RefreshPaintDryState();
+}
+
+void ACWWorkZone_Cells::RefreshPaintDryState()
+{
+	// 마름 판정은 서버만 한다. 자국을 찍는 쪽도 서버뿐이라 클라이언트는 알 필요가 없다.
+	// 지우기 모드 존(청소/정리)에는 마를 페인트가 없다.
+	if (!HasAuthority() || !IsFillMode())
+	{
+		return;
+	}
+
+	if (!IsCompleted())
+	{
+		// 도색이 다시 열렸다. 마름 대기를 취소하고 젖은 상태로 돌린다.
+		GetWorldTimerManager().ClearTimer(PaintDryTimerHandle);
+
+		if (bPaintDry)
+		{
+			bPaintDry = false;
+			SetVehicleStainTimerEnabled(bStainsVehicles && VehicleStainZone != nullptr);
+		}
+
+		return;
+	}
+
+	// 이미 말랐거나 마르는 중이면 대기 시간을 다시 재지 않는다.
+	if (bPaintDry || PaintDryTimerHandle.IsValid())
+	{
+		return;
+	}
+
+	if (PaintDryDelay <= 0.f)
+	{
+		HandlePaintDried();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		PaintDryTimerHandle, this, &ACWWorkZone_Cells::HandlePaintDried, PaintDryDelay, false);
+}
+
+void ACWWorkZone_Cells::HandlePaintDried()
+{
+	bPaintDry = true;
+	PaintDryTimerHandle.Invalidate();
+
+	UE_LOG(LogTemp, Log, TEXT("[%s] 페인트가 말랐습니다. 차량이 밟아도 더 이상 번지지 않습니다."), *GetName());
+}
+
+FString ACWWorkZone_Cells::GetDebugDetailText() const
+{
+	// 남은 칸 수를 같이 찍는다. 퍼센트만으로는 몇 칸이 비었는지 알 수 없어서
+	// "다 칠한 것 같은데 왜 완료가 안 되지" 를 확인할 방법이 없다.
+	const int32 CountedCellCount = GridSize.X * GridSize.Y;
+	const int32 SpillCellCount = GetSpillCellCount();
+
+	FString Detail = FString::Printf(TEXT(" [%d/%d칸]"), CountedFilledCount, CountedCellCount);
+
+	if (SpillCellCount > 0)
+	{
+		Detail += FString::Printf(TEXT(" 삐져나옴 %d칸"), SpillCellCount);
+	}
+
+	if (bPaintDry)
+	{
+		Detail += TEXT(" 마름");
+	}
+
+	return Detail;
+}
+
+void ACWWorkZone_Cells::GetExtraObjectives(TArray<FCWStageObjective>& OutObjectives) const
+{
+	// 이름을 비워두면 줄을 내지 않는다. 청소/테두리 존은 그대로 한 줄만 낸다.
+	if (CleanupObjectiveName.IsEmpty())
+	{
+		return;
+	}
+
+	FCWStageObjective& Objective = OutObjectives.AddDefaulted_GetRef();
+	Objective.DisplayName = CleanupObjectiveName;
+
+	// 정리는 언제나 자기 도색 바로 다음 줄이다. (기획서 3.6 도색 작업 → 주변 페인트 정리)
+	Objective.WorkOrder = GetWorkOrder() + 1;
+
+	// 바깥 고리가 깨끗하면 완료. 존 하나가 한 줄을 내므로 분모는 1 이다.
+	// 존이 여러 개면 GameMode 가 이름으로 묶어서 "페인트 정리 (4/5)" 로 합쳐준다.
+	Objective.TotalCount = 1;
+	Objective.CompletedCount = (GetSpillCellCount() == 0) ? 1 : 0;
 }
 
 float ACWWorkZone_Cells::GetVehicleSearchRadius() const
@@ -262,6 +386,9 @@ void ACWWorkZone_Cells::Multicast_ApplyBrush_Implementation(FVector_NetQuantize 
 
 bool ACWWorkZone_Cells::ApplyBrush(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
 {
+	const float PreviousProgress = GetProgress();
+	const int32 PreviousSpillCount = GetSpillCellCount();
+
 	if (!SetCellsInRadius(WorldCenter, Radius, bNewFilled, bSpillOnly))
 	{
 		// 바뀐 칸이 없으면 메쉬를 다시 만들 이유도 없다.
@@ -272,6 +399,14 @@ bool ACWWorkZone_Cells::ApplyBrush(const FVector& WorldCenter, float Radius, boo
 
 	// SetProgress 는 서버에서만 실제로 먹는다. 클라이언트에서는 조용히 무시된다.
 	RefreshProgress();
+
+	// 바깥 고리는 진행도에 안 잡힌다. 삐져나온 페인트를 지워도 Progress 가 그대로라
+	// SetProgress 가 조기 반환하고, 체크리스트의 "페인트 정리" 줄이 갱신되지 않는다.
+	// 진행도가 안 움직였는데 고리가 바뀐 경우에만 따로 알린다. (양쪽 다 바뀌면 이미 알렸다)
+	if (FMath::IsNearlyEqual(GetProgress(), PreviousProgress) && GetSpillCellCount() != PreviousSpillCount)
+	{
+		NotifyStateChanged();
+	}
 
 	return true;
 }
@@ -337,7 +472,15 @@ bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radiu
 		return false;
 	}
 
-	const float RadiusSquared = FMath::Square(Radius);
+	// 칸 중심만 보면 붓이 칸의 대부분을 덮고도 그 칸은 안 칠해진다.
+	// 게다가 CellPadding 이 음수라 칸 메쉬가 격자보다 크게 그려져서, 이웃 칸의 메쉬가
+	// 빈 칸을 덮어버린다. 그래서 화면은 빈틈 없이 칠해졌는데 진행도는 안 차는 상황이 생긴다.
+	//
+	// 칸 크기의 절반을 반경에 더해 "칸의 절반 이상이 덮이면 칠해진 것"으로 본다.
+	// 눈에 보이는 것과 실제 칸 상태를 맞추는 게 목적이다.
+	const FVector2D CellSize = GetCellSize();
+	const float EffectiveRadius = Radius + FMath::Max(CellSize.X, CellSize.Y) * 0.5f;
+	const float RadiusSquared = FMath::Square(EffectiveRadius);
 	bool bAnyChanged = false;
 
 	// 칸 수가 많지 않으므로(보통 200~600) 전체를 훑어도 충분히 빠르다.
