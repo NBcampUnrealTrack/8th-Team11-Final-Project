@@ -89,7 +89,8 @@ void ACWGameMode::RefreshStageProgress()
 		FCWStageObjective* Objective = Objectives.FindByPredicate(
 			[&ObjectiveName](const FCWStageObjective& Candidate)
 			{
-				return Candidate.DisplayName.IdenticalTo(ObjectiveName);
+				//return Candidate.DisplayName.IdenticalTo(ObjectiveName);
+				return Candidate.DisplayName.EqualTo(ObjectiveName);
 			});
 
 		if (Objective == nullptr)
