@@ -75,9 +75,16 @@ protected:
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
 
-	/** 넉백을 모든 머신에서 같이 적용한다. 서버에서만 이동시키면 소유 클라 화면이 튄다. */
+	/** 래그돌을 모든 머신에서 같이 켠다. 서버에서만 쓰러뜨리면 소유 클라 화면이 튄다. */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_ApplyHitKnockback(FVector_NetQuantize LaunchVelocity);
+	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity);
+
+	/**
+	 * 래그돌을 풀고 일어난다. 일어설 자리는 서버가 정해 넘긴다.
+	 * 물리는 머신마다 조금씩 다르게 굴러서, 각자 자기 자리에서 일어나면 위치가 갈라진다.
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_StopRagdoll(FVector_NetQuantize RecoverLocation);
 
 	/** 피격 잠금이 걸리고 풀릴 때. 작업 중단과 도구 드롭을 여기서 처리한다. */
 	UFUNCTION()
@@ -104,6 +111,26 @@ private:
 
 	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
+
+	/**
+	 * 래그돌을 켜고 임펄스를 먹인다. 무브먼트와 캡슐 콜리전을 함께 내린다.
+	 * 캡슐이 살아 있으면 래그돌이 자기 캡슐에 걸려 튀고, 무브먼트가 돌면 물리와 서로 밀어낸다.
+	 */
+	void StartRagdoll(const FVector& LaunchVelocity);
+
+	/** 래그돌을 끄고 캡슐을 주어진 자리로 옮긴 뒤 다시 세운다. */
+	void StopRagdoll(const FVector& RecoverLocation);
+
+	/**
+	 * 래그돌이 멈췄는지 본다. 서버에서만 돈다.
+	 *
+	 * 래그돌 중에는 무브먼트가 꺼져 있어 ACharacter::Landed 가 오지 않는다.
+	 * 그래서 착지 통보를 이쪽에서 대신 한다. 몸이 멎어야 일어나기 시작하는 게 자연스럽다.
+	 */
+	void CheckRagdollRest();
+
+	/** 일어설 자리를 고른다. 쓰러진 몸통 아래 바닥을 찾아 캡슐을 올려놓는다. */
+	FVector ResolveRecoverLocation() const;
 
 	/**
 	 * 차에 치인 소리를 낸다. 각 머신이 알아서 내므로 권한과 무관하게 불린다.
@@ -178,6 +205,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float KnockbackUpSpeed = 500.f;
 
+	/** 래그돌 위치의 기준이 되는 본. 마네킹 기준값이라 스켈레톤을 갈면 바꿔야 한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit")
+	FName RagdollPivotBone = TEXT("pelvis");
+
+	/** 이 속도 아래로 떨어지면 다 굴렀다고 본다(cm/s). */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollRestSpeed = 60.f;
+
+	/** 멈췄는지 확인하는 주기(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
+	float RagdollRestCheckInterval = 0.1f;
+
+	/**
+	 * 확인을 시작하기까지 두는 시간(초).
+	 * 임펄스가 물리에 반영되기 전에 재면 속도가 0 이라 튕겨나가자마자 멈춘 것으로 잡힌다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollRestCheckDelay = 0.4f;
+
 protected:
 	// 아래 사운드 셋은 전부 비워도 된다. 비어 있으면 그 소리만 나지 않고 나머지는 정상 동작한다.
 
@@ -238,4 +284,13 @@ private:
 	// SoundAttenuation 이 비었을 때 C++ 이 만들어 쓰는 기본 감쇠. 한 번만 만든다.
 	UPROPERTY(Transient)
 	TObjectPtr<USoundAttenuation> RuntimeSoundAttenuation;
+
+	// 래그돌을 풀 때 메시를 되돌릴 기준값. BP 에서 다르게 놨을 수 있어 BeginPlay 에서 읽는다.
+	FTransform DefaultMeshRelativeTransform;
+
+	FName DefaultMeshCollisionProfile;
+
+	bool bRagdollActive = false;
+
+	FTimerHandle RagdollRestTimerHandle;
 };
