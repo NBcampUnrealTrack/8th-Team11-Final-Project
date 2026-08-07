@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "Data/Structs/CWParrySyncData.h"
 #include "GameFramework/Character.h"
 #include "InputCoreTypes.h"
 #include "Traffic/Interfaces/Interface_VehicleHitReceiver.h"
@@ -14,6 +15,8 @@ class UCWWorkerComponent;
 class UInputAction;
 enum class EInputActionValueType : uint8;
 class UInputMappingContext;
+class USoundAttenuation;
+class USoundBase;
 class USpringArmComponent;
 struct FInputActionValue;
 
@@ -80,6 +83,13 @@ protected:
 	UFUNCTION()
 	void HandleHitLockChanged(UCWVehicleHitReactionComponent* HitReactionComponent, bool bHitLocked);
 
+	/**
+	 * 패링이 성공했을 때. 서버가 확정한 결과를 멀티캐스트로 받은 것이라
+	 * 모든 머신에서 같은 시점에 들어온다. 연출 외의 판정은 여기서 하지 않는다.
+	 */
+	UFUNCTION()
+	void HandleParrySucceeded(const FCWParrySyncData& ParrySyncData);
+
 private:
 	virtual void BeginPlay() override;
 
@@ -94,6 +104,20 @@ private:
 
 	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
+
+	/**
+	 * 차에 치인 소리를 낸다. 각 머신이 알아서 내므로 권한과 무관하게 불린다.
+	 *
+	 * 본인 피격도 감쇠에 태운다. 내가 맞은 지점은 리스너와 거리가 0 이라
+	 * 어차피 풀볼륨으로 나오고, 남이 맞는 소리만 거리에 따라 멀어진다.
+	 */
+	void PlayVehicleHitSound();
+
+	/**
+	 * 쓸 감쇠 설정을 고른다. 애셋이 지정돼 있으면 그것을, 없으면 기본값으로 하나 만들어 쓴다.
+	 * 만든 것은 캐시해 두고 재사용한다.
+	 */
+	USoundAttenuation* ResolveSoundAttenuation();
 
 	/** 비어 있으면 만들고, 이미 지정돼 있으면 그대로 둔다. */
 	void EnsureInputAction(TObjectPtr<UInputAction>& Action, const TCHAR* ActionName, EInputActionValueType ValueType);
@@ -155,6 +179,37 @@ protected:
 	float KnockbackUpSpeed = 500.f;
 
 protected:
+	// 아래 사운드 셋은 전부 비워도 된다. 비어 있으면 그 소리만 나지 않고 나머지는 정상 동작한다.
+
+	/** 차에 치이는 순간 나는 소리. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound")
+	TObjectPtr<USoundBase> VehicleHitSound;
+
+	/** 패링에 성공해 차를 튕겨낸 순간 나는 소리. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound")
+	TObjectPtr<USoundBase> ParrySuccessSound;
+
+	/**
+	 * 거리 감쇠 설정. 비워두면 아래 두 값으로 C++ 이 만든 기본 감쇠가 쓰인다.
+	 * 사운드 쪽에서 세밀하게 잡고 싶어지면 애셋을 만들어 여기에 꽂으면 그쪽이 우선한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound")
+	TObjectPtr<USoundAttenuation> SoundAttenuation;
+
+	/** 기본 감쇠에서 볼륨이 깎이지 않는 반경(cm). */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound", meta = (ClampMin = "0.0"))
+	float AttenuationInnerRadius = 400.f;
+
+	/**
+	 * 기본 감쇠가 다 깎여 없어지는 거리(cm).
+	 *
+	 * 카메라가 1200cm 위에서 55도로 내려다보므로 화면에 담기는 폭이 대략 2500cm 다.
+	 * 이보다 크게 잡으면 화면 밖 소리까지 들려 정보가 아니라 소음이 된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound", meta = (ClampMin = "0.0"))
+	float AttenuationFalloffDistance = 2500.f;
+
+protected:
 	// 아래 6개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -179,4 +234,8 @@ private:
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> SupplementContext;
+
+	// SoundAttenuation 이 비었을 때 C++ 이 만들어 쓰는 기본 감쇠. 한 번만 만든다.
+	UPROPERTY(Transient)
+	TObjectPtr<USoundAttenuation> RuntimeSoundAttenuation;
 };

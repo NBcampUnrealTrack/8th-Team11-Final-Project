@@ -14,6 +14,8 @@
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundAttenuation.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Painting/CWWorkerComponent.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
@@ -83,6 +85,9 @@ void ACWPlayerCharacter::BeginPlay()
 
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
+
+	// 패링 성공 연출. 서버가 멀티캐스트로 뿌리므로 여기서 권한을 따질 필요가 없다.
+	ParryComponent->OnParrySucceeded.AddDynamic(this, &ACWPlayerCharacter::HandleParrySucceeded);
 }
 
 void ACWPlayerCharacter::Landed(const FHitResult& Hit)
@@ -124,6 +129,12 @@ void ACWPlayerCharacter::Multicast_ApplyHitKnockback_Implementation(FVector_NetQ
 
 void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*HitReactionComp*/, bool bHitLocked)
 {
+	// 연출은 각 머신이 알아서 낸다. 아래 권한 검사보다 앞에 둬야 클라이언트에서도 들린다.
+	if (bHitLocked)
+	{
+		PlayVehicleHitSound();
+	}
+
 	// 작업 중단 상태는 복제되므로 서버에서만 바꾼다. 도구 드롭도 서버 전용이다.
 	if (!HasAuthority())
 	{
@@ -137,6 +148,111 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 	{
 		ToolHolderComponent->DropHeldTool();
 	}
+}
+
+void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncData)
+{
+	if (ParrySuccessSound == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 내가 성공시킨 패링은 거리로 깎지 않는다.
+	 *
+	 * 패링에는 거리 제한이 없어서(UCWParryComponent::ParryRadius 기본 0) 화면 끝의 차도
+	 * 튕겨낼 수 있다. 그걸 감쇠에 태우면 정작 내가 누른 키의 성공 여부가 들리지 않는다.
+	 */
+	if (IsLocallyControlled())
+	{
+		UGameplayStatics::PlaySound2D(this, ParrySuccessSound);
+		return;
+	}
+
+	// 남의 패링은 어디서 일어났는지가 정보다. 차량 위치에서 거리감 있게 낸다.
+	UGameplayStatics::PlaySoundAtLocation(
+		this,
+		ParrySuccessSound,
+		ParrySyncData.ParryLocation,
+		FRotator::ZeroRotator,
+		1.f,
+		1.f,
+		0.f,
+		ResolveSoundAttenuation()
+	);
+}
+
+void ACWPlayerCharacter::PlayVehicleHitSound()
+{
+	if (VehicleHitSound == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 본인 피격도 감쇠에 태운다. 따로 2D 로 뺄 이유가 없다.
+	 *
+	 * 내가 맞은 지점은 리스너(캐릭터 위치)와 거리가 0 이라 AttenuationInnerRadius 안쪽이고,
+	 * NonSpatializedRadiusStart 안에도 들어가 어차피 풀볼륨 2D 로 재생된다.
+	 * 남이 맞는 소리만 거리에 따라 자연스럽게 멀어진다.
+	 */
+	FVector HitLocation = HitReactionComponent->GetLastHitContext().HitLocation;
+
+	// 클라이언트에서는 잠금 플래그가 피격 정보보다 먼저 도착할 수 있다.
+	// 그때는 맞은 사람 위치로 대신한다. 어차피 충돌 지점 바로 옆이다.
+	if (HitLocation.IsNearlyZero())
+	{
+		HitLocation = GetActorLocation();
+	}
+
+	UGameplayStatics::PlaySoundAtLocation(
+		this,
+		VehicleHitSound,
+		HitLocation,
+		FRotator::ZeroRotator,
+		1.f,
+		1.f,
+		0.f,
+		ResolveSoundAttenuation()
+	);
+}
+
+USoundAttenuation* ACWPlayerCharacter::ResolveSoundAttenuation()
+{
+	// 애셋이 꽂혀 있으면 그쪽이 우선이다.
+	if (SoundAttenuation != nullptr)
+	{
+		return SoundAttenuation;
+	}
+
+	if (RuntimeSoundAttenuation != nullptr)
+	{
+		return RuntimeSoundAttenuation;
+	}
+
+	RuntimeSoundAttenuation = NewObject<USoundAttenuation>(this);
+
+	FSoundAttenuationSettings& Settings = RuntimeSoundAttenuation->Attenuation;
+	Settings.bAttenuate = true;
+	Settings.bSpatialize = true;
+
+	// Linear 는 거리에 따라 뚝 끊기듯 줄어 인위적으로 들린다.
+	Settings.DistanceAlgorithm = EAttenuationDistanceModel::NaturalSound;
+	Settings.AttenuationShape = EAttenuationShape::Sphere;
+	Settings.dBAttenuationAtMax = -60.f;
+
+	// Sphere 는 X 만 반경으로 쓴다. 이 안쪽은 볼륨이 깎이지 않는다.
+	Settings.AttenuationShapeExtents = FVector(AttenuationInnerRadius, 0.f, 0.f);
+	Settings.FalloffDistance = AttenuationFalloffDistance;
+
+	// 쿼터뷰라 발밑에서 나는 소리가 좌우로 튀면 어지럽다. 가까운 소리는 2D 로 눕힌다.
+	Settings.NonSpatializedRadiusStart = 400.f;
+	Settings.NonSpatializedRadiusEnd = 200.f;
+
+	// 도로 위 구조물에 계속 걸리는 데다 비용도 크다. 쿼터뷰에서 가려짐은 의미가 없다.
+	Settings.bEnableOcclusion = false;
+
+	return RuntimeSoundAttenuation;
 }
 
 bool ACWPlayerCharacter::IsHitLocked() const
