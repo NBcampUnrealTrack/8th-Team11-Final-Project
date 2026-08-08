@@ -30,7 +30,11 @@ enum class ECWUIPage : uint8
     // 결과를 표시 화면
     Result,
     // 게임 설정 화면
-    Settings
+    Settings,
+    // 멀티플레이 기능 선택 화면
+    MultiplayerMenu,
+    // 현재 생성된 공개 방 목록 화면
+    RoomList
 };
 
 #pragma endregion

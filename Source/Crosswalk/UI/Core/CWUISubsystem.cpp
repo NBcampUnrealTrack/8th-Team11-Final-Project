@@ -2,13 +2,222 @@
 
 #include "CWUISubsystem.h"
 #include "Blueprint/UserWidget.h"
+#include "Core/CWGameInstance.h"
+#include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "MVVMGameSubsystem.h"
+#include "Types/MVVMViewModelCollection.h"
+#include "Types/MVVMViewModelContext.h"
+#include "UI/ViewModel/CWSessionViewModel.h"
 #include "CWUIRootWidget.h"
 #include "CWUIScreenWidget.h"
 #include "Widgets/SWidget.h"
 
 #pragma region Initialize
+
+void UCWUISubsystem::Initialize(
+    FSubsystemCollectionBase& Collection
+)
+{
+    Super::Initialize(Collection);
+
+    // 이 LocalPlayer를 소유한 GameInstance 확인
+    ULocalPlayer* LocalPlayer = GetLocalPlayer();
+
+    if (!IsValid(LocalPlayer))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: LocalPlayer is invalid during initialization.")
+        );
+
+        return;
+    }
+
+    UGameInstance* GameInstance = LocalPlayer->GetGameInstance();
+
+    if (!IsValid(GameInstance))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: GameInstance is invalid during initialization.")
+        );
+
+        return;
+    }
+
+    // 프로젝트 전용 GameInstance인지 확인
+    UCWGameInstance* CWGameInstance =
+        Cast<UCWGameInstance>(GameInstance);
+
+    if (!IsValid(CWGameInstance))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: GameInstance is not CWGameInstance.")
+        );
+
+        return;
+    }
+
+    // GameInstance에 생성된 MVVM 전역 컬렉션 확인
+    UMVVMGameSubsystem* MVVMSubsystem =
+        GameInstance->GetSubsystem<UMVVMGameSubsystem>();
+
+    if (!IsValid(MVVMSubsystem))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: MVVMGameSubsystem is invalid.")
+        );
+
+        return;
+    }
+
+    UMVVMViewModelCollectionObject* ViewModelCollection =
+        MVVMSubsystem->GetViewModelCollection();
+
+    if (!IsValid(ViewModelCollection))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: global ViewModel collection is invalid.")
+        );
+
+        return;
+    }
+
+    // Widget의 Global Viewmodel Collection 설정과 동일한 Context 구성
+    FMVVMViewModelContext SessionContext;
+    SessionContext.ContextClass =
+        UCWSessionViewModel::StaticClass();
+    SessionContext.ContextName =
+        TEXT("SessionViewModel");
+
+    // 화면 분할이나 재초기화로 이미 등록된 경우 기존 인스턴스 재사용
+    UMVVMViewModelBase* ExistingViewModel =
+        ViewModelCollection->FindViewModelInstance(
+            SessionContext
+        );
+
+    if (UCWSessionViewModel* ExistingSessionViewModel =
+        Cast<UCWSessionViewModel>(ExistingViewModel))
+    {
+        SessionViewModel = ExistingSessionViewModel;
+
+        UE_LOG(
+            LogTemp,
+            Log,
+            TEXT("UISubsystem: existing SessionViewModel reused.")
+        );
+
+        return;
+    }
+
+    // GameInstance 수명에 맞춰 전역 Session ViewModel 생성
+    UCWSessionViewModel* NewSessionViewModel =
+        NewObject<UCWSessionViewModel>(GameInstance);
+
+    if (!IsValid(NewSessionViewModel))
+    {
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: failed to create SessionViewModel.")
+        );
+
+        return;
+    }
+
+    // GameInstance 이벤트를 구독하고 현재 로그인·세션 상태를 즉시 반영
+    NewSessionViewModel->Initialize(CWGameInstance);
+
+    // 전역 컬렉션에 등록해 Widget이 이름으로 조회할 수 있게 함
+    const bool bRegistered =
+        ViewModelCollection->AddViewModelInstance(
+            SessionContext,
+            NewSessionViewModel
+        );
+
+    if (!bRegistered)
+    {
+        NewSessionViewModel->Uninitialize();
+
+        UE_LOG(
+            LogTemp,
+            Error,
+            TEXT("UISubsystem: failed to register SessionViewModel.")
+        );
+
+        return;
+    }
+
+    SessionViewModel = NewSessionViewModel;
+    bOwnsSessionViewModelRegistration = true;
+
+    UE_LOG(
+        LogTemp,
+        Log,
+        TEXT("UISubsystem: SessionViewModel registered.")
+    );
+}
+
+void UCWUISubsystem::Deinitialize()
+{
+    UCWSessionViewModel* RegisteredViewModel =
+        SessionViewModel.Get();
+
+    // 이 서브시스템이 직접 등록한 인스턴스만 컬렉션에서 제거
+    if (
+        bOwnsSessionViewModelRegistration &&
+        IsValid(RegisteredViewModel)
+        )
+    {
+        ULocalPlayer* LocalPlayer = GetLocalPlayer();
+        UGameInstance* GameInstance =
+            IsValid(LocalPlayer)
+            ? LocalPlayer->GetGameInstance()
+            : nullptr;
+
+        UMVVMGameSubsystem* MVVMSubsystem =
+            IsValid(GameInstance)
+            ? GameInstance->GetSubsystem<UMVVMGameSubsystem>()
+            : nullptr;
+
+        UMVVMViewModelCollectionObject* ViewModelCollection =
+            IsValid(MVVMSubsystem)
+            ? MVVMSubsystem->GetViewModelCollection()
+            : nullptr;
+
+        if (IsValid(ViewModelCollection))
+        {
+            FMVVMViewModelContext SessionContext;
+            SessionContext.ContextClass =
+                UCWSessionViewModel::StaticClass();
+            SessionContext.ContextName =
+                TEXT("SessionViewModel");
+
+            // Widget이 더 이상 종료 중인 ViewModel을 조회하지 않도록 제거
+            ViewModelCollection->RemoveViewModel(
+                SessionContext
+            );
+        }
+
+        // GameInstance의 동적 델리게이트 구독 정리
+        RegisteredViewModel->Uninitialize();
+    }
+
+    SessionViewModel.Reset();
+    bOwnsSessionViewModelRegistration = false;
+
+    Super::Deinitialize();
+}
 
 void UCWUISubsystem::InitializeUI(
     TSubclassOf<UCWUIRootWidget> InRootClass,
@@ -443,6 +652,8 @@ void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)
     case ECWUIPage::StageSelect:
     case ECWUIPage::Result:
     case ECWUIPage::Settings:
+    case ECWUIPage::MultiplayerMenu:
+    case ECWUIPage::RoomList:
         ApplyInputMode(ECWUIInputMode::UIOnly);
         break;
 
