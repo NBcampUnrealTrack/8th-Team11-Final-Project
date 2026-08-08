@@ -8,6 +8,7 @@
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
+#include "OnlineSubsystemUtils.h"
 
 namespace CrosswalkSession
 {
@@ -296,7 +297,12 @@ const TArray<FCWRoomSummary>& UCWGameInstance::GetCachedRoomList() const
 
 void UCWGameInstance::CacheOnlineInterfaces()
 {
-	IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get();
+	UWorld* World = GetWorld();
+
+	// 멀티 PIE에서는 World마다 별도의 OnlineSubsystem 인스턴스를 사용할 수 있음
+	IOnlineSubsystem* OnlineSubsystem = IsValid(World)
+		? Online::GetSubsystem(World)
+		: IOnlineSubsystem::Get();
 
 	if (OnlineSubsystem == nullptr)
 	{
@@ -304,12 +310,14 @@ void UCWGameInstance::CacheOnlineInterfaces()
 		return;
 	}
 
+	// 로그인과 세션 작업이 같은 World별 OnlineSubsystem 인스턴스를 사용하도록 갱신
 	IdentityInterface = OnlineSubsystem->GetIdentityInterface();
 	SessionInterface = OnlineSubsystem->GetSessionInterface();
 
 	SetStatus(FString::Printf(
-		TEXT("Cached OnlineSubsystem: %s"),
-		*OnlineSubsystem->GetSubsystemName().ToString()
+		TEXT("Cached OnlineSubsystem: %s (Instance: %s)"),
+		*OnlineSubsystem->GetSubsystemName().ToString(),
+		*OnlineSubsystem->GetInstanceName().ToString()
 	));
 }
 
