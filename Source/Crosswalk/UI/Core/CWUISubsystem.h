@@ -9,6 +9,7 @@
 
 class UCWUIRootWidget;
 class UCWUIScreenWidget;
+class UCWSessionViewModel;
 class UUserWidget;
 
 UCLASS()
@@ -19,6 +20,14 @@ class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
 #pragma region Initialize
 
 public:
+    // 서브시스템 생성 시 전역 Session ViewModel을 등록
+    virtual void Initialize(
+        FSubsystemCollectionBase& Collection
+    ) override;
+
+    // 서브시스템 종료 시 등록한 Session ViewModel을 정리
+    virtual void Deinitialize() override;
+
     // UI 클래스 설정을 저장하고 Root를 준비
     UFUNCTION(BlueprintCallable, Category = "CW|UI")
     void InitializeUI(
@@ -79,6 +88,18 @@ public:
 private:
     // 페이지 종류에 대응하는 입력 모드를 선택
     void ApplyInputModeForPage(ECWUIPage Page);
+
+#pragma endregion
+
+#pragma region ViewModel
+
+private:
+    // Global Viewmodel Collection에 등록하거나 조회한 Session ViewModel
+    UPROPERTY(Transient)
+    TWeakObjectPtr<UCWSessionViewModel> SessionViewModel;
+
+    // 이 서브시스템이 전역 Session ViewModel을 직접 등록했는지 구분
+    bool bOwnsSessionViewModelRegistration = false;
 
 #pragma endregion
 
