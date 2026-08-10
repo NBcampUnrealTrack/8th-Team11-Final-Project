@@ -129,11 +129,17 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 	const FVector LaunchVelocity = LaunchDirection * HitContext.VehicleSpeed * KnockbackSpeedScale
 		+ FVector::UpVector * KnockbackUpSpeed;
 
-	Multicast_StartRagdoll(LaunchVelocity);
+	Multicast_StartRagdoll(LaunchVelocity, GetActorLocation());
 }
 
-void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(FVector_NetQuantize LaunchVelocity)
+void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(
+	FVector_NetQuantize LaunchVelocity,
+	FVector_NetQuantize ServerActorLocation)
 {
+	// 래그돌 물리를 켜기 전에 서버 기준 위치로 맞춘다.
+	// 각 클라이언트가 자기 화면의 보간 위치에서 래그돌을 시작하면 4인 화면에서 피격 시작점이 갈라진다.
+	SetActorLocation(ServerActorLocation, false, nullptr, ETeleportType::TeleportPhysics);
+
 	StartRagdoll(LaunchVelocity);
 
 	if (!HasAuthority())
@@ -344,6 +350,7 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	CameraBoom->SetRelativeLocation(FVector::ZeroVector);
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	Movement->StopMovementImmediately();
 	Movement->SetComponentTickEnabled(true);
 	Movement->SetMovementMode(MOVE_Walking);
 
