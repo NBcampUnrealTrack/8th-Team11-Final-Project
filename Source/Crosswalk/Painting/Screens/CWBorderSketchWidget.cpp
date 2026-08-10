@@ -1,4 +1,4 @@
-#include "Painting/Screens/CWBorderSketchWidget.h"
+﻿#include "Painting/Screens/CWBorderSketchWidget.h"
 
 #include "Rendering/DrawElements.h"
 #include "Painting/Zone/CWWorkZone_BorderSketch.h"

@@ -1,4 +1,4 @@
-#include "Painting/CWWorkerComponent.h"
+﻿#include "Painting/CWWorkerComponent.h"
 
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"

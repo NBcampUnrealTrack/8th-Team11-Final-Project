@@ -1,0 +1,18 @@
+root = true
+
+# 한글 주석이 들어간 소스가 많다. BOM 이 없으면 MSVC 가 시스템 ANSI 코드페이지
+# (한국어 Windows = CP949) 로 읽어서 주석이 깨지고, 문자열 리터럴에 한글이 들어가면
+# 컴파일까지 실패한다. UE 는 /utf-8 을 기본으로 넘기지 않으므로 BOM 이 사실상 유일한 신호다.
+[*.{cpp,h,inl,cs}]
+charset = utf-8-bom
+indent_style = tab
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{ini,uproject,uplugin,json}]
+charset = utf-8
+insert_final_newline = true
+
+[*.md]
+charset = utf-8
+trim_trailing_whitespace = false
