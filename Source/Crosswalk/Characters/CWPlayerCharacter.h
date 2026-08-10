@@ -7,6 +7,7 @@
 #include "Traffic/Interfaces/Interface_VehicleHitReceiver.h"
 #include "CWPlayerCharacter.generated.h"
 
+class UAnimMontage;
 class UCameraComponent;
 class UCWParryComponent;
 class UCWToolHolderComponent;
@@ -47,6 +48,16 @@ public:
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
+	/**
+	 * 기상 애니로 넘어가는 중이라 래그돌 스냅샷 포즈를 밑에 깔아야 하는 구간인지.
+	 *
+	 * AnimBP 가 이 값으로 슬롯 아래 포즈를 고른다. true 인 동안 이동 블렌드스페이스 대신
+	 * Pose Snapshot 을 물려야, 몬타주가 블렌드인 하는 사이에 쓰러진 자세에서 이어진다.
+	 * 서 있는 Idle 포즈에서 블렌드하면 일어서다 말고 다시 눕는 것처럼 보인다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Hit")
+	bool IsUsingRagdollPose() const;
+
 	/** 넉백으로 날아간 뒤 착지한 시점. 여기서부터 다운 시간이 흐른다. */
 	virtual void Landed(const FHitResult& Hit) override;
 
@@ -80,15 +91,28 @@ protected:
 	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity);
 
 	/**
-	 * 래그돌을 풀고 일어난다. 일어설 자리는 서버가 정해 넘긴다.
+	 * 래그돌을 풀고 기상 모션을 재생한다. 일어설 자리와 방향은 서버가 정해 넘긴다.
+	 *
 	 * 물리는 머신마다 조금씩 다르게 굴러서, 각자 자기 자리에서 일어나면 위치가 갈라진다.
+	 * 앞뒤 판별도 마찬가지라 서버가 고른 결과를 그대로 쓴다. 머신마다 다른 애니가 나오면 안 된다.
+	 *
+	 * @param RecoverLocation 캡슐을 세울 자리
+	 * @param RecoverYaw      쓰러진 몸이 향하던 방향. 이걸 맞춰야 기상 애니가 제자리에서 시작한다
+	 * @param bFaceDown       엎드려 있으면 true. 재생할 기상 애니를 고르는 데 쓴다
 	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StopRagdoll(FVector_NetQuantize RecoverLocation);
+	void Multicast_StopRagdoll(FVector_NetQuantize RecoverLocation, float RecoverYaw, bool bFaceDown);
 
 	/** 피격 잠금이 걸리고 풀릴 때. 작업 중단과 도구 드롭을 여기서 처리한다. */
 	UFUNCTION()
 	void HandleHitLockChanged(UCWVehicleHitReactionComponent* HitReactionComponent, bool bHitLocked);
+
+	/**
+	 * 다운 시간이 끝나 일어날 차례가 됐을 때. 서버에서만 들어온다.
+	 * 래그돌을 풀고 기상 모션을 뿌린 뒤, 모션이 끝나는 시점에 컴포넌트로 완료를 통보한다.
+	 */
+	UFUNCTION()
+	void HandleGetUpRequested(UCWVehicleHitReactionComponent* HitReactionComponent);
 
 	/**
 	 * 패링이 성공했을 때. 서버가 확정한 결과를 멀티캐스트로 받은 것이라
@@ -118,8 +142,40 @@ private:
 	 */
 	void StartRagdoll(const FVector& LaunchVelocity);
 
-	/** 래그돌을 끄고 캡슐을 주어진 자리로 옮긴 뒤 다시 세운다. */
-	void StopRagdoll(const FVector& RecoverLocation);
+	/**
+	 * 래그돌을 끄고 캡슐을 주어진 자리와 방향으로 옮긴 뒤 다시 세운다.
+	 *
+	 * 물리를 끄기 직전에 쓰러진 포즈를 스냅샷으로 떠 둔다. AnimBP 가 이 포즈에서
+	 * 기상 애니 첫 프레임으로 블렌드해야 몸이 순간적으로 튀지 않는다.
+	 */
+	void StopRagdoll(const FVector& RecoverLocation, float RecoverYaw);
+
+	/**
+	 * 기상 몬타주를 재생하고 길이(초)를 돌려준다. 애셋이 없거나 재생에 실패하면 0 이다.
+	 * 재생 자체는 각 머신이 한다. 몬타주 복제를 켜면 같은 연출이 두 번 흘러 어긋난다.
+	 */
+	float PlayGetUpMontage(bool bFaceDown);
+
+	/** 기상 모션이 끝났다고 컴포넌트에 알린다. 서버 타이머로만 들어온다. */
+	void FinishGetUp();
+
+	/** 쓰러진 몸이 엎드려 있는지 본다. 기상 애니를 앞뒤 중 어느 쪽으로 재생할지 정한다. */
+	bool IsRagdollFaceDown() const;
+
+	/** 쓰러진 몸이 향하던 방향(Yaw). 캡슐을 이 방향으로 세워야 기상 애니가 제자리에서 시작한다. */
+	float ResolveRecoverYaw(bool bFaceDown) const;
+
+	/**
+	 * 쓰러진 몸의 축을 구한다. 본의 로컬 회전을 쓰지 않고 본 사이의 위치 차이로 계산한다.
+	 *
+	 * 스켈레톤마다 본 로컬 축 규약이 제각각이라(마네킹과 믹사모가 다르다) 회전값을 믿으면
+	 * 캐릭터를 갈아끼울 때 앞뒤가 뒤집힌다. 위치 차이는 규약과 무관하다.
+	 *
+	 * @param OutBodyUp      골반에서 머리로 향하는 방향
+	 * @param OutBodyForward 가슴이 바라보는 방향
+	 * @return 필요한 본을 모두 찾았으면 true
+	 */
+	bool ResolveRagdollBodyAxes(FVector& OutBodyUp, FVector& OutBodyForward) const;
 
 	/**
 	 * 래그돌이 멈췄는지 본다. 서버에서만 돈다.
@@ -209,6 +265,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit")
 	FName RagdollPivotBone = TEXT("pelvis");
 
+	/** 몸통 방향을 재는 데 쓰는 머리 쪽 본. 골반과의 위치 차이가 몸통 축이 된다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit")
+	FName RagdollHeadBone = TEXT("head");
+
+	/** 몸의 좌우 축을 재는 데 쓰는 양 어깨 본. 둘의 위치 차이가 오른쪽 방향이 된다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit")
+	FName RagdollLeftShoulderBone = TEXT("upperarm_l");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Hit")
+	FName RagdollRightShoulderBone = TEXT("upperarm_r");
+
 	/** 이 속도 아래로 떨어지면 다 굴렀다고 본다(cm/s). */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RagdollRestSpeed = 60.f;
@@ -223,6 +290,53 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RagdollRestCheckDelay = 0.4f;
+
+protected:
+	// 아래 기상 설정은 전부 비워도 된다. 몬타주가 비어 있으면 연출만 빠지고 지금처럼 바로 일어선다.
+
+	/** 등을 대고 누운 상태에서 일어나는 몬타주. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp")
+	TObjectPtr<UAnimMontage> GetUpFromBackMontage;
+
+	/** 엎드린 상태에서 일어나는 몬타주. 비워두면 누운 쪽 몬타주를 대신 쓴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp")
+	TObjectPtr<UAnimMontage> GetUpFromFrontMontage;
+
+	/**
+	 * 래그돌 포즈를 담아 두는 스냅샷 이름. AnimBP 의 Pose Snapshot 노드에 같은 이름을 넣어야 한다.
+	 * 이름이 어긋나면 스냅샷이 빈 포즈로 잡혀 기상 첫 프레임에 몸이 T 포즈로 튄다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp")
+	FName RagdollPoseSnapshotName = TEXT("RagdollPose");
+
+	/**
+	 * 기상 애니가 몸통 방향과 어긋날 때 돌려주는 보정각(도).
+	 *
+	 * 애니 제작 기준이 애셋마다 달라서, 누운 캐릭터가 애니 안에서 +X 를 보고 있다는 보장이 없다.
+	 * 일어나는 순간 몸이 홱 도는 것처럼 보이면 여기를 90 단위로 돌려가며 맞춘다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "-180.0", ClampMax = "180.0"))
+	float GetUpFromBackYawOffset = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "-180.0", ClampMax = "180.0"))
+	float GetUpFromFrontYawOffset = 0.f;
+
+	/**
+	 * 몬타주가 끝나기 이만큼 전에 조작을 돌려준다(초).
+	 *
+	 * 기상 애니 끝자락은 이미 다 선 자세를 유지하는 구간이라, 끝까지 기다리면 화면상 서 있는데
+	 * 키가 안 먹는 답답한 순간이 생긴다. 조금 일찍 풀어 이동 애니로 자연스럽게 넘어가게 한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.0"))
+	float GetUpUnlockLeadTime = 0.15f;
+
+	/**
+	 * 래그돌 스냅샷 포즈를 밑에 깔아 두는 시간(초). IsUsingRagdollPose 가 이 시간만큼 true 다.
+	 * 기상 몬타주의 Blend In 시간보다 조금 길게 잡는다. 짧으면 블렌드가 끝나기 전에
+	 * 밑 포즈가 Idle 로 바뀌면서 몸이 한 번 들썩인다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.0"))
+	float RagdollPoseBlendTime = 0.35f;
 
 protected:
 	// 아래 사운드 셋은 전부 비워도 된다. 비어 있으면 그 소리만 나지 않고 나머지는 정상 동작한다.
@@ -292,5 +406,12 @@ private:
 
 	bool bRagdollActive = false;
 
+	// 스냅샷 포즈를 밑에 깔고 있는 구간. 각 머신이 자기 화면 기준으로 관리한다
+	bool bUsingRagdollPose = false;
+
 	FTimerHandle RagdollRestTimerHandle;
+
+	FTimerHandle GetUpTimerHandle;
+
+	FTimerHandle RagdollPoseBlendTimerHandle;
 };

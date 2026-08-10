@@ -46,6 +46,23 @@ void UCWVehicleHitReactionComponent::NotifyLanded()
 	StartHitLockCountdown();
 }
 
+void UCWVehicleHitReactionComponent::NotifyGetUpFinished()
+{
+	const AActor* OwnerActor = GetOwner();
+	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	// 기상을 요청한 적이 없는데 들어온 통보는 무시한다. 안전장치가 이미 잠금을 푼 뒤일 수도 있다.
+	if (!bHitLocked || !bWaitingForGetUp)
+	{
+		return;
+	}
+
+	FinishHitReaction();
+}
+
 bool UCWVehicleHitReactionComponent::IsHitLocked() const
 {
 	return bHitLocked;
@@ -77,6 +94,7 @@ void UCWVehicleHitReactionComponent::StartHitReaction(const FCWVehicleHitContext
 
 	// 기획서 6.2 - 잠금 시간은 착지한 뒤부터 잰다. 여기서는 날아가는 동안 잠그기만 한다.
 	bWaitingForLanding = true;
+	bWaitingForGetUp = false;
 
 	OnHitReactionStarted(LastHitContext);
 	OnHitLockChanged.Broadcast(this, true);
@@ -106,8 +124,36 @@ void UCWVehicleHitReactionComponent::StartHitLockCountdown()
 		World->GetTimerManager().SetTimer(
 			HitLockTimerHandle,
 			this,
-			&UCWVehicleHitReactionComponent::FinishHitReaction,
+			&UCWVehicleHitReactionComponent::RequestGetUp,
 			HitLockDuration,
+			false
+		);
+	}
+}
+
+void UCWVehicleHitReactionComponent::RequestGetUp()
+{
+	AActor* OwnerActor = GetOwner();
+	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	bWaitingForGetUp = true;
+
+	// 잠금은 아직 그대로다. 일어나는 동안 조작이 들어가면 몸이 애니메이션과 따로 논다.
+	OnGetUpRequested.Broadcast(this);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HitLockTimerHandle);
+
+		// 기상 완료 통보가 끝내 오지 않아도 언젠가는 풀려야 한다.
+		World->GetTimerManager().SetTimer(
+			GetUpWaitTimerHandle,
+			this,
+			&UCWVehicleHitReactionComponent::FinishHitReaction,
+			MaxGetUpWait,
 			false
 		);
 	}
@@ -123,6 +169,7 @@ void UCWVehicleHitReactionComponent::FinishHitReaction()
 
 	bHitLocked = false;
 	bWaitingForLanding = false;
+	bWaitingForGetUp = false;
 
 	OnHitReactionFinished();
 	OnHitLockChanged.Broadcast(this, false);
@@ -131,6 +178,7 @@ void UCWVehicleHitReactionComponent::FinishHitReaction()
 	{
 		World->GetTimerManager().ClearTimer(HitLockTimerHandle);
 		World->GetTimerManager().ClearTimer(LandingWaitTimerHandle);
+		World->GetTimerManager().ClearTimer(GetUpWaitTimerHandle);
 	}
 }
 
