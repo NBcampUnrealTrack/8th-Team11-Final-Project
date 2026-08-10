@@ -148,6 +148,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
 	int32 MaxRoomCodeGenerateAttempts;
 
+	// 세션 작업 하나가 끝나기를 기다리는 최대 시간(초). 넘기면 Timeout 실패로 정리한다.
+	//
+	// 방 생성은 코드 중복 검사 때문에 검색을 여러 번 돌 수 있는데, 이 시간은 재시도를
+	// 포함한 작업 전체의 마감이다. 0 이하면 타임아웃을 걸지 않는다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	float SessionOperationTimeout;
+
 private:
 	// 현재 DefaultPlatformService의 Identity/Session 인터페이스를 가져옴
 	void CacheOnlineInterfaces();
@@ -176,8 +183,22 @@ private:
 	// 현재 세션 검색 결과를 UI 표시용 방 목록 캐시에 반영
 	void RefreshCachedRoomList();
 
-	// 세션 작업 시작 상태를 기록해 UI 중복 입력을 막을 수 있게 함
-	void BeginSessionOperation(ECWSessionOperation Operation);
+	/**
+	 * 세션 작업을 시작한다. 이미 다른 작업이 진행 중이면 거절한다.
+	 *
+	 * @return 시작했으면 true. false 면 호출부는 그대로 돌아가야 한다.
+	 *         (거절 결과는 이 안에서 이미 UI 에 알렸다)
+	 */
+	bool BeginSessionOperation(ECWSessionOperation Operation);
+
+	// 진행 중인 작업이 응답 없이 멈춰 있지 않도록 마감 타이머를 건다
+	void StartSessionOperationTimeout();
+
+	// 마감 타이머를 해제한다
+	void ClearSessionOperationTimeout();
+
+	// 마감 시간이 지났다. 남은 콜백을 걷어내고 Timeout 실패로 정리한다
+	void HandleSessionOperationTimeout();
 
 	// 세션 작업 완료 상태를 기록하고 UI에 결과를 전달
 	void CompleteSessionOperation(ECWSessionOperation Operation, bool bSuccess, ECWSessionFailure Failure);
@@ -281,6 +302,9 @@ private:
 
 	// 세션 작업 중 UI 중복 요청을 막기 위한 상태
 	bool bSessionOperationInFlight;
+
+	// 진행 중인 세션 작업의 마감 타이머
+	FTimerHandle SessionOperationTimeoutHandle;
 
 	// 로그인 완료 델리게이트 해제를 위한 핸들
 	FDelegateHandle LoginCompleteDelegateHandle;

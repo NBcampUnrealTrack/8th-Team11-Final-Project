@@ -21,6 +21,7 @@ UCWGameInstance::UCWGameInstance()
 	, MaxPublicConnections(4)
 	, RoomCodeLength(6)
 	, MaxRoomCodeGenerateAttempts(20)
+	, SessionOperationTimeout(30.f)
 	, CurrentFindPurpose(ECWSessionFindPurpose::None)
 	, CurrentSessionOperation(ECWSessionOperation::None)
 	, RoomCodeGenerateAttemptCount(0)
@@ -42,6 +43,8 @@ void UCWGameInstance::Init()
 
 void UCWGameInstance::Shutdown()
 {
+	ClearSessionOperationTimeout();
+
 	ClearLoginCompleteDelegate();
 	ClearCreateSessionCompleteDelegate();
 	ClearFindSessionsCompleteDelegate();
@@ -165,7 +168,10 @@ void UCWGameInstance::CreateRoom()
 		return;
 	}
 
-	BeginSessionOperation(ECWSessionOperation::CreateRoom);
+	if (!BeginSessionOperation(ECWSessionOperation::CreateRoom))
+	{
+		return;
+	}
 
 	RoomCodeGenerateAttemptCount = 1;
 	PendingRoomCode = GenerateRoomCode();
@@ -182,7 +188,11 @@ void UCWGameInstance::FindRooms()
 		return;
 	}
 
-	BeginSessionOperation(ECWSessionOperation::FindRooms);
+	if (!BeginSessionOperation(ECWSessionOperation::FindRooms))
+	{
+		return;
+	}
+
 	StartFindSessions(ECWSessionFindPurpose::ManualRefresh);
 }
 
@@ -210,7 +220,11 @@ void UCWGameInstance::JoinRoomByCode(const FString& RoomCode)
 		return;
 	}
 
-	BeginSessionOperation(ECWSessionOperation::JoinRoom);
+	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
+	{
+		return;
+	}
+
 	StartFindSessions(ECWSessionFindPurpose::JoinByRoomCode);
 }
 
@@ -236,7 +250,11 @@ void UCWGameInstance::JoinFirstFoundRoom()
 		return;
 	}
 
-	BeginSessionOperation(ECWSessionOperation::JoinRoom);
+	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
+	{
+		return;
+	}
+
 	BindJoinSessionCompleteDelegate();
 
 	SetStatus(TEXT("JoinFirstFoundRoom requested"));
@@ -259,7 +277,11 @@ void UCWGameInstance::DestroyRoom()
 		return;
 	}
 
-	BeginSessionOperation(ECWSessionOperation::DestroyRoom);
+	if (!BeginSessionOperation(ECWSessionOperation::DestroyRoom))
+	{
+		return;
+	}
+
 	BindDestroySessionCompleteDelegate();
 
 	SetStatus(TEXT("DestroyRoom requested"));
@@ -362,7 +384,13 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 {
 	if (!SessionInterface.IsValid())
 	{
-		SetStatus(TEXT("FindSessions failed: SessionInterface is invalid"));
+		// 진행 중이던 작업을 여기서 끝내주지 않으면 in-flight 가 그대로 남는다.
+		// 진입점들이 미리 검사하므로 보통은 안 오지만, 방 코드 재시도 경로는 그렇지 않다.
+		FailSessionOperation(
+			CurrentSessionOperation,
+			ECWSessionFailure::Unknown,
+			TEXT("FindSessions failed: SessionInterface is invalid"));
+
 		return;
 	}
 
@@ -466,18 +494,101 @@ void UCWGameInstance::RefreshCachedRoomList()
 	}
 }
 
-void UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
+bool UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
 {
+	if (bSessionOperationInFlight)
+	{
+		/**
+		 * 거절은 CompleteSessionOperation 을 타면 안 된다.
+		 *
+		 * 같은 종류의 작업을 두 번 누른 경우(방 목록 새로고침 연타 등) Operation 이
+		 * CurrentSessionOperation 과 같아서, 정리 조건에 걸려 진행 중이던 요청의
+		 * in-flight 를 대신 꺼버린다. 여기서는 결과만 알리고 상태는 건드리지 않는다.
+		 */
+		SetStatus(TEXT("Session operation rejected: another operation is in flight"));
+		OnSessionOperationCompleted.Broadcast(Operation, false, ECWSessionFailure::Busy);
+
+		return false;
+	}
+
 	CurrentSessionOperation = Operation;
 	bSessionOperationInFlight = true;
+
+	StartSessionOperationTimeout();
+
+	return true;
 }
 
 void UCWGameInstance::CompleteSessionOperation(ECWSessionOperation Operation, bool bSuccess, ECWSessionFailure Failure)
 {
-	bSessionOperationInFlight = false;
-	CurrentSessionOperation = ECWSessionOperation::None;
+	/**
+	 * 진행 중이던 작업이 끝났을 때만 상태를 내린다.
+	 *
+	 * 초기 검증에서 실패한 요청은 BeginSessionOperation 을 지난 적이 없다. 그런데도
+	 * 무조건 플래그를 내리면, 다른 작업이 EOS 콜백을 기다리는 중에 엉뚱한 요청 하나가
+	 * 조기 실패하는 것만으로 그 작업의 in-flight 가 꺼진다. UI 는 한가한 줄 알고
+	 * 다음 요청을 받아버리고, 뒤늦게 도착한 콜백이 그 위에서 다시 돈다.
+	 */
+	if (CurrentSessionOperation == Operation)
+	{
+		ClearSessionOperationTimeout();
+
+		bSessionOperationInFlight = false;
+		CurrentSessionOperation = ECWSessionOperation::None;
+	}
 
 	OnSessionOperationCompleted.Broadcast(Operation, bSuccess, Failure);
+}
+
+void UCWGameInstance::StartSessionOperationTimeout()
+{
+	ClearSessionOperationTimeout();
+
+	if (SessionOperationTimeout <= 0.f)
+	{
+		return;
+	}
+
+	// 월드가 아니라 게임 인스턴스의 타이머 매니저를 쓴다.
+	// 방 생성은 성공하면 곧바로 ServerTravel 을 타는데, 월드 타이머는 그때 같이 날아간다.
+	GetTimerManager().SetTimer(
+		SessionOperationTimeoutHandle,
+		this,
+		&UCWGameInstance::HandleSessionOperationTimeout,
+		SessionOperationTimeout,
+		false
+	);
+}
+
+void UCWGameInstance::ClearSessionOperationTimeout()
+{
+	GetTimerManager().ClearTimer(SessionOperationTimeoutHandle);
+}
+
+void UCWGameInstance::HandleSessionOperationTimeout()
+{
+	const ECWSessionOperation TimedOutOperation = CurrentSessionOperation;
+
+	if (TimedOutOperation == ECWSessionOperation::None)
+	{
+		return;
+	}
+
+	/**
+	 * EOS 콜백이 끝내 오지 않았다. 등록해 둔 델리게이트를 전부 걷어낸다.
+	 *
+	 * 안 걷어내면 한참 뒤에 도착한 응답이 이미 정리된 상태 위에서 다시 돌면서,
+	 * 그 사이에 시작한 다른 작업의 결과를 덮어쓴다.
+	 */
+	ClearCreateSessionCompleteDelegate();
+	ClearFindSessionsCompleteDelegate();
+	ClearJoinSessionCompleteDelegate();
+	ClearDestroySessionCompleteDelegate();
+
+	CurrentFindPurpose = ECWSessionFindPurpose::None;
+
+	SetStatus(FString::Printf(TEXT("Session operation timed out after %.0fs"), SessionOperationTimeout));
+	CompleteSessionOperation(TimedOutOperation, false, ECWSessionFailure::Timeout);
 }
 
 void UCWGameInstance::FailSessionOperation(ECWSessionOperation Operation, ECWSessionFailure Failure, const FString& StatusMessage)
