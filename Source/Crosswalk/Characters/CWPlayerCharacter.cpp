@@ -234,7 +234,18 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
 	bRagdollActive = false;
 
 	USkeletalMeshComponent* MeshComponent = GetMesh();
+
+	/**
+	 * 물리를 확실히 내린다.
+	 *
+	 * SetSimulatePhysics(false) 만으로는 바디가 깨어 있는 채로 남을 수 있다. 그 상태에서
+	 * 메시를 옮기면 "완전 시뮬레이션으로 구동되는 스켈레탈 메시를 이동하려 하였습니다"
+	 * 경고가 뜨고 이동이 반영되지 않는다.
+	 */
 	MeshComponent->SetSimulatePhysics(false);
+	MeshComponent->SetAllBodiesSimulatePhysics(false);
+	MeshComponent->PutAllRigidBodiesToSleep();
+	MeshComponent->bBlendPhysics = false;
 	MeshComponent->SetCollisionProfileName(DefaultMeshCollisionProfile);
 
 	// 캡슐을 먼저 세우고 메시를 되돌린다. 순서가 바뀌면 메시가 한 프레임 원점에 찍힌다.
@@ -242,7 +253,15 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
 	SetActorLocation(RecoverLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
 	MeshComponent->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform);
+
+	/**
+	 * 래그돌 동안 캡슐은 제자리에 있고 메시만 월드에서 굴러다닌다. 그래서 메시의 상대
+	 * 트랜스폼에는 물리가 만든 큰 오프셋이 남아 있고, 여기서 원래 값으로 되돌려야 한다.
+	 *
+	 * Teleport 플래그를 주지 않으면 이 이동이 반영되지 않는다. 그러면 캡슐만 기상 위치로
+	 * 가고 메시는 엉뚱한 오프셋을 유지해서, 화면에서는 캐릭터가 사라진 것처럼 보인다.
+	 */
+	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 
 	// 카메라를 캡슐 위로 돌려놓는다. 붐의 원점은 캐릭터 위치여야 한다.
 	CameraBoom->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
