@@ -86,9 +86,12 @@ protected:
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
 
-	/** 래그돌을 모든 머신에서 같이 켠다. 서버에서만 쓰러뜨리면 소유 클라 화면이 튄다. */
+	/**
+	 * 래그돌을 모든 머신에서 같이 켠다. 서버 기준 위치를 함께 넘겨 피격 시작점이 화면마다 갈라지는 것을 줄인다.
+	 * 서버에서만 쓰러뜨리면 소유 클라 화면이 튀고, 각자 현재 위치에서 시작하면 4인 화면의 넉백 시작점이 달라진다.
+	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity);
+	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity, FVector_NetQuantize ServerActorLocation);
 
 	/**
 	 * 래그돌을 풀고 기상 모션을 재생한다. 일어설 자리와 방향은 서버가 정해 넘긴다.
