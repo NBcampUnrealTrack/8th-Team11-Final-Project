@@ -148,8 +148,31 @@ bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptConte
 		return false;
 	}
 
-	// 튕겨나갈 방향은 플레이어가 찍은 커서 방향이다. (기획서 8.1)
-	return TryParry(ParryAttemptContext.Parrier, ParryAttemptContext.AttemptDirection);
+	// 튕겨나갈 방향은 플레이어가 찍은 커서 지점 쪽이다. (기획서 6.1)
+	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext));
+}
+
+FVector ABaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
+{
+	/**
+	 * 커서 지점을 향해 날아간다. 기준점이 플레이어가 아니라 이 차량이라는 게 핵심이다.
+	 *
+	 * 플레이어 기준 방향(AttemptDirection)을 그대로 쓰면, 차량은 커서 쪽이 아니라
+	 * 커서 방향과 "평행하게" 날아간다. 플레이어와 차량의 위치가 다르기 때문이다.
+	 * 패링 윈도우가 0.3초라 차량이 2m 안쪽에 있어 차이가 크지는 않지만,
+	 * 커서를 가까이 찍을수록 어긋남이 커진다.
+	 */
+	if (ParryAttemptContext.bHasCursorTarget)
+	{
+		const FVector ToCursor = (ParryAttemptContext.CursorWorldLocation - GetActorLocation()).GetSafeNormal2D();
+		if (!ToCursor.IsNearlyZero())
+		{
+			return ToCursor;
+		}
+	}
+
+	// 커서가 차량 바로 위에 찍혔거나 트레이스가 빗나갔다. 플레이어 기준 방향으로 대체한다.
+	return ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 }
 
 bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)

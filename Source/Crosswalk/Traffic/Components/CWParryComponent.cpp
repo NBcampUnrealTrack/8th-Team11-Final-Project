@@ -96,9 +96,19 @@ FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parri
 
 	// 쿼터뷰라 커서는 바닥 평면 위에 찍힌다. 높이 차를 빼야 방향 판정이 흔들리지 않는다.
 	const FVector ToCursor = (CursorWorldLocation - ParryAttemptContext.AttemptLocation).GetSafeNormal2D();
-	ParryAttemptContext.AttemptDirection = ToCursor.IsNearlyZero()
-		? Parrier.GetActorForwardVector().GetSafeNormal2D()
-		: ToCursor;
+
+	/**
+	 * 커서가 플레이어 위치와 사실상 같으면 트레이스가 빗나간 것이다.
+	 * (ResolveCursorWorldLocation 이 실패 시 플레이어 위치를 그대로 돌려준다)
+	 *
+	 * 이 값을 목표 지점으로 쓰면 차가 플레이어를 향해 날아오므로 구분해 둔다.
+	 */
+	ParryAttemptContext.bHasCursorTarget = !ToCursor.IsNearlyZero();
+	ParryAttemptContext.CursorWorldLocation = CursorWorldLocation;
+
+	ParryAttemptContext.AttemptDirection = ParryAttemptContext.bHasCursorTarget
+		? ToCursor
+		: Parrier.GetActorForwardVector().GetSafeNormal2D();
 
 	// 대상 차량과 차종은 서버가 골라 채운다. 클라가 지정해 보내면 서버가 다시 검증한다.
 
@@ -120,9 +130,13 @@ FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptCont
 	// 연출 기준점은 클라이언트가 보낸 커서가 아니라 서버가 확정한 차량 위치다.
 	ParrySyncData.ParryLocation = ParriedVehicle.GetActorLocation();
 
-	// 차량이 튕겨나가는 방향 = 커서 방향. (기획서 8.1)
-	// 차량은 이미 이 방향으로 회전한 뒤이므로 실제 진행 방향과 같은 값이다.
-	ParrySyncData.ParryDirection = ParryAttemptContext.AttemptDirection;
+	/**
+	 * 차량이 실제로 날아가는 방향. 회전이 이미 끝난 뒤라 차량의 정면이 곧 진행 방향이다.
+	 *
+	 * AttemptDirection(플레이어 → 커서)을 쓰면 안 된다. 차량은 자기 위치에서 커서 지점을
+	 * 향하므로 두 값이 다르다. 연출은 차가 실제로 가는 쪽을 따라가야 한다.
+	 */
+	ParrySyncData.ParryDirection = ParriedVehicle.GetActorForwardVector().GetSafeNormal2D();
 
 	// 연출 강도는 차량이 튕겨나가는 속도를 그대로 넘긴다. 세기 환산은 수신 측이 정한다.
 	ParrySyncData.VehicleReactionStrength = ParriedVehicle.GetEffectiveSpeed();
