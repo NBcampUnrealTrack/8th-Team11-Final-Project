@@ -149,6 +149,14 @@ public:
         return CurrentRoomCode;
     }
 
+	// 현재 방 코드를 UI TextBlock에 표시할 텍스트로 반환
+	UFUNCTION(
+		BlueprintPure,
+		FieldNotify,
+		Category = "CW|UI|Session"
+	)
+	FText GetCurrentRoomCodeText() const;
+
     // 마지막으로 검색된 공개 방 목록을 반환
     UFUNCTION(BlueprintPure, Category = "CW|UI|Session")
     const TArray<FCWRoomSummary>& GetRoomList() const
