@@ -3,6 +3,7 @@
 
 #include "Traffic/Components/CWParryComponent.h"
 
+#include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "GameFramework/Actor.h"
 #include "Traffic/BaseVehicle.h"
 #include "Traffic/TrafficSubsystem.h"
@@ -54,6 +55,18 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	if (OwnerActor == nullptr || !OwnerActor->HasAuthority() || !CanUseServerCooldown())
 	{
 		return;
+	}
+
+	// 다운(래그돌) 상태에서는 패링을 받지 않는다.
+	// 클라이언트 쪽 IsHitLocked() 체크만으로는, 피격과 패링 입력이 거의 동시에 도착했을 때
+	// 서버가 이미 히트락을 건 뒤에도 이 요청을 그대로 승인해버리는 문제가 있었다.
+	if (const UCWVehicleHitReactionComponent* HitReactionComponent = OwnerActor->FindComponentByClass<UCWVehicleHitReactionComponent>())
+	{
+		if (HitReactionComponent->IsHitLocked())
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다."));
+			return;
+		}
 	}
 
 	UpdateServerCooldown();
