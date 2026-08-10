@@ -150,6 +150,11 @@ void UCWGameInstance::CreateRoom()
 {
 	CacheOnlineInterfaces();
 
+	if (!BeginSessionOperation(ECWSessionOperation::CreateRoom))
+	{
+		return;
+	}
+
 	if (!SessionInterface.IsValid())
 	{
 		FailSessionOperation(ECWSessionOperation::CreateRoom, ECWSessionFailure::Unknown, TEXT("CreateRoom failed: SessionInterface is invalid"));
@@ -168,11 +173,6 @@ void UCWGameInstance::CreateRoom()
 		return;
 	}
 
-	if (!BeginSessionOperation(ECWSessionOperation::CreateRoom))
-	{
-		return;
-	}
-
 	RoomCodeGenerateAttemptCount = 1;
 	PendingRoomCode = GenerateRoomCode();
 	StartFindSessions(ECWSessionFindPurpose::CheckRoomCodeForCreate);
@@ -182,14 +182,14 @@ void UCWGameInstance::FindRooms()
 {
 	CacheOnlineInterfaces();
 
-	if (!SessionInterface.IsValid())
+	if (!BeginSessionOperation(ECWSessionOperation::FindRooms))
 	{
-		FailSessionOperation(ECWSessionOperation::FindRooms, ECWSessionFailure::Unknown, TEXT("FindRooms failed: SessionInterface is invalid"));
 		return;
 	}
 
-	if (!BeginSessionOperation(ECWSessionOperation::FindRooms))
+	if (!SessionInterface.IsValid())
 	{
+		FailSessionOperation(ECWSessionOperation::FindRooms, ECWSessionFailure::Unknown, TEXT("FindRooms failed: SessionInterface is invalid"));
 		return;
 	}
 
@@ -199,6 +199,11 @@ void UCWGameInstance::FindRooms()
 void UCWGameInstance::JoinRoomByCode(const FString& RoomCode)
 {
 	CacheOnlineInterfaces();
+
+	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
+	{
+		return;
+	}
 
 	if (!SessionInterface.IsValid())
 	{
@@ -212,25 +217,26 @@ void UCWGameInstance::JoinRoomByCode(const FString& RoomCode)
 		return;
 	}
 
-	PendingJoinRoomCode = NormalizeRoomCode(RoomCode);
+	const FString NormalizedRoomCode = NormalizeRoomCode(RoomCode);
 
-	if (PendingJoinRoomCode.IsEmpty())
+	if (NormalizedRoomCode.IsEmpty())
 	{
 		FailSessionOperation(ECWSessionOperation::JoinRoom, ECWSessionFailure::RoomNotFound, TEXT("JoinRoomByCode failed: room code is empty"));
 		return;
 	}
 
-	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
-	{
-		return;
-	}
-
+	PendingJoinRoomCode = NormalizedRoomCode;
 	StartFindSessions(ECWSessionFindPurpose::JoinByRoomCode);
 }
 
 void UCWGameInstance::JoinFirstFoundRoom()
 {
 	CacheOnlineInterfaces();
+
+	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
+	{
+		return;
+	}
 
 	if (!SessionInterface.IsValid() || !SessionSearch.IsValid())
 	{
@@ -250,11 +256,6 @@ void UCWGameInstance::JoinFirstFoundRoom()
 		return;
 	}
 
-	if (!BeginSessionOperation(ECWSessionOperation::JoinRoom))
-	{
-		return;
-	}
-
 	BindJoinSessionCompleteDelegate();
 
 	SetStatus(TEXT("JoinFirstFoundRoom requested"));
@@ -265,6 +266,11 @@ void UCWGameInstance::DestroyRoom()
 {
 	CacheOnlineInterfaces();
 
+	if (!BeginSessionOperation(ECWSessionOperation::DestroyRoom))
+	{
+		return;
+	}
+
 	if (!SessionInterface.IsValid())
 	{
 		FailSessionOperation(ECWSessionOperation::DestroyRoom, ECWSessionFailure::Unknown, TEXT("DestroyRoom failed: SessionInterface is invalid"));
@@ -274,11 +280,6 @@ void UCWGameInstance::DestroyRoom()
 	if (SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName) == nullptr)
 	{
 		FailSessionOperation(ECWSessionOperation::DestroyRoom, ECWSessionFailure::Unknown, TEXT("DestroyRoom failed: no session"));
-		return;
-	}
-
-	if (!BeginSessionOperation(ECWSessionOperation::DestroyRoom))
-	{
 		return;
 	}
 
