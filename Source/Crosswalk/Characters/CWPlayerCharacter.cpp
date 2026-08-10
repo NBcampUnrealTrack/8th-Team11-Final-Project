@@ -129,17 +129,11 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 	const FVector LaunchVelocity = LaunchDirection * HitContext.VehicleSpeed * KnockbackSpeedScale
 		+ FVector::UpVector * KnockbackUpSpeed;
 
-	Multicast_StartRagdoll(LaunchVelocity, GetActorLocation());
+	Multicast_StartRagdoll(LaunchVelocity);
 }
 
-void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(
-	FVector_NetQuantize LaunchVelocity,
-	FVector_NetQuantize ServerActorLocation)
+void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(FVector_NetQuantize LaunchVelocity)
 {
-	// 래그돌 물리를 켜기 전에 서버 기준 위치로 맞춘다.
-	// 각 클라이언트가 자기 화면의 보간 위치에서 래그돌을 시작하면 4인 화면에서 피격 시작점이 갈라진다.
-	SetActorLocation(ServerActorLocation, false, nullptr, ETeleportType::TeleportPhysics);
-
 	StartRagdoll(LaunchVelocity);
 
 	if (!HasAuthority())
@@ -250,8 +244,8 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->StopMovementImmediately();
-	Movement->SetComponentTickEnabled(true);
-	Movement->SetMovementMode(MOVE_Walking);
+	Movement->DisableMovement();
+	Movement->SetComponentTickEnabled(false);
 
 	// 캡슐이 살아 있으면 쓰러진 몸이 자기 캡슐에 걸려 튄다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
