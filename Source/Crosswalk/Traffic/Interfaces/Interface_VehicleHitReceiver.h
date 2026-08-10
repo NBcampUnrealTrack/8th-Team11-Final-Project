@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 // Interface_VehicleHitReceiver.h
 
 #pragma once

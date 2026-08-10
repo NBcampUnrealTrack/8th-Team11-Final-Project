@@ -1,4 +1,4 @@
-#include "Painting/Tools/CWBaseTool.h"
+﻿#include "Painting/Tools/CWBaseTool.h"
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"

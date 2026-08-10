@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 // CWVehicleHitReactionComponent.cpp
 
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
