@@ -22,9 +22,32 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     FVector AttemptLocation = FVector::ZeroVector;
 
-    // 플레이어가 바라보거나 방어하려는 방향
+    /**
+     * 플레이어 기준 커서 방향. 대상 선별(부채꼴 각도)에 쓴다.
+     *
+     * 차량이 날아갈 방향은 이 값이 아니라 CursorWorldLocation 으로 차량이 직접 낸다.
+     * 여기는 "플레이어가 어느 쪽을 가리켰나"이고, 그쪽은 "차가 어디로 가야 하나"라서 기준점이 다르다.
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     FVector AttemptDirection = FVector::ForwardVector;
+
+    /**
+     * 플레이어가 찍은 커서의 월드 지점. 패링당한 차량이 이 지점을 향해 날아간다. (기획서 6.1)
+     *
+     * 방향이 아니라 지점을 넘기는 이유: 방향만 넘기면 차량은 커서 쪽이 아니라
+     * "커서 방향과 평행하게" 날아간다. 차량과 플레이어의 위치가 다르기 때문이다.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
+    FVector CursorWorldLocation = FVector::ZeroVector;
+
+    /**
+     * CursorWorldLocation 을 쓸 수 있는가.
+     *
+     * 커서 트레이스가 빗나가면 플레이어 위치가 그대로 돌아온다. 그 값을 목표로 삼으면
+     * 차가 플레이어를 향해 날아오므로, 그 경우를 구분해 AttemptDirection 으로 되돌린다.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
+    bool bHasCursorTarget = false;
 
     /**
      * 서버가 패링 대상을 찾을 때 사용할 기본 반경. 0 이면 거리 제한 없음.
