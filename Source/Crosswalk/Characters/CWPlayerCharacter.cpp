@@ -165,6 +165,23 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	{
 		// 물리 애셋이 없으면 래그돌이 성립하지 않는다. 조용히 넘어가면 원인을 찾기 어렵다.
 		UE_LOG(LogTemp, Warning, TEXT("[%s] 물리 애셋이 없어 래그돌을 켤 수 없습니다. 스켈레탈 메시 설정을 확인하세요."), *GetName());
+
+		/**
+		 * 래그돌 없이도 잠금은 정상적인 길이로 끝나야 한다.
+		 *
+		 * 여기서 그냥 돌아가면 몸이 뜨지 않아 ACharacter::Landed 가 오지 않고,
+		 * bRagdollActive 가 false 라 CheckRagdollRest 도 착지를 통보하지 않는다.
+		 * 결국 컴포넌트의 MaxLandingWait(5초) 안전장치가 유일한 탈출구가 되어,
+		 * 1초짜리 잠금이 6초가 된다. 서 있는 채로 6초를 못 움직이면 버그로 보인다.
+		 *
+		 * 스켈레톤을 갈아끼울 때 물리 애셋을 빠뜨리는 건 실제로 자주 있는 일이라,
+		 * 연출만 빠지고 게임은 계속 굴러가는 쪽을 택한다.
+		 */
+		if (HasAuthority())
+		{
+			HitReactionComponent->NotifyLanded();
+		}
+
 		return;
 	}
 

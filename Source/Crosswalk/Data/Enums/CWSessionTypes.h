@@ -35,6 +35,8 @@ enum class ECWSessionFailure : uint8
 {
 	None UMETA(DisplayName = "None"),
 	NotLoggedIn UMETA(DisplayName = "Not Logged In"),
+	// 다른 세션 작업이 아직 끝나지 않아 요청이 거절됨. 진행 중이던 작업은 그대로 살아 있다
+	Busy UMETA(DisplayName = "Busy"),
 	RoomNotFound UMETA(DisplayName = "Room Not Found"),
 	RoomFull UMETA(DisplayName = "Room Full"),
 	AlreadyInSession UMETA(DisplayName = "Already In Session"),
