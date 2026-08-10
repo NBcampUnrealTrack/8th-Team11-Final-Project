@@ -1,6 +1,7 @@
 ﻿#include "Characters/CWPlayerCharacter.h"
 
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -89,6 +90,9 @@ void ACWPlayerCharacter::BeginPlay()
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
 
+	// 다운 시간이 끝나면 일어난다. 서버에서만 들어오고, 연출은 여기서 멀티캐스트로 뿌린다.
+	HitReactionComponent->OnGetUpRequested.AddDynamic(this, &ACWPlayerCharacter::HandleGetUpRequested);
+
 	// 패링 성공 연출. 서버가 멀티캐스트로 뿌리므로 여기서 권한을 따질 필요가 없다.
 	ParryComponent->OnParrySucceeded.AddDynamic(this, &ACWPlayerCharacter::HandleParrySucceeded);
 
@@ -148,9 +152,47 @@ void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(FVector_NetQuanti
 	);
 }
 
-void ACWPlayerCharacter::Multicast_StopRagdoll_Implementation(FVector_NetQuantize RecoverLocation)
+void ACWPlayerCharacter::Multicast_StopRagdoll_Implementation(FVector_NetQuantize RecoverLocation, float RecoverYaw, bool bFaceDown)
 {
-	StopRagdoll(RecoverLocation);
+	StopRagdoll(RecoverLocation, RecoverYaw);
+
+	// 몬타주는 각 머신이 자기 화면에서 돌린다. 길이는 어디서 재도 같다.
+	const float MontageLength = PlayGetUpMontage(bFaceDown);
+
+	// 재생할 몬타주가 없으면 밑에 깔 이유도 없다. 그대로 두면 잠깐 누운 자세로 서 있게 된다.
+	if (MontageLength <= 0.f)
+	{
+		bUsingRagdollPose = false;
+		GetWorldTimerManager().ClearTimer(RagdollPoseBlendTimerHandle);
+	}
+
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 잠금을 푸는 시점은 서버가 정한다. 몬타주가 없으면 기다릴 이유도 없다.
+	if (MontageLength <= 0.f)
+	{
+		FinishGetUp();
+		return;
+	}
+
+	// 리드 타임이 몬타주보다 길면 기다릴 게 없다. SetTimer 는 0 이하를 받으면 조용히 타이머를 지운다.
+	const float LockDuration = MontageLength - GetUpUnlockLeadTime;
+	if (LockDuration <= 0.f)
+	{
+		FinishGetUp();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		GetUpTimerHandle,
+		this,
+		&ACWPlayerCharacter::FinishGetUp,
+		LockDuration,
+		false
+	);
 }
 
 void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
@@ -186,6 +228,18 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	}
 
 	bRagdollActive = true;
+
+	/**
+	 * 일어나던 중에 다시 치일 수 있다. GetUpUnlockLeadTime 만큼은 몬타주가 남아 있는데
+	 * 잠금은 이미 풀린 구간이라, 그 사이에 들어온 피격이 여기로 온다.
+	 * 몬타주를 세우지 않으면 래그돌 위로 기상 애니가 계속 흘러 포즈가 섞인다.
+	 */
+	StopAnimMontage();
+	GetWorldTimerManager().ClearTimer(GetUpTimerHandle);
+
+	// 물리가 도는 동안에는 스냅샷 포즈가 의미 없다. 남아 있으면 다음 기상 때까지 끌려간다.
+	bUsingRagdollPose = false;
+	GetWorldTimerManager().ClearTimer(RagdollPoseBlendTimerHandle);
 
 	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
@@ -224,7 +278,7 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	}
 }
 
-void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
+void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float RecoverYaw)
 {
 	if (!bRagdollActive)
 	{
@@ -234,6 +288,27 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
 	bRagdollActive = false;
 
 	USkeletalMeshComponent* MeshComponent = GetMesh();
+
+	/**
+	 * 쓰러진 포즈를 물리를 끄기 전에 떠 둔다. 끄고 나면 이미 애니메이션 포즈로 돌아가 있다.
+	 *
+	 * 스냅샷은 컴포넌트 스페이스로 저장되므로, 아래에서 캡슐을 옮기고 돌리면 포즈도 같이 돌아간다.
+	 * 그래서 RecoverYaw 를 몸이 누워 있던 방향으로 맞추는 게 중요하다. 방향이 어긋나면
+	 * 스냅샷 포즈가 엉뚱한 쪽을 보고 시작해 기상 첫 프레임에 몸이 홱 돈다.
+	 */
+	if (UAnimInstance* AnimInstance = MeshComponent->GetAnimInstance())
+	{
+		AnimInstance->SavePoseSnapshot(RagdollPoseSnapshotName);
+
+		// 스냅샷을 뜬 경우에만 켠다. 못 떴는데 켜면 AnimBP 가 빈 포즈를 밑에 깔아 T 포즈가 보인다.
+		bUsingRagdollPose = true;
+		GetWorldTimerManager().SetTimer(
+			RagdollPoseBlendTimerHandle,
+			FTimerDelegate::CreateWeakLambda(this, [this]() { bUsingRagdollPose = false; }),
+			FMath::Max(RagdollPoseBlendTime, KINDA_SMALL_NUMBER),
+			false
+		);
+	}
 
 	/**
 	 * 물리를 확실히 내린다.
@@ -251,6 +326,7 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation)
 	// 캡슐을 먼저 세우고 메시를 되돌린다. 순서가 바뀌면 메시가 한 프레임 원점에 찍힌다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	SetActorLocation(RecoverLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorRotation(FRotator(0.f, RecoverYaw, 0.f), ETeleportType::TeleportPhysics);
 
 	MeshComponent->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
 
@@ -343,11 +419,152 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 		return;
 	}
 
-	// 잠금이 풀리면 일어난다. 자리는 서버가 정해 모든 머신에 같은 값을 준다.
+	/**
+	 * 일어나는 처리는 HandleGetUpRequested 가 이미 했다. 여기까지 래그돌이 살아 있다면
+	 * 기상 경로를 타지 못하고 컴포넌트의 안전장치로 잠금만 풀린 것이다.
+	 *
+	 * 연출은 포기하더라도 몸은 세워야 한다. 쓰러진 채로 조작이 풀리면 캡슐만 움직이고
+	 * 화면 속 캐릭터는 바닥에 누운 그대로다.
+	 */
 	if (bRagdollActive)
 	{
-		Multicast_StopRagdoll(ResolveRecoverLocation());
+		UE_LOG(LogTemp, Warning, TEXT("[%s] 기상 절차 없이 잠금이 풀렸습니다. 래그돌만 정리합니다."), *GetName());
+		Multicast_StopRagdoll(ResolveRecoverLocation(), ResolveRecoverYaw(IsRagdollFaceDown()), IsRagdollFaceDown());
 	}
+}
+
+void ACWPlayerCharacter::HandleGetUpRequested(UCWVehicleHitReactionComponent* /*HitReactionComp*/)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	/**
+	 * 래그돌이 꺼져 있으면 일어날 것도 없다. 물리 애셋이 없어 StartRagdoll 이 통째로 빠진 경우다.
+	 * 기다리게 두면 MaxGetUpWait 만큼 서 있는 채로 조작이 막힌다.
+	 */
+	if (!bRagdollActive)
+	{
+		HitReactionComponent->NotifyGetUpFinished();
+		return;
+	}
+
+	// 앞뒤와 방향은 물리를 끄기 전에 재야 한다. 끄고 나면 몸이 이미 애니메이션 포즈로 돌아간다.
+	const bool bFaceDown = IsRagdollFaceDown();
+
+	Multicast_StopRagdoll(ResolveRecoverLocation(), ResolveRecoverYaw(bFaceDown), bFaceDown);
+}
+
+float ACWPlayerCharacter::PlayGetUpMontage(bool bFaceDown)
+{
+	// 한쪽만 채워 넣었으면 있는 쪽으로 대신한다. 방향이 어색해도 아예 안 일어나는 것보단 낫다.
+	UAnimMontage* PreferredMontage = bFaceDown ? GetUpFromFrontMontage : GetUpFromBackMontage;
+	UAnimMontage* FallbackMontage = bFaceDown ? GetUpFromBackMontage : GetUpFromFrontMontage;
+
+	UAnimMontage* Montage = PreferredMontage != nullptr ? PreferredMontage : FallbackMontage;
+	if (Montage == nullptr)
+	{
+		return 0.f;
+	}
+
+	// AnimBP 에 슬롯 노드가 없으면 길이는 정상으로 나오지만 화면에는 아무것도 보이지 않는다.
+	return PlayAnimMontage(Montage);
+}
+
+void ACWPlayerCharacter::FinishGetUp()
+{
+	GetWorldTimerManager().ClearTimer(GetUpTimerHandle);
+
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	HitReactionComponent->NotifyGetUpFinished();
+}
+
+bool ACWPlayerCharacter::IsRagdollFaceDown() const
+{
+	FVector BodyUp = FVector::ZeroVector;
+	FVector BodyForward = FVector::ZeroVector;
+
+	// 축을 못 구하면 누운 것으로 친다. 기본 몬타주가 그쪽이라 폴백 결과와 어긋나지 않는다.
+	if (!ResolveRagdollBodyAxes(BodyUp, BodyForward))
+	{
+		return false;
+	}
+
+	// 가슴이 바닥을 향하고 있으면 엎드린 것이다.
+	return BodyForward.Z < 0.f;
+}
+
+float ACWPlayerCharacter::ResolveRecoverYaw(bool bFaceDown) const
+{
+	FVector BodyUp = FVector::ZeroVector;
+	FVector BodyForward = FVector::ZeroVector;
+
+	if (!ResolveRagdollBodyAxes(BodyUp, BodyForward))
+	{
+		return GetActorRotation().Yaw;
+	}
+
+	// 누운 몸에서 머리가 향한 쪽을 캐릭터 정면으로 삼는다. 기상 애니 대부분이 이 기준으로 만들어진다.
+	const FVector PlanarBodyUp = FVector(BodyUp.X, BodyUp.Y, 0.f);
+
+	// 머리로 처박혀 몸이 거의 수직이면 머리 방향에 의미가 없다. 그냥 보던 쪽으로 일어난다.
+	if (PlanarBodyUp.IsNearlyZero())
+	{
+		return GetActorRotation().Yaw;
+	}
+
+	const float YawOffset = bFaceDown ? GetUpFromFrontYawOffset : GetUpFromBackYawOffset;
+
+	return FRotator::NormalizeAxis(PlanarBodyUp.Rotation().Yaw + YawOffset);
+}
+
+bool ACWPlayerCharacter::ResolveRagdollBodyAxes(FVector& OutBodyUp, FVector& OutBodyForward) const
+{
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (MeshComponent == nullptr)
+	{
+		return false;
+	}
+
+	/**
+	 * 본 이름이 틀리면 GetSocketLocation 이 경고 없이 컴포넌트 원점을 돌려준다.
+	 * 그러면 축이 엉뚱하게 잡혀 앞뒤가 무작위로 뒤집히는데, 원인을 찾기가 매우 어렵다.
+	 */
+	if (MeshComponent->GetBoneIndex(RagdollPivotBone) == INDEX_NONE
+		|| MeshComponent->GetBoneIndex(RagdollHeadBone) == INDEX_NONE
+		|| MeshComponent->GetBoneIndex(RagdollLeftShoulderBone) == INDEX_NONE
+		|| MeshComponent->GetBoneIndex(RagdollRightShoulderBone) == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 기상 방향 판별에 쓸 본을 찾지 못했습니다. Pivot=%s Head=%s ShoulderL=%s ShoulderR=%s (스켈레톤의 본 이름을 확인하세요)"),
+			*GetName(), *RagdollPivotBone.ToString(), *RagdollHeadBone.ToString(),
+			*RagdollLeftShoulderBone.ToString(), *RagdollRightShoulderBone.ToString());
+
+		return false;
+	}
+
+	const FVector PelvisLocation = MeshComponent->GetSocketLocation(RagdollPivotBone);
+	const FVector HeadLocation = MeshComponent->GetSocketLocation(RagdollHeadBone);
+	const FVector LeftShoulderLocation = MeshComponent->GetSocketLocation(RagdollLeftShoulderBone);
+	const FVector RightShoulderLocation = MeshComponent->GetSocketLocation(RagdollRightShoulderBone);
+
+	OutBodyUp = (HeadLocation - PelvisLocation).GetSafeNormal();
+	const FVector BodyRight = (RightShoulderLocation - LeftShoulderLocation).GetSafeNormal();
+
+	if (OutBodyUp.IsNearlyZero() || BodyRight.IsNearlyZero())
+	{
+		return false;
+	}
+
+	// 언리얼은 왼손 좌표계라 Right × Up 이 Forward 가 된다.
+	OutBodyForward = FVector::CrossProduct(BodyRight, OutBodyUp).GetSafeNormal();
+
+	return !OutBodyForward.IsNearlyZero();
 }
 
 void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncData)
@@ -458,6 +675,11 @@ USoundAttenuation* ACWPlayerCharacter::ResolveSoundAttenuation()
 bool ACWPlayerCharacter::IsHitLocked() const
 {
 	return HitReactionComponent->IsHitLocked();
+}
+
+bool ACWPlayerCharacter::IsUsingRagdollPose() const
+{
+	return bUsingRagdollPose;
 }
 
 void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
