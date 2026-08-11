@@ -51,6 +51,8 @@ public:
 
 	virtual void BeginPlay() override;
 
+	virtual void Tick(float DeltaSeconds) override;
+
 	virtual void ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds) override;
 
 	virtual void ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly) override;
@@ -154,6 +156,9 @@ private:
 	/** CellMaterial 을 지정했으면 칸 메쉬에 입힌다. */
 	void ApplyCellMaterial();
 
+	/** 도색 영역 경계선을 Area 박스에 맞춰 다시 만든다. 에디터에서 박스를 조절하면 바로 따라온다. */
+	void RefreshAreaBorder();
+
 	/**
 	 * 붓질 한 번을 이 기계에 적용한다. 칸 상태 → 메쉬 → 진행도까지 한 번에 처리한다.
 	 * @param bSpillOnly Area 바깥 칸만 건드린다. 검은색 롤러가 완성된 횡단보도를 지우지 못하게 막는다.
@@ -183,6 +188,13 @@ private:
 	/** 칸 하나의 크기(cm). Area 를 GridSize 로 나눈 값이고, 바깥 고리도 같은 크기를 쓴다. */
 	FVector2D GetCellSize() const;
 
+	/**
+	 * 남은 칸을 눈에 보이게 그린다.
+	 *   빨강 = 아직 안 칠한 점수 영역 칸 (도색이 덜 끝난 자리)
+	 *   주황 = 바깥 고리로 삐져나간 칸 (검은색 롤러로 지워야 하는 자리)
+	 */
+	void ShowDebugCells() const;
+
 	/** 칸 상태에 맞춰 메쉬 인스턴스를 다시 만든다. */
 	void RefreshCellMeshes();
 
@@ -200,6 +212,13 @@ public:
 	// 칸 하나를 그리는 메쉬. 인스턴스 하나가 칸 하나다. (격자는 부모의 Area 박스를 나눈다)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UInstancedStaticMeshComponent> CellMeshes;
+
+	// 도색 영역의 경계선. 인스턴스 4개가 Area 박스의 네 변이다.
+	//
+	// 이게 없으면 삐져나간 페인트를 알아볼 수가 없다. 바깥 고리에 묻은 페인트나 안쪽에 칠한
+	// 페인트나 똑같이 생겨서, 기준선이 보여야 "이 선 밖은 지워야 할 것" 으로 읽힌다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
+	TObjectPtr<UInstancedStaticMeshComponent> AreaBorderMeshes;
 
 protected:
 	// Area 안쪽(=진행도로 세는 영역)의 가로 x 세로 칸 수.
@@ -240,8 +259,32 @@ protected:
 	bool bStartFilled = false;
 
 	// 붓 반경(cm). 한 번에 이 반경 안의 칸들이 처리된다.
+	// 체온이 오르면 이 값에 계수가 곱해져 실제 반경이 줄어든다. (bScaleBrushByWorkSpeed)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "1.0"))
-	float BrushRadius = 70.f;
+	float BrushRadius = 20.f;
+
+	// 체온이 오를 때 붓 반경을 줄일 것인가. (체온 기획서 4.2)
+	//
+	// 이 존은 시간이 아니라 붓이 덮는 면적으로 진행해서, 넘어오는 시간을 줄여도 느려지지 않는다.
+	// 그래서 붓 자체를 줄인다. 끄면 이 존만 체온에 따른 작업속도 저하를 받지 않는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	bool bScaleBrushByWorkSpeed = true;
+
+	// 아직 안 칠해진 점수 영역 칸을 빨간 상자로 그린다.
+	//
+	// "화면은 다 칠해졌는데 진행도가 안 찬다" 를 확인하는 용도다. 칸 메쉬는 CellPadding 이
+	// 음수라 격자보다 크게 그려지고 페인트 머티리얼의 가장자리도 부드러워서, 빈 칸이
+	// 이웃 메쉬에 덮여 눈에 안 보일 수 있다. 이걸 켜면 남은 칸의 위치가 그대로 보인다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
+	bool bShowDebugUnfilledCells = false;
+
+	// 바깥 고리로 삐져나간 칸을 주황 상자로 그린다.
+	//
+	// 체크리스트에는 "페인트 정리 N칸 남음" 이라고 뜨는데, 삐져나간 페인트는 도로 위에
+	// 얇게 묻어 있어서 어디에 남았는지 눈으로 찾기가 어렵다. 검은색 롤러로 지우러 갈 때
+	// 위치를 바로 알 수 있게 한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
+	bool bShowDebugSpillCells = false;
 
 	// 칸 메쉬를 도로보다 살짝 띄워 Z-파이팅을 막는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
@@ -254,6 +297,25 @@ protected:
 	// CellMaterial 을 안 꽂았다면 0 으로 두는 편이 낫다. 딱딱한 사각형이 겹쳐 봐야 두꺼워질 뿐이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "-0.5", ClampMax = "0.5"))
 	float CellPadding = -0.3f;
+
+	// 도색 영역 경계선을 그릴 것인가. 끄면 선이 사라진다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Border")
+	bool bShowAreaBorder = true;
+
+	// 경계선 두께(cm). 선의 중심이 Area 경계에 놓이므로 안팎으로 절반씩 걸친다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Border", meta = (ClampMin = "0.1"))
+	float AreaBorderThickness = 6.f;
+
+	// 경계선을 도로에서 띄우는 높이(cm).
+	//
+	// 칸 메쉬(CellHeightOffset)보다 높아야 한다. 같거나 낮으면 페인트가 선을 덮어버려서,
+	// 정작 삐져나간 페인트가 많을수록 기준선이 안 보이는 상황이 된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Border")
+	float AreaBorderHeightOffset = 2.f;
+
+	// 경계선에 입힐 머티리얼. 비워두면 AreaBorderMeshes 컴포넌트에 꽂혀 있는 것을 쓴다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Border")
+	TObjectPtr<UMaterialInterface> AreaBorderMaterial;
 
 	// 칸에 입힐 페인트 머티리얼. 비워두면 CellMeshes 컴포넌트에 이미 꽂혀 있는 것을 쓴다.
 	//
