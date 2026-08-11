@@ -15,6 +15,34 @@ void ACWGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ACWGameState, Objectives);
 }
 
+void ACWGameState::AddPlayerState(
+	APlayerState* PlayerState
+)
+{
+	// 엔진이 PlayerArray에 플레이어를 먼저 추가
+	Super::AddPlayerState(PlayerState);
+
+	// 최신 PlayerArray를 UI 계층에 알림
+	NotifyPlayerListChanged();
+}
+
+void ACWGameState::RemovePlayerState(
+	APlayerState* PlayerState
+)
+{
+	// 엔진이 PlayerArray에서 플레이어를 먼저 제거
+	Super::RemovePlayerState(PlayerState);
+
+	// 제거된 최신 PlayerArray를 UI 계층에 알림
+	NotifyPlayerListChanged();
+}
+
+void ACWGameState::NotifyPlayerListChanged()
+{
+	// 서버와 클라이언트가 각자 보유한 최신 PlayerArray를 읽도록 알림
+	OnPlayerListChanged.Broadcast();
+}
+
 void ACWGameState::SetObjectiveCounts(int32 InCompletedCount, int32 InTotalCount)
 {
 	if (!HasAuthority())

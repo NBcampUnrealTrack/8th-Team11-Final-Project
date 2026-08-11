@@ -44,6 +44,34 @@ void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 	Server_RequestParry(CursorWorldLocation, ClientInputTime);
 }
 
+float UCWParryComponent::GetCooldownReadyRatio() const
+{
+	// 쿨타임을 사용하지 않으면 항상 패링 가능 상태로 처리
+	if (ParryCooldown <= 0.f)
+	{
+		return 1.f;
+	}
+
+	const UWorld* World = GetWorld();
+
+	// 월드 시간을 읽을 수 없는 초기화 구간에서는 사용 가능 상태로 처리
+	if (!IsValid(World))
+	{
+		return 1.f;
+	}
+
+	// UI는 로컬 입력 쿨타임을 표시해야 하므로 서버 기록이 아닌
+	// LastLocalParryRequestTime을 기준으로 준비 비율을 계산
+	const float Elapsed =
+		World->GetTimeSeconds() - LastLocalParryRequestTime;
+
+	return FMath::Clamp(
+		Elapsed / ParryCooldown,
+		0.f,
+		1.f
+	);
+}
+
 void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize CursorWorldLocation, float ClientInputTime)
 {
 	HandleServerParryRequest(CursorWorldLocation, ClientInputTime);

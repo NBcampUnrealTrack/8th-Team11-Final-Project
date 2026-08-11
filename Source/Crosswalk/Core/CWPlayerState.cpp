@@ -3,6 +3,7 @@
 #include "Core/CWPlayerState.h"
 
 #include "CoreMinimal.h"
+#include "Core/CWGameState.h"
 #include "Core/Room/CWRoomGameState.h"
 #include "Net/UnrealNetwork.h"
 
@@ -23,7 +24,7 @@ void ACWPlayerState::OnRep_PlayerName()
 	Super::OnRep_PlayerName();
 
 	// 이름 복제가 끝난 시점의 최신 플레이어 목록을 UI에 알림
-	NotifyRoomPlayersChanged();
+	NotifyPlayersChanged();
 }
 
 #pragma endregion
@@ -46,7 +47,7 @@ void ACWPlayerState::ServerSetReady_Implementation(bool bNewReady)
 	bIsReady = bNewReady;
 
 	// Listen Server에서는 RepNotify가 자동 호출되지 않으므로 직접 알림
-	NotifyRoomPlayersChanged();
+	NotifyPlayersChanged();
 
 	// 준비 상태 변경을 가능한 빨리 클라이언트에 복제
 	ForceNetUpdate();
@@ -54,11 +55,11 @@ void ACWPlayerState::ServerSetReady_Implementation(bool bNewReady)
 
 void ACWPlayerState::OnRep_IsReady()
 {
-	// 복제된 준비 상태를 사용하는 방 UI가 목록을 다시 읽도록 알림
-	NotifyRoomPlayersChanged();
+	// 복제된 준비 상태를 사용하는 플레이어 목록 UI가 목록을 다시 읽도록 알림
+	NotifyPlayersChanged();
 }
 
-void ACWPlayerState::NotifyRoomPlayersChanged() const
+void ACWPlayerState::NotifyPlayersChanged() const
 {
 	UWorld* World = GetWorld();
 
@@ -67,16 +68,24 @@ void ACWPlayerState::NotifyRoomPlayersChanged() const
 		return;
 	}
 
+	// 방 대기실에서는 준비 상태와 이름 변경을 RoomGameState에 전달
 	ACWRoomGameState* RoomGameState =
 		World->GetGameState<ACWRoomGameState>();
 
-	if (!IsValid(RoomGameState))
+	if (IsValid(RoomGameState))
 	{
+		RoomGameState->NotifyRoomPlayersChanged();
 		return;
 	}
 
-	// GameState가 소유한 단일 변경 이벤트를 통해 UI 계층에 전달
-	RoomGameState->NotifyRoomPlayersChanged();
+	// 인게임에서는 이름 변경을 인게임 플레이어 목록에 전달
+	ACWGameState* GameState =
+		World->GetGameState<ACWGameState>();
+
+	if (IsValid(GameState))
+	{
+		GameState->NotifyPlayerListChanged();
+	}
 }
 
 #pragma endregion
