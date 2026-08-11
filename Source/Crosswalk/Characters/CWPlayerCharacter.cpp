@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "EnhancedInputComponent.h"
@@ -21,7 +22,10 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundAttenuation.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
+#include "Interfaces/Interface_Interactable.h"
+#include "Painting/CWTemperatureComponent.h"
 #include "Painting/CWWorkerComponent.h"
+#include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Tools/CWToolHolderComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -60,6 +64,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
+	TemperatureComponent = CreateDefaultSubobject<UCWTemperatureComponent>(TEXT("TemperatureComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -897,7 +902,128 @@ void ACWPlayerCharacter::Interact()
 		return;
 	}
 
-	ToolHolderComponent->Interact();
+	float InteractableDistanceSquared = TNumericLimits<float>::Max();
+	AActor* Interactable = FindNearestInteractable(InteractableDistanceSquared);
+
+	if (Interactable == nullptr)
+	{
+		ToolHolderComponent->Interact();
+		return;
+	}
+
+	// 도구를 들고 있으면 도구 쪽 경로는 "내려놓기" 다. 트렁크 앞에서 E 를 눌렀는데 발밑에
+	// 도구가 떨어지면 반납한 것으로 착각하게 되므로, 이 경우는 상호작용 대상을 우선한다.
+	if (ToolHolderComponent->GetHeldTool() != nullptr)
+	{
+		PerformInteractWith(Interactable);
+		return;
+	}
+
+	// 맨손이면 둘 다 후보다. 가까운 쪽을 고른다.
+	// 차량 옆에 도구가 떨어져 있어도 바로 집을 수 있어야 한다.
+	if (const ACWBaseTool* FocusedTool = ToolHolderComponent->GetFocusedTool())
+	{
+		const float ToolDistanceSquared = FVector::DistSquared(GetActorLocation(), FocusedTool->GetActorLocation());
+		if (ToolDistanceSquared <= InteractableDistanceSquared)
+		{
+			ToolHolderComponent->Interact();
+			return;
+		}
+	}
+
+	PerformInteractWith(Interactable);
+}
+
+AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) const
+{
+	OutDistanceSquared = TNumericLimits<float>::Max();
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+
+	// 레벨 전체를 훑지 않고 반경 안만 본다. 상호작용 키를 누른 순간에만 도는 코드지만,
+	// 액터 순회는 맵이 커질수록 그대로 비용이 된다.
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	TArray<FOverlapResult> Overlaps;
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		GetActorLocation(),
+		FQuat::Identity,
+		ObjectParams,
+		FCollisionShape::MakeSphere(InteractRadius),
+		QueryParams);
+
+	AActor* NearestActor = nullptr;
+
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AActor* OverlapActor = Overlap.GetActor();
+		if (OverlapActor == nullptr || !OverlapActor->Implements<UInterface_Interactable>())
+		{
+			continue;
+		}
+
+		// 도구는 도구 소지 컴포넌트가 따로 관리한다. 위 함수 주석 참고.
+		if (OverlapActor->IsA<ACWBaseTool>())
+		{
+			continue;
+		}
+
+		if (!IInterface_Interactable::Execute_CanInteract(OverlapActor, const_cast<ACWPlayerCharacter*>(this)))
+		{
+			continue;
+		}
+
+		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), OverlapActor->GetActorLocation());
+		if (DistanceSquared >= OutDistanceSquared)
+		{
+			continue;
+		}
+
+		OutDistanceSquared = DistanceSquared;
+		NearestActor = OverlapActor;
+	}
+
+	return NearestActor;
+}
+
+void ACWPlayerCharacter::PerformInteractWith(AActor* Target)
+{
+	if (Target == nullptr)
+	{
+		return;
+	}
+
+	// 판정은 서버에서만 한다. 클라이언트는 요청만 보내고 서버가 CanInteract 로 다시 본다.
+	if (!HasAuthority())
+	{
+		Server_InteractWith(Target);
+		return;
+	}
+
+	if (IInterface_Interactable::Execute_CanInteract(Target, this))
+	{
+		IInterface_Interactable::Execute_Interact(Target, this);
+	}
+}
+
+void ACWPlayerCharacter::Server_InteractWith_Implementation(AActor* Target)
+{
+	if (Target == nullptr || !Target->Implements<UInterface_Interactable>())
+	{
+		return;
+	}
+
+	PerformInteractWith(Target);
 }
 
 void ACWPlayerCharacter::CancelWork()
@@ -926,6 +1052,14 @@ void ACWPlayerCharacter::Parry()
 {
 	if (IsHitLocked())
 	{
+		return;
+	}
+
+	// 테두리 미니게임처럼 입력을 붙잡는 작업 중에는 패링이 막힌다.
+	// 그 상태에서 패링까지 되면 못 피하는 위험이 상쇄되어 미니게임의 긴장이 사라진다.
+	if (WorkerComponent->IsParryBlocked())
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[%s] 작업 중이라 패링 입력을 무시합니다."), *GetName());
 		return;
 	}
 
