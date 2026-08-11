@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "Core/CWGameState.h"
 #include "Engine/World.h"
+#include "Blueprint/UserWidget.h"
+#include "TimerManager.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -30,6 +32,7 @@ void UCWInGamePlayerViewModel::Initialize(
 		return;
 	}
 
+	BoundContextObject = WorldContextObject;
 	BoundWorld = World;
 
 	// 인게임 GameState가 ViewModel보다 늦게 생성되는 상황 처리
@@ -61,6 +64,7 @@ void UCWInGamePlayerViewModel::Uninitialize()
 	}
 
 	GameStateSetHandle.Reset();
+	BoundContextObject.Reset();
 	BoundWorld.Reset();
 
 	// 이전 맵의 플레이어 데이터가 다음 화면에 남지 않도록 초기화
@@ -85,16 +89,47 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		return;
 	}
 
+	// ViewModel을 소유한 위젯의 Owning Player로 로컬 플레이어를 식별
+	// Listen Server에는 여러 PlayerController가 있으므로
+	// GetFirstPlayerController()를 사용하면 원격 컨트롤러를 고를 수 있음
+	const UUserWidget* OwningWidget =
+		Cast<UUserWidget>(BoundContextObject.Get());
+
 	APlayerController* LocalPlayerController =
-		World->GetFirstPlayerController();
+		IsValid(OwningWidget)
+		? OwningWidget->GetOwningPlayer()
+		: nullptr;
 
-	APlayerState* LocalPlayerState = nullptr;
-
-	if (IsValid(LocalPlayerController))
+	// Owning Player 연결이 아직 끝나지 않았다면 다음 Tick에 재시도
+	if (!IsValid(LocalPlayerController))
 	{
-		LocalPlayerState =
-			LocalPlayerController->PlayerState;
+		World->GetTimerManager().SetTimerForNextTick(
+			this,
+			&UCWInGamePlayerViewModel::RefreshPlayers
+		);
+
+		return;
 	}
+
+	APlayerState* LocalPlayerState =
+		LocalPlayerController->PlayerState;
+
+	// PC의 PlayerState 복제가 아직 도착하지 않았다면
+	// 잘못된 원격 목록을 확정하지 않고 다음 Tick에 재시도
+	if (!IsValid(LocalPlayerState))
+	{
+		World->GetTimerManager().SetTimerForNextTick(
+			this,
+			&UCWInGamePlayerViewModel::RefreshPlayers
+		);
+
+		return;
+	}
+
+	// Seamless Travel 중 PlayerState 객체가 교체돼도
+	// 동일한 로컬 플레이어를 식별할 수 있도록 PlayerId를 함께 저장
+	const int32 LocalPlayerId =
+		LocalPlayerState->GetPlayerId();
 
 	FText NewLocalPlayerName =
 		FText::GetEmpty();
@@ -110,6 +145,9 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 	int32 ValidPlayerIndex = 0;
 
+	// PlayerId 복제를 기다리는 플레이어가 있었는지 기록
+	bool bHasPendingPlayerId = false;
+
 	// 복제된 PlayerArray를 로컬 플레이어와 다른 플레이어로 분리
 	for (
 		const TObjectPtr<APlayerState>& PlayerStateObject :
@@ -121,6 +159,18 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 		if (!IsValid(PlayerState))
 		{
+			continue;
+		}
+
+		const int32 CandidatePlayerId =
+			PlayerState->GetPlayerId();
+
+		// Seamless Travel 중 아직 초기화되지 않은 임시 PlayerState는 표시하지 않음
+		// PlayerId는 RepNotify가 없어 뒤늦게 도착해도 갱신 이벤트가 오지 않는다.
+		// 이번 프레임에는 건너뛰고 다음 Tick에 다시 확인한다.
+		if (CandidatePlayerId <= 0)
+		{
+			bHasPendingPlayerId = true;
 			continue;
 		}
 
@@ -149,8 +199,23 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 				FText::FromString(PlayerName);
 		}
 
+		const APlayerController* PlayerController =
+			PlayerState->GetPlayerController();
+
+		// PlayerState가 가진 컨트롤러와 위젯의 Owning Player를 직접 비교해
+		// 현재 화면을 소유한 로컬 플레이어인지 보조 판정
+		const bool bOwnedByLocalController =
+			IsValid(PlayerController) &&
+			PlayerController == LocalPlayerController;
+
+		// Seamless Travel 중 포인터 교체와 연결 순서 차이를 모두 처리
+		const bool bIsLocalPlayer =
+			bOwnedByLocalController ||
+			PlayerState == LocalPlayerState ||
+			CandidatePlayerId == LocalPlayerId;
+
 		// 현재 화면을 소유한 플레이어는 원격 목록에서 제외
-		if (PlayerState == LocalPlayerState)
+		if (bIsLocalPlayer)
 		{
 			NewLocalPlayerName = DisplayName;
 			continue;
@@ -160,7 +225,7 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 		// 서버가 접속 순서대로 부여한 번호를 화면 정렬에 사용
 		PlayerInfo.PlayerId =
-			PlayerState->GetPlayerId();
+			CandidatePlayerId;
 
 		PlayerInfo.PlayerName =
 			DisplayName;
@@ -185,6 +250,15 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 	SetLocalPlayerName(NewLocalPlayerName);
 	SetRemotePlayers(NewRemotePlayers);
+
+	// 목록을 먼저 반영한 뒤, 빠진 플레이어가 있으면 다음 Tick에 다시 채움
+	if (bHasPendingPlayerId)
+	{
+		World->GetTimerManager().SetTimerForNextTick(
+			this,
+			&UCWInGamePlayerViewModel::RefreshPlayers
+		);
+	}
 }
 
 #pragma endregion
