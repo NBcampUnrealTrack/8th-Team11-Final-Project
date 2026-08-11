@@ -95,7 +95,7 @@ public:
 
 	/**
 	 * 패링 가능 차종인지. 트럭·긴급차량은 자식 BP에서 bCanBeParried를 끈다.
-	 * 이미 튕겨나가는 중이어도 막지 않는다. 날아오는 차를 다시 쳐내는 게 기획서 8.2 다.
+	 * 이미 튕겨나가는 중이어도 막지 않는다. 날아오는 차를 다른 플레이어가 다시 쳐낼 수 있어야 한다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	bool CanBeParried() const { return bCanBeParried; }
@@ -125,7 +125,7 @@ private:
 	FVector ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const;
 
 	/**
-	 * 패링당했을 때 날아갈 방향을 정한다. 기준점은 플레이어가 아니라 이 차량이다. (기획서 6.1)
+	 * 패링당했을 때 날아갈 방향을 정한다. 기준점은 플레이어가 아니라 이 차량이다.
 	 *
 	 * 커서 지점을 못 쓰면 플레이어 기준 방향으로, 그것도 비면 TryParry 가 온 길로 되돌려 보낸다.
 	 */
@@ -178,7 +178,7 @@ protected:
 	bool bCanBeParried = true;
 
 	/**
-	 * 패링당해 튕겨나간 뒤 사라지기까지의 시간(초). 기획서 8.1 의 임시값 2초.
+	 * 패링당해 튕겨나간 뒤 사라지기까지의 시간(초). 2초는 임시값이라 팀 합의로 확정한다.
 	 * 무한정 날아가면 맵 밖까지 나가고, 뒤차가 볼 앞차 목록에서도 계속 남는다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
@@ -186,7 +186,7 @@ protected:
 
 	/**
 	 * 튕겨나갈 때 주행 속도에 곱하는 배율. 1이면 원래 속도 그대로 날아간다.
-	 * 튕김 세기는 기획서에 값이 없어 테스트로 잡는다.
+	 * 튕김 세기는 정해진 값이 없어 플레이로 잡는다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParriedSpeedMultiplier = 1.f;
