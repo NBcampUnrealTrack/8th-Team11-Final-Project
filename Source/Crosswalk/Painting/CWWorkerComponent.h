@@ -6,6 +6,7 @@
 #include "CWWorkerComponent.generated.h"
 
 class ACWBaseWorkZone;
+class UCWTemperatureComponent;
 class UCWWorkerComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnTargetZoneChangedSignature, UCWWorkerComponent*, WorkerComponent, ACWBaseWorkZone*, TargetZone);
@@ -39,7 +40,31 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+	virtual void BeginPlay() override;
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	/**
+	 * 체온 때문에 작업이 얼마나 느려졌는가. 1 이면 평상 속도다.
+	 *
+	 * 시간으로 진행하는 존은 이 값이 곱해진 시간을 ApplyWork 로 받으므로 따로 볼 필요가 없다.
+	 * 커서로 칠하는 존처럼 시간이 아니라 붓질로 진행하는 곳만 직접 물어본다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	float GetWorkSpeedFactor() const;
+
+	/**
+	 * 존이 자기 진행량만큼 체온을 올려달라고 보고한다.
+	 *
+	 * 미니게임 존처럼 진행이 자기 Tick 에서 도는 존이 쓴다. 그런 존은 작업 키를 누른 프레임에만
+	 * ApplyWork 가 오기 때문에, 이 컴포넌트의 Tick 에 체온을 맡기면 부스트할 때만 더워진다.
+	 *
+	 * 체온은 서버가 굴리므로 클라이언트에서 부르면 서버로 올려보낸다. 매 프레임 보내지 않고
+	 * WorkHeatSendInterval 로 묶는다.
+	 *
+	 * @param EffectiveWorkSeconds 작업속도 계수가 이미 곱해진 시간(초). AddWorkHeat 와 같은 단위다.
+	 */
+	void SubmitWorkHeat(float EffectiveWorkSeconds);
 
 	/** 작업 키를 눌렀을 때. Enhanced Input 의 Started 에 연결한다. */
 	UFUNCTION(BlueprintCallable, Category = "Work")
@@ -85,6 +110,15 @@ public:
 	/** 다운 등으로 작업이 막혀 있는가. 미니게임 존이 중단 판단에 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsWorkBlocked() const { return bWorkBlocked; }
+
+	/**
+	 * 지금 하는 작업 때문에 패링이 막혀 있는가. 캐릭터가 패링 입력을 무시할 때 쓴다.
+	 *
+	 * 이동 잠금과 같은 이유로 로컬에서만 판단한다. 서버 확정을 기다리면 그 사이 입력이
+	 * 반쯤 먹는 상태가 되고, 미니게임 상태 자체가 그리는 본인 기계에만 있다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsParryBlocked() const;
 
 	/**
 	 * 이 컴포넌트가 이 기계에서 조종 중인 플레이어의 것인가.
@@ -136,6 +170,16 @@ private:
 	void Server_ReportWorkCompleted(ACWBaseWorkZone* Zone);
 
 	/**
+	 * 존이 보고한 체온 상승분. 몇 개 유실돼도 그만큼만 덜 오르고 끝이라 Unreliable 로 둔다.
+	 * (진행도와 달리 누적값이 아니라 증분이라 다음 패킷이 덮어주지 않는다는 점은 감수한다)
+	 */
+	UFUNCTION(Server, Unreliable)
+	void Server_SubmitWorkHeat(float EffectiveWorkSeconds);
+
+	/** 모아둔 체온 상승분을 서버로 올린다. 소유 클라이언트에서만 의미가 있다. */
+	void FlushPendingWorkHeat();
+
+	/**
 	 * 붓질 보고. 놓치면 그 자리만 영영 안 칠해지거나 안 지워지므로 Reliable 이어야 한다.
 	 * 칸 상태가 실제로 바뀔 때만 나가서, 붓을 대고 가만히 있으면 패킷이 나가지 않는다.
 	 */
@@ -172,6 +216,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.02"))
 	float WorkLocationSendInterval = 0.1f;
 
+	// 존이 보고한 체온 상승분을 모아 서버로 올리는 간격(초).
+	// 매 프레임 보낼 이유가 없다. 어차피 합산해서 더하는 값이라 묶어도 결과가 같다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.02"))
+	float WorkHeatSendInterval = 0.2f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Work")
 	ECWToolType HeldTool = ECWToolType::None;
 
@@ -192,6 +241,15 @@ private:
 
 	// 작업 지점을 마지막으로 올려보낸 시각. 소유 클라이언트에서만 쓴다.
 	float LastWorkLocationSendTime = -1000.f;
+
+	// 아직 서버로 올리지 않은 체온 상승분. 소유 클라이언트에서만 쓴다.
+	float PendingWorkHeat = 0.f;
+
+	float LastWorkHeatSendTime = -1000.f;
+
+	// 같은 캐릭터의 체온 컴포넌트. BeginPlay 에서 한 번 찾아 둔다. 없어도 동작한다.
+	UPROPERTY(Transient)
+	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
 
 	// 취소를 눌렀는가. 서버 응답을 기다리지 않고 이동 잠금을 즉시 풀기 위한 로컬 플래그다.
 	// 리플리케이트하지 않는다. 작업을 다시 시작할 때 풀린다.

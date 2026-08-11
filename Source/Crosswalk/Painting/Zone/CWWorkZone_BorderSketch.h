@@ -68,7 +68,16 @@ public:
 
 	virtual void ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds) override;
 
+	/**
+	 * 선은 작업 키를 떼도 계속 그려진다. 그동안에도 체온이 올라야 하므로 직접 보고한다.
+	 * (작업 컴포넌트에 맡기면 스페이스바로 부스트하는 동안에만 더워진다)
+	 */
+	virtual bool DrivesOwnWorkHeat() const override { return true; }
+
 	virtual bool ConsumeDirectionInput(const FVector2D& MoveInput) override;
+
+	/** 미니게임이 도는 동안에는 패링을 막는다. 차가 오면 취소 키로 빠져나와야 한다. */
+	virtual bool BlocksParry() const override { return bMinigameActive; }
 
 	virtual void CancelWork() override;
 

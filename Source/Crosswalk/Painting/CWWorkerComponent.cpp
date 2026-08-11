@@ -6,6 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
+#include "Painting/CWTemperatureComponent.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
 UCWWorkerComponent::UCWWorkerComponent()
@@ -22,6 +23,16 @@ void UCWWorkerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(UCWWorkerComponent, HeldTool);
 	DOREPLIFETIME(UCWWorkerComponent, bWorking);
 	DOREPLIFETIME(UCWWorkerComponent, bWorkBlocked);
+}
+
+void UCWWorkerComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (const AActor* Owner = GetOwner())
+	{
+		TemperatureComponent = Owner->FindComponentByClass<UCWTemperatureComponent>();
+	}
 }
 
 void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -60,6 +71,10 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 	}
 
+	// 존이 스스로 보고한 체온 상승분을 흘려보낸다.
+	// 작업 키를 누르고 있지 않아도(미니게임이 혼자 도는 동안) 나가야 하므로 아래 조기 반환보다 위에 둔다.
+	FlushPendingWorkHeat();
+
 	// 진행도를 실제로 올리는 것은 서버뿐이다.
 	if (!bWorking || bWorkBlocked || FoundZone == nullptr)
 	{
@@ -71,8 +86,84 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	//   테두리 미니게임   : 그리는 본인 기계에서만 돌고 결과만 서버에 올린다
 	// 어느 쪽인지는 각 존의 ApplyWork 가 스스로 판단한다.
 
+	// 체온이 높을수록 작업이 느려진다. (체온 기획서 4.2)
+	//
+	// 존마다 따로 처리하지 않고 넘겨주는 시간을 줄여서 한 번에 적용한다. 게이지 존이든
+	// 테두리 미니게임이든 "흐른 시간" 으로 진행하므로, 시간을 줄이면 그대로 느려진다.
+	const float WorkSpeedFactor = GetWorkSpeedFactor();
+	const float EffectiveDeltaTime = DeltaTime * WorkSpeedFactor;
+
+	// 체온 상승은 흐른 시간이 아니라 "실제로 진행된 작업량" 에 비례한다. (체온 기획서 3.3)
+	//
+	// 이게 최대 체온을 만든다. 뜨거워지면 작업이 느려지고, 느려지면 체온도 덜 오르므로
+	// 상승량과 하락량이 같아지는 지점에서 저절로 멈춘다. 상한값을 박아둘 필요가 없다.
+	// 여기에 DeltaTime 을 그대로 넣으면 균형점이 사라져 체온이 무한정 올라간다.
+	//
+	// 진행이 자기 Tick 에서 도는 존은 제외한다. 그런 존은 작업 키를 누른 프레임에만 여기로 오므로
+	// 여기서 올리면 부스트할 때만 더워진다. 대신 존이 SubmitWorkHeat 로 직접 보고한다.
+	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat())
+	{
+		TemperatureComponent->AddWorkHeat(EffectiveDeltaTime);
+	}
+
 	// 존이 게이지 방식이든 칸 방식이든 미니게임이든 이 한 줄로 끝난다.
-	FoundZone->ApplyWork(this, WorkLocation, DeltaTime);
+	FoundZone->ApplyWork(this, WorkLocation, EffectiveDeltaTime);
+}
+
+void UCWWorkerComponent::SubmitWorkHeat(float EffectiveWorkSeconds)
+{
+	const AActor* Owner = GetOwner();
+	if (Owner == nullptr || EffectiveWorkSeconds <= 0.f)
+	{
+		return;
+	}
+
+	// 리슨 서버의 호스트. 자기 체온이므로 바로 올린다.
+	if (Owner->HasAuthority())
+	{
+		if (TemperatureComponent != nullptr)
+		{
+			TemperatureComponent->AddWorkHeat(EffectiveWorkSeconds);
+		}
+
+		return;
+	}
+
+	// 클라이언트. 모아 뒀다가 다음 Tick 에서 한 번에 올린다.
+	PendingWorkHeat += EffectiveWorkSeconds;
+}
+
+void UCWWorkerComponent::FlushPendingWorkHeat()
+{
+	const AActor* Owner = GetOwner();
+	const UWorld* World = GetWorld();
+	if (Owner == nullptr || World == nullptr || Owner->HasAuthority() || PendingWorkHeat <= 0.f)
+	{
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	if (Now - LastWorkHeatSendTime < WorkHeatSendInterval)
+	{
+		return;
+	}
+
+	LastWorkHeatSendTime = Now;
+	Server_SubmitWorkHeat(PendingWorkHeat);
+	PendingWorkHeat = 0.f;
+}
+
+void UCWWorkerComponent::Server_SubmitWorkHeat_Implementation(float EffectiveWorkSeconds)
+{
+	if (TemperatureComponent != nullptr)
+	{
+		TemperatureComponent->AddWorkHeat(EffectiveWorkSeconds);
+	}
+}
+
+float UCWWorkerComponent::GetWorkSpeedFactor() const
+{
+	return TemperatureComponent != nullptr ? TemperatureComponent->GetWorkSpeedFactor() : 1.f;
 }
 
 void UCWWorkerComponent::StartWork()
@@ -314,6 +405,11 @@ void UCWWorkerComponent::Server_SubmitBrushStroke_Implementation(ACWBaseWorkZone
 	{
 		Zone->ReceiveBrushStroke(WorldLocation, Radius, bFilled, bSpillOnly);
 	}
+}
+
+bool UCWWorkerComponent::IsParryBlocked() const
+{
+	return TargetZone != nullptr && TargetZone->BlocksParry();
 }
 
 bool UCWWorkerComponent::IsLocalWorker() const
