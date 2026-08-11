@@ -648,7 +648,7 @@ void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)
     case ECWUIPage::MainMenu:
     case ECWUIPage::CreateRoom:
     case ECWUIPage::JoinRoom:
-    case ECWUIPage::Lobby:
+    case ECWUIPage::Room:
     case ECWUIPage::StageSelect:
     case ECWUIPage::Result:
     case ECWUIPage::Settings:

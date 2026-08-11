@@ -21,8 +21,8 @@ enum class ECWUIPage : uint8
     CreateRoom,
     // 참가 코드 입력 화면
     JoinRoom,
-    // 로비 화면
-    Lobby,
+    // 방 대기 화면
+    Room,
     // 플레이할 스테이지를 선택하는 화면
     StageSelect,
     // 레벨 이동 및 플레이어 대기 화면
