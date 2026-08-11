@@ -148,7 +148,7 @@ bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptConte
 		return false;
 	}
 
-	// 튕겨나갈 방향은 플레이어가 찍은 커서 지점 쪽이다. (기획서 6.1)
+	// 튕겨나갈 방향은 플레이어가 찍은 커서 지점 쪽이다.
 	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext));
 }
 
@@ -195,7 +195,7 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 		return false;
 	}
 
-	// 기획서 8.1 - 정지가 아니라 커서 방향으로 튕겨나간다.
+	// 패링당한 차량은 멈추는 게 아니라 커서 방향으로 튕겨나간다.
 	// 방향이 비어 있으면 온 길로 되돌려 보낸다.
 	const FVector LaunchForward = LaunchDirection.GetSafeNormal2D();
 	SetActorRotation((LaunchForward.IsNearlyZero() ? -GetActorForwardVector().GetSafeNormal2D() : LaunchForward).Rotation());
@@ -208,8 +208,8 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	// 쳐낸 사람은 튕겨나가는 차와 아직 겹쳐 있으므로 피격 대상에서 제외한다.
 	HitActors.Add(Parrier);
 
-	// 기획서 8.1 - 튕겨나간 뒤 2초간 이동하고 사라진다.
-	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 2초가 새로 시작된다.
+	// 튕겨나간 뒤 ParriedDespawnDelay 동안 이동하고 사라진다.
+	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 그 시간이 새로 시작된다.
 	if (ParriedDespawnDelay > 0.f)
 	{
 		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ABaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
@@ -311,7 +311,7 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
 	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
-	// 기획서 8.2 가 노리는 그림이다. 쳐낸 사람만 HitActors 로 제외된다.
+	// 패링이 노리는 그림이다. 쳐낸 사람만 HitActors 로 제외된다.
 	if (!HasAuthority() || !OtherActor || OtherActor == this)
 	{
 		return;
