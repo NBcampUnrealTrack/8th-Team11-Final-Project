@@ -205,8 +205,20 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
 	CurrentLane = nullptr;
 
-	// 쳐낸 사람은 튕겨나가는 차와 아직 겹쳐 있으므로 피격 대상에서 제외한다.
-	HitActors.Add(Parrier);
+	/**
+	 * 쳐낸 사람이 지금 차와 겹쳐 있으면 이번 겹침 동안만 피격에서 뺀다.
+	 * 충돌 직전에 쳐낸 경우라 차와 몸이 이미 닿아 있고, 그대로 두면 패링에 성공하자마자 맞는다.
+	 *
+	 * 겹치지 않은 상태에서 쳐냈으면 아무것도 하지 않는다. 커서를 자기 쪽으로 찍어
+	 * 차를 자신에게 날려보냈다면 그건 맞아야 하는 상황이다.
+	 *
+	 * 어느 쪽이든 차에서 떨어지는 순간 HandleEndOverlap 이 기록을 지우므로,
+	 * 다시 닿으면 쳐낸 사람도 똑같이 피격된다.
+	 */
+	if (CollisionBox && CollisionBox->IsOverlappingActor(Parrier))
+	{
+		HitActors.Add(Parrier);
+	}
 
 	// 튕겨나간 뒤 ParriedDespawnDelay 동안 이동하고 사라진다.
 	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 그 시간이 새로 시작된다.
@@ -235,6 +247,7 @@ void ABaseVehicle::BeginPlay()
 	Super::BeginPlay();
 
 	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ABaseVehicle::HandleBeginOverlap);
+	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ABaseVehicle::HandleEndOverlap);
 
 	if (UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this))
 	{
@@ -321,7 +334,7 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
 	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
-	// 패링이 노리는 그림이다. 쳐낸 사람만 HitActors 로 제외된다.
+	// 패링이 노리는 그림이다. 쳐낸 사람도 차에서 떨어졌다가 다시 닿으면 똑같이 맞는다.
 	if (!HasAuthority() || !OtherActor || OtherActor == this)
 	{
 		return;
@@ -335,7 +348,8 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 		return;
 	}
 
-	// 한 대가 같은 대상을 여러 프레임에 걸쳐 중복으로 치지 않게 막는다.
+	// 한 번의 접촉이 여러 프레임에 걸쳐 중복으로 들어가지 않게 막는다.
+	// 차에서 떨어지면 기록이 지워지므로, 떨어졌다 다시 닿는 건 새로운 피격이다.
 	if (HitActors.Contains(OtherActor))
 	{
 		return;
@@ -361,6 +375,18 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 	// 인터페이스를 구현하지 않는 관찰자(연출·사운드·집계)를 위해 남겨둔다.
 	// 서버에서만 발화하므로 클라 연출에는 쓸 수 없다.
 	OnVehicleHitActor.Broadcast(this, OtherActor, HitDirection);
+}
+
+void ABaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
+	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/)
+{
+	// 피격 기록은 서버만 들고 있다.
+	if (!HasAuthority() || !OtherActor)
+	{
+		return;
+	}
+
+	HitActors.Remove(OtherActor);
 }
 
 FVector ABaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
