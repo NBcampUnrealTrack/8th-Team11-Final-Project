@@ -1,0 +1,268 @@
+#include "Painting/CWWorkTruck.h"
+
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
+#include "Net/UnrealNetwork.h"
+#include "Painting/Tools/CWBaseTool.h"
+#include "Painting/Tools/CWToolHolderComponent.h"
+#include "UObject/ConstructorHelpers.h"
+
+ACWWorkTruck::ACWWorkTruck()
+{
+	PrimaryActorTick.bCanEverTick = false;
+
+	bReplicates = true;
+
+	TruckMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TruckMesh"));
+	SetRootComponent(TruckMesh);
+
+	// 플레이스홀더. 전용 차량 메쉬가 나오기 전에도 위치와 크기가 눈에 보이게 한다.
+	// Cube 는 100x100x100 이라 배율이 그대로 cm 크기가 된다. 대략 트럭 한 대 크기로 잡는다.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (CubeMesh.Succeeded())
+	{
+		TruckMesh->SetStaticMesh(CubeMesh.Object);
+		TruckMesh->SetRelativeScale3D(FVector(5.f, 2.f, 2.f));
+	}
+
+	TrunkPoint = CreateDefaultSubobject<USceneComponent>(TEXT("TrunkPoint"));
+	TrunkPoint->SetupAttachment(TruckMesh);
+
+	// 차량 뒤쪽(-X) 끝 바깥에 둔다. 스케일이 걸린 메쉬의 자식이라 상대 좌표도 같이 늘어나므로
+	// 스케일 기준으로 계산한 값을 넣는다. 레벨에서 차량 메쉬를 갈면 여기도 다시 잡아야 한다.
+	TrunkPoint->SetRelativeLocation(FVector(-70.f, 0.f, -25.f));
+}
+
+void ACWWorkTruck::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACWWorkTruck, StoredTools);
+	DOREPLIFETIME(ACWWorkTruck, TotalToolCount);
+}
+
+void ACWWorkTruck::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 도구를 트렁크에 넣는 것은 서버만 한다. 클라이언트는 리플리케이트된 목록을 받는다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	CollectStageTools();
+}
+
+void ACWWorkTruck::CollectStageTools()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 레벨에 이미 놓여 있는 도구를 걷어 온다.
+	if (bCollectExistingTools)
+	{
+		for (TActorIterator<ACWBaseTool> ToolIter(World); ToolIter; ++ToolIter)
+		{
+			StoreTool(*ToolIter);
+		}
+	}
+
+	// 설정에 적힌 도구를 만들어 넣는다. 레벨에 실물을 놓지 않아도 되는 경로다.
+	for (const TSubclassOf<ACWBaseTool>& ToolClass : ToolClasses)
+	{
+		if (ToolClass == nullptr)
+		{
+			continue;
+		}
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		if (ACWBaseTool* SpawnedTool = World->SpawnActor<ACWBaseTool>(ToolClass, GetTrunkLocation(), GetActorRotation(), SpawnParams))
+		{
+			StoreTool(SpawnedTool);
+		}
+	}
+
+	// 꺼내는 순서를 도구 종류 순으로 고정한다. 액터 순회 순서는 보장되지 않아서
+	// 그대로 두면 판마다 처음 꺼내지는 도구가 달라진다.
+	StoredTools.Sort([](const ACWBaseTool& Lhs, const ACWBaseTool& Rhs)
+	{
+		return Lhs.GetToolType() < Rhs.GetToolType();
+	});
+
+	TotalToolCount = StoredTools.Num();
+
+	OnRep_StoredTools();
+}
+
+void ACWWorkTruck::Interact_Implementation(APawn* InstigatorPawn)
+{
+	if (!HasAuthority() || InstigatorPawn == nullptr)
+	{
+		return;
+	}
+
+	UCWToolHolderComponent* HolderComponent = InstigatorPawn->FindComponentByClass<UCWToolHolderComponent>();
+	if (HolderComponent == nullptr)
+	{
+		return;
+	}
+
+	// 들고 있으면 반납이 먼저다. 1인 1개라 어차피 새로 꺼낼 수도 없다.
+	if (ACWBaseTool* HeldTool = HolderComponent->GetHeldTool())
+	{
+		// 홀더를 거쳐서 내려놓아야 한다. 도구만 직접 건드리면 홀더의 HeldTool 이 남아
+		// "손에는 없는데 들고 있는 것으로 아는" 상태가 된다.
+		HolderComponent->DropHeldTool();
+		StoreTool(HeldTool);
+		return;
+	}
+
+	TakeOutTool(InstigatorPawn);
+}
+
+bool ACWWorkTruck::CanInteract_Implementation(APawn* InstigatorPawn) const
+{
+	if (InstigatorPawn == nullptr)
+	{
+		return false;
+	}
+
+	const UCWToolHolderComponent* HolderComponent = InstigatorPawn->FindComponentByClass<UCWToolHolderComponent>();
+	if (HolderComponent == nullptr)
+	{
+		return false;
+	}
+
+	// 거리는 트렁크 문 기준으로 잰다. 차가 길어서 액터 원점으로 재면 트렁크 앞에 서 있는데도 멀다고 나온다.
+	// 서버가 다시 판정할 때를 대비해 여유를 준다. 클라이언트와 서버의 위치가 핑만큼 어긋나 있다.
+	const float AllowedRadius = InteractRadius * ServerRangeTolerance;
+	if (FVector::DistSquared(InstigatorPawn->GetActorLocation(), GetTrunkLocation()) > FMath::Square(AllowedRadius))
+	{
+		return false;
+	}
+
+	// 반납할 게 있거나 꺼낼 게 남아 있어야 한다.
+	// 맨손인데 트렁크도 비었으면 상호작용 대상에서 빠져서, 바닥의 도구가 대신 잡힌다.
+	return HolderComponent->GetHeldTool() != nullptr || StoredTools.Num() > 0;
+}
+
+bool ACWWorkTruck::StoreTool(ACWBaseTool* Tool)
+{
+	if (!HasAuthority() || Tool == nullptr || StoredTools.Contains(Tool))
+	{
+		return false;
+	}
+
+	// 누가 들고 있는 도구는 넣지 않는다. 홀더에서 먼저 내려놓아야 상태가 갈라지지 않는다.
+	if (Tool->IsHeld())
+	{
+		return false;
+	}
+
+	Tool->SetActorLocation(GetTrunkLocation());
+	ApplyStoredState(Tool, true);
+
+	StoredTools.Add(Tool);
+	OnRep_StoredTools();
+
+	OnToolStored(Tool);
+
+	return true;
+}
+
+bool ACWWorkTruck::TakeOutTool(APawn* InstigatorPawn)
+{
+	if (!HasAuthority() || StoredTools.Num() == 0)
+	{
+		return false;
+	}
+
+	return GiveToolToPawn(StoredTools[0], InstigatorPawn);
+}
+
+bool ACWWorkTruck::TakeOutToolOfType(APawn* InstigatorPawn, ECWToolType ToolType)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	const int32 FoundIndex = StoredTools.IndexOfByPredicate([ToolType](const ACWBaseTool* Tool)
+	{
+		return Tool != nullptr && Tool->GetToolType() == ToolType;
+	});
+
+	if (FoundIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	return GiveToolToPawn(StoredTools[FoundIndex], InstigatorPawn);
+}
+
+bool ACWWorkTruck::GiveToolToPawn(ACWBaseTool* Tool, APawn* InstigatorPawn)
+{
+	if (Tool == nullptr || InstigatorPawn == nullptr)
+	{
+		return false;
+	}
+
+	UCWToolHolderComponent* HolderComponent = InstigatorPawn->FindComponentByClass<UCWToolHolderComponent>();
+	if (HolderComponent == nullptr)
+	{
+		return false;
+	}
+
+	// 트렁크 앞에 꺼내 놓고 홀더에 넘긴다. 홀더가 폰과의 거리를 다시 재기 때문에
+	// 숨어 있던 자리가 아니라 실제로 꺼내진 자리에 있어야 승인된다.
+	Tool->SetActorLocation(GetTrunkLocation());
+	ApplyStoredState(Tool, false);
+
+	if (!HolderComponent->PickUpTool(Tool))
+	{
+		// 이미 다른 도구를 들고 있거나 너무 멀다. 꺼내다 만 상태로 두지 않고 되돌린다.
+		ApplyStoredState(Tool, true);
+		return false;
+	}
+
+	StoredTools.Remove(Tool);
+	OnRep_StoredTools();
+
+	OnToolTakenOut(Tool);
+
+	return true;
+}
+
+void ACWWorkTruck::ApplyStoredState(ACWBaseTool* Tool, bool bStored)
+{
+	if (Tool == nullptr)
+	{
+		return;
+	}
+
+	// 숨김과 콜리전은 액터 단위 플래그라 서버에서 바꾸면 그대로 전파된다.
+	//
+	// 콜리전까지 내리는 이유: 홀더는 근처 오버랩으로 도구를 찾는다. 콜리전이 살아 있으면
+	// 트렁크 옆에 선 플레이어가 보관 중인 도구를 상호작용 없이 바로 집어간다.
+	Tool->SetActorHiddenInGame(bStored);
+	Tool->SetActorEnableCollision(!bStored);
+}
+
+void ACWWorkTruck::OnRep_StoredTools()
+{
+	OnStoredToolsChanged.Broadcast(this, StoredTools.Num());
+}
+
+FVector ACWWorkTruck::GetTrunkLocation() const
+{
+	return TrunkPoint != nullptr ? TrunkPoint->GetComponentLocation() : GetActorLocation();
+}
