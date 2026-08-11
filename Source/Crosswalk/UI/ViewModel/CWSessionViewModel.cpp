@@ -143,10 +143,24 @@ void UCWSessionViewModel::RequestLoginAsPlayer2()
 
 #pragma region SessionRequests
 
+FString UCWSessionViewModel::GetMenuMapPath() const
+{
+    const UCWGameInstance* GameInstance =
+        BoundGameInstance.Get();
+
+    if (!IsValid(GameInstance))
+    {
+        return FString();
+    }
+
+    // 위젯이 GameInstance를 직접 참조하지 않도록 설정값을 중계
+    return GameInstance->GetMenuMapPath();
+}
+
 FText UCWSessionViewModel::GetCurrentRoomCodeText() const
 {
-	// 세션 내부 문자열을 UI 표시용 텍스트로 변환
-	return FText::FromString(CurrentRoomCode);
+    // 세션 내부 문자열을 UI 표시용 텍스트로 변환
+    return FText::FromString(CurrentRoomCode);
 }
 
 void UCWSessionViewModel::RequestCreateRoom()
@@ -399,6 +413,12 @@ void UCWSessionViewModel::HandleSessionOperationCompleted(
     {
         SetOperationInFlight(false);
     }
+
+    // 상태 갱신이 모두 끝난 뒤 세션 작업 완료를 화면에 전달
+    OnSessionOperationCompleted.Broadcast(
+        Operation,
+        bSuccess
+    );
 }
 
 void UCWSessionViewModel::HandleRoomListUpdated(
@@ -486,19 +506,19 @@ void UCWSessionViewModel::SetOperationInFlight(bool bInFlight)
 }
 
 void UCWSessionViewModel::SetCurrentRoomCode(
-	const FString& InRoomCode
+    const FString& InRoomCode
 )
 {
-	// 방 코드가 실제로 변경된 경우 문자열과 파생 텍스트 모두 갱신
-	if (UE_MVVM_SET_PROPERTY_VALUE(
-		CurrentRoomCode,
-		InRoomCode
-	))
-	{
-		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
-			GetCurrentRoomCodeText
-		);
-	}
+    // 방 코드가 실제로 변경된 경우 문자열과 파생 텍스트 모두 갱신
+    if (UE_MVVM_SET_PROPERTY_VALUE(
+        CurrentRoomCode,
+        InRoomCode
+    ))
+    {
+        UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+            GetCurrentRoomCodeText
+        );
+    }
 }
 
 void UCWSessionViewModel::SetRoomList(

@@ -17,6 +17,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     bSuccess
 );
 
+// 세션 작업 완료 결과를 UI 화면에 전달
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+    FCWOnUISessionOperationCompletedSignature,
+    ECWSessionOperation,
+    Operation,
+    bool,
+    bSuccess
+);
+
 UCLASS(BlueprintType)
 class CROSSWALK_API UCWSessionViewModel : public UMVVMViewModelBase
 {
@@ -142,20 +151,24 @@ public:
         return bIsOperationInFlight;
     }
 
-    // 현재 생성하거나 참가한 방의 코드를 반환
+    // 현재 방 코드를 반환
     UFUNCTION(BlueprintPure, Category = "CW|UI|Session")
     const FString& GetCurrentRoomCode() const
     {
         return CurrentRoomCode;
     }
 
-	// 현재 방 코드를 UI TextBlock에 표시할 텍스트로 반환
-	UFUNCTION(
-		BlueprintPure,
-		FieldNotify,
-		Category = "CW|UI|Session"
-	)
-	FText GetCurrentRoomCodeText() const;
+    // 방을 나간 뒤 돌아갈 메뉴 맵 경로를 반환
+    UFUNCTION(BlueprintPure, Category = "CW|UI|Session")
+    FString GetMenuMapPath() const;
+
+    // 현재 방 코드를 UI TextBlock에 표시할 텍스트로 반환
+    UFUNCTION(
+        BlueprintPure,
+        FieldNotify,
+        Category = "CW|UI|Session"
+    )
+    FText GetCurrentRoomCodeText() const;
 
     // 마지막으로 검색된 공개 방 목록을 반환
     UFUNCTION(BlueprintPure, Category = "CW|UI|Session")
@@ -306,9 +319,13 @@ private:
 #pragma region ViewModelEvents
 
 public:
-    // 로그인 요청이 완료되면 화면에 성공 여부를 전달
+    // 로그인 요청이 완료되면 성공 여부를 화면에 전달
     UPROPERTY(BlueprintAssignable, Category = "CW|UI|Session")
     FCWOnUILoginCompletedSignature OnLoginCompleted;
+
+    // 세션 작업이 완료되면 작업 종류와 성공 여부를 화면에 전달
+    UPROPERTY(BlueprintAssignable, Category = "CW|UI|Session")
+    FCWOnUISessionOperationCompletedSignature OnSessionOperationCompleted;
 
 #pragma endregion
 

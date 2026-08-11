@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MVVMViewModelBase.h"
+#include "Data/Enums/CWStageTypes.h"
 #include "Data/Structs/CWStageObjective.h"
 #include "CWObjectiveViewModel.generated.h"
 
@@ -43,20 +44,30 @@ private:
     // 목표 목록을 갱신하고 FieldNotify를 발생
     void SetObjectives(const TArray<FCWStageObjective>& InObjectives);
 
+    // 스테이지 클리어 여부를 갱신하고 FieldNotify를 발생
+    void SetIsStageCleared(bool bInIsStageCleared);
+
 #pragma endregion
 
 #pragma region GameStateBinding
 
 private:
-    // 현재 월드에 생성된 GameState를 구독
+    // 현재 월드의 GameState를 구독
     void BindGameState(ACWGameState* InGameState);
 
-    // 현재 구독 중인 GameState에서 구독을 해제
+    // 기존 GameState 구독을 해제
     void UnbindGameState();
 
     // GameState의 목표 목록이 변경되면 ViewModel을 갱신
     UFUNCTION()
     void HandleStageObjectivesChanged(ACWGameState* InGameState);
+
+    // GameState의 스테이지 상태가 변경되면 클리어 여부를 갱신
+    UFUNCTION()
+    void HandleStageStateChanged(
+        ACWGameState* InGameState,
+        ECWStageState InStageState
+    );
 
     // GameState가 늦게 생성된 경우 다시 구독
     void HandleGameStateSet(AGameStateBase* InGameState);
@@ -66,7 +77,7 @@ private:
 #pragma region ViewModelState
 
 private:
-    // MVVM Binding에 표시되는 작업 목표 배열
+    // MVVM Binding에 표시되는 현재 스테이지의 목표 목록
     UPROPERTY(
         BlueprintReadOnly,
         FieldNotify,
@@ -75,15 +86,24 @@ private:
     )
     TArray<FCWStageObjective> Objectives;
 
+    // 스테이지 클리어 여부
+    UPROPERTY(
+        BlueprintReadOnly,
+        FieldNotify,
+        Category = "CW|UI|Objective",
+        meta = (AllowPrivateAccess = "true")
+    )
+    bool bIsStageCleared = false;
+
     // 현재 구독 중인 GameState
     UPROPERTY()
     TWeakObjectPtr<ACWGameState> BoundGameState;
 
-    // 초기화에 사용된 현재 월드
+    // 현재 구독 중인 World
     UPROPERTY()
     TWeakObjectPtr<UWorld> BoundWorld;
 
-    // GameState 생성 알림 구독을 해제하기 위한 핸들
+    // GameState 생성 지연을 처리하는 델리게이트 핸들
     FDelegateHandle GameStateSetHandle;
 
 #pragma endregion

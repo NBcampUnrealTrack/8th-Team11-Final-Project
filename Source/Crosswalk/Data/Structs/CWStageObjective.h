@@ -23,7 +23,7 @@ public:
 	{
 		return CompletedCount == Other.CompletedCount
 			&& TotalCount == Other.TotalCount
-			&& DisplayName.IdenticalTo(Other.DisplayName);
+			&& DisplayName.EqualTo(Other.DisplayName);
 	}
 
 	bool operator!=(const FCWStageObjective& Other) const

@@ -19,7 +19,7 @@ public:
 		TArray<FLifetimeProperty>& OutLifetimeProps
 	) const override;
 
-	// 플레이어 이름 복제 완료 후 방 목록 갱신을 알림
+	// 플레이어 이름 복제 완료 후 현재 화면의 플레이어 목록 갱신을 알림
 	virtual void OnRep_PlayerName() override;
 
 #pragma endregion
@@ -36,13 +36,13 @@ public:
 	void ServerSetReady(bool bNewReady);
 
 protected:
-	// 준비 상태가 클라이언트에 복제된 후 방 목록 갱신을 알림
+	// 준비 상태가 클라이언트에 복제된 후 플레이어 목록 갱신을 알림
 	UFUNCTION()
 	void OnRep_IsReady();
 
 private:
-	// 이름 또는 준비 상태 변경 시 RoomGameState의 공용 이벤트를 발행
-	void NotifyRoomPlayersChanged() const;
+	// 이름 또는 상태 변경 시 현재 맵의 GameState에 플레이어 목록 갱신을 알림
+	void NotifyPlayersChanged() const;
 
 #pragma endregion
 

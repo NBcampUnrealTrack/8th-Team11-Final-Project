@@ -131,10 +131,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
 	const TArray<FCWRoomSummary>& GetCachedRoomList() const;
 
+	// 방을 나간 뒤 돌아갈 메뉴 레벨 경로를 반환
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	const FString& GetMenuMapPath() const
+	{
+		return MenuMapPath;
+	}
+
 protected:
 	// 세션 생성 성공 시 리슨 서버로 이동할 맵 경로
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
 	FString ListenMapPath;
+
+	// 방을 나간 뒤 돌아갈 메뉴 레벨 경로
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	FString MenuMapPath;
 
 	// 한 세션에 입장 가능한 최대 플레이어 수
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")

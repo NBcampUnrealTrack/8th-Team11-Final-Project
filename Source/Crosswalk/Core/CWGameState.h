@@ -10,6 +10,7 @@
 #include "CWGameState.generated.h"
 
 class ACWGameState;
+class APlayerState;
 
 /** 목표 달성 개수가 바뀔 때. 서버와 클라이언트 양쪽에서 발행된다. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnStageProgressChangedSignature, ACWGameState*, GameState, int32, CompletedCount, int32, TotalCount);
@@ -19,6 +20,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnStageStateChangedSignature, AC
 
 /** 목표 체크리스트가 바뀔 때. HUD 좌측 목록(기획서 3.6)이 여기에 붙는다. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnStageObjectivesChangedSignature, ACWGameState*, GameState);
+
+// 인게임 플레이어 목록이 바뀔 때 서버와 클라이언트에서 발행
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWOnPlayerListChangedSignature);
 
 /**
  * 한 판의 진행 상황을 전원이 같은 값으로 들고 있는 곳.
@@ -34,6 +38,16 @@ class CROSSWALK_API ACWGameState : public AGameStateBase
 
 public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// 플레이어가 목록에 추가된 뒤 변경 이벤트를 발행
+	virtual void AddPlayerState(APlayerState* PlayerState) override;
+
+	// 플레이어가 목록에서 제거된 뒤 변경 이벤트를 발행
+	virtual void RemovePlayerState(APlayerState* PlayerState) override;
+
+	// 플레이어 이름이나 상태처럼 목록 표시 정보가 바뀌었음을 알림
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Player")
+	void NotifyPlayerListChanged();
 
 	/** 달성한 작업 목표 수를 갱신한다. 서버에서만 유효하다. */
 	void SetObjectiveCounts(int32 InCompletedCount, int32 InTotalCount);
@@ -102,4 +116,8 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Stage")
 	FCWOnStageObjectivesChangedSignature OnStageObjectivesChanged;
+
+	// 인게임 플레이어의 입장·퇴장·표시 정보 변경을 UI에 전달
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Player")
+	FCWOnPlayerListChangedSignature OnPlayerListChanged;
 };

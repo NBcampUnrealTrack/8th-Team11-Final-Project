@@ -29,6 +29,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Parry")
 	void RequestParry(const FVector& CursorWorldLocation);
 
+	// 패링 준비 비율을 반환
+	// 0은 방금 사용한 상태, 1은 다시 사용할 수 있는 상태
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Parry")
+	float GetCooldownReadyRatio() const;
+
 protected:
 	// 클라이언트에서 서버로 패링 판정을 요청
 	UFUNCTION(Server, Reliable)
