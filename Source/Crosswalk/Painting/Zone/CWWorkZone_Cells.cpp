@@ -2,6 +2,7 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -11,6 +12,10 @@
 
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {
+	// 남은 칸 디버그를 켰을 때만 BeginPlay 에서 실제로 돌린다.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
+
 	CellMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("CellMeshes"));
 	CellMeshes->SetupAttachment(Area);
 	CellMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -28,6 +33,17 @@ ACWWorkZone_Cells::ACWWorkZone_Cells()
 	{
 		CellMeshes->SetStaticMesh(PlaneMesh.Object);
 	}
+
+	AreaBorderMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("AreaBorderMeshes"));
+	AreaBorderMeshes->SetupAttachment(Area);
+	AreaBorderMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AreaBorderMeshes->SetCastShadow(false);
+	AreaBorderMeshes->SetMobility(EComponentMobility::Movable);
+
+	if (PlaneMesh.Succeeded())
+	{
+		AreaBorderMeshes->SetStaticMesh(PlaneMesh.Object);
+	}
 }
 
 void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
@@ -39,6 +55,56 @@ void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
 	ApplyCellMaterial();
 	ResetCells();
 	RefreshCellMeshes();
+	RefreshAreaBorder();
+}
+
+void ACWWorkZone_Cells::RefreshAreaBorder()
+{
+	if (AreaBorderMeshes == nullptr)
+	{
+		return;
+	}
+
+	if (AreaBorderMaterial != nullptr)
+	{
+		AreaBorderMeshes->SetMaterial(0, AreaBorderMaterial);
+	}
+
+	AreaBorderMeshes->ClearInstances();
+
+	if (!bShowAreaBorder)
+	{
+		return;
+	}
+
+	// 경계선의 기준은 Area 박스다. 이 선 안쪽이 진행도로 세는 영역이고, 바깥은 삐져나간 영역이다.
+	// 선의 중심이 경계에 놓여 안팎으로 절반씩 걸친다. 칸 상태는 이 선과 무관하게
+	// Area 박스 그대로 판정한다. 선은 눈으로 보는 기준일 뿐이다.
+	const FVector AreaExtent = Area->GetUnscaledBoxExtent();
+
+	// 네 변을 각각 얇고 긴 판으로 만든다. 모서리에서 겹치도록 길이에 두께를 더해 둔다.
+	// 안 그러면 네 귀퉁이에 두께만큼 구멍이 뚫려 선이 끊겨 보인다.
+	const FVector2D LongSideSize(AreaBorderThickness, AreaExtent.Y * 2.f + AreaBorderThickness);
+	const FVector2D ShortSideSize(AreaExtent.X * 2.f + AreaBorderThickness, AreaBorderThickness);
+
+	const TArray<TPair<FVector2D, FVector2D>> Edges =
+	{
+		{ FVector2D(AreaExtent.X, 0.f), LongSideSize },
+		{ FVector2D(-AreaExtent.X, 0.f), LongSideSize },
+		{ FVector2D(0.f, AreaExtent.Y), ShortSideSize },
+		{ FVector2D(0.f, -AreaExtent.Y), ShortSideSize }
+	};
+
+	for (const TPair<FVector2D, FVector2D>& Edge : Edges)
+	{
+		FTransform InstanceTransform;
+		InstanceTransform.SetLocation(FVector(Edge.Key.X, Edge.Key.Y, AreaBorderHeightOffset));
+
+		// Plane 은 100x100 이라 원하는 크기를 100 으로 나누면 그대로 배율이 된다.
+		InstanceTransform.SetScale3D(FVector(Edge.Value.X / 100.f, Edge.Value.Y / 100.f, 1.f));
+
+		AreaBorderMeshes->AddInstance(InstanceTransform);
+	}
 }
 
 void ACWWorkZone_Cells::ApplyCellMaterial()
@@ -55,6 +121,10 @@ void ACWWorkZone_Cells::BeginPlay()
 
 	ApplyCellMaterial();
 	BuildGrid();
+	RefreshAreaBorder();
+
+	// 남은 칸 표시는 매 프레임 다시 그려야 해서 이때만 틱을 켠다.
+	SetActorTickEnabled(bShowDebugUnfilledCells || bShowDebugSpillCells);
 
 	// 페인트를 밟고 지나가는 차량 추적은 서버가 한다. 클라이언트가 칸을 늘리면 그림이 갈라진다.
 	if (!HasAuthority() || !bStainsVehicles)
@@ -209,6 +279,50 @@ void ACWWorkZone_Cells::HandlePaintDried()
 	UE_LOG(LogTemp, Log, TEXT("[%s] 페인트가 말랐습니다. 차량이 밟아도 더 이상 번지지 않습니다."), *GetName());
 }
 
+void ACWWorkZone_Cells::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	ShowDebugCells();
+}
+
+void ACWWorkZone_Cells::ShowDebugCells() const
+{
+	const UWorld* World = GetWorld();
+	if (World == nullptr || CellFilled.Num() == 0)
+	{
+		return;
+	}
+
+	const FVector2D CellSize = GetCellSize();
+	const FVector BoxExtent(CellSize.X * 0.5f, CellSize.Y * 0.5f, 2.f);
+
+	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
+	{
+		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+		{
+			const bool bFilled = CellFilled[GetCellIndex(CellX, CellY)];
+
+			if (IsCountedCell(CellX, CellY))
+			{
+				// 점수 영역: 아직 안 칠한 칸이 남은 작업이다.
+				if (bShowDebugUnfilledCells && !bFilled)
+				{
+					DrawDebugBox(World, GetCellWorldLocation(CellX, CellY), BoxExtent, FColor::Red, false, -1.f, 0, 2.f);
+				}
+
+				continue;
+			}
+
+			// 바깥 고리: 칠해진 칸이 지워야 할 페인트다. 점수 영역과 반대다.
+			if (bShowDebugSpillCells && bFilled)
+			{
+				DrawDebugBox(World, GetCellWorldLocation(CellX, CellY), BoxExtent, FColor::Orange, false, -1.f, 0, 2.f);
+			}
+		}
+	}
+}
+
 FString ACWWorkZone_Cells::GetDebugDetailText() const
 {
 	// 남은 칸 수를 같이 찍는다. 퍼센트만으로는 몇 칸이 비었는지 알 수 없어서
@@ -306,8 +420,26 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 		return;
 	}
 
+	// 체온에 따른 작업속도 저하. (체온 기획서 4.2)
+	//
+	// 이 존은 시간이 아니라 붓이 덮는 면적으로 진행한다. 그래서 시간을 줄이는 대신 붓을 줄인다.
+	// 뜨거우면 한 번에 칠해지는 범위가 좁아져서, 같은 넓이를 칠하는 데 더 오래 걸린다.
+	//
+	// 계수를 반경에 그대로 곱한다. 면적 기준으로 맞추려면 제곱근을 씌워야 하지만(계수 0.2 → 반경 45%),
+	// 그러면 눈에 보이는 붓 크기가 거의 안 변해서 패널티가 걸린 줄을 모른다.
+	// 반경이 실제로 줄어드는 게 보여야 "지금 비효율적으로 일하고 있다" 가 읽힌다.
+	//
+	// SetCellsInRadius 가 판정에 칸 크기의 절반을 더해주므로, 반경이 아무리 작아져도
+	// 커서 아래 칸은 항상 칠해진다. 붓이 먹통이 되지는 않는다.
+	//
+	// 반경은 아래 세 경로에 모두 같은 값이 들어가야 한다. 하나라도 원래 값을 쓰면
+	// 머신마다 칠해진 범위가 달라져 그림이 어긋난다.
+	const float EffectiveRadius = bScaleBrushByWorkSpeed
+		? BrushRadius * Worker->GetWorkSpeedFactor()
+		: BrushRadius;
+
 	// 붓질을 확정하는 것은 언제나 그 플레이어의 기계다. 서버 왕복을 기다리면 붓이 손에서 밀린다.
-	if (!ApplyBrush(WorldLocation, BrushRadius, bNewFilled, bCleanup))
+	if (!ApplyBrush(WorldLocation, EffectiveRadius, bNewFilled, bCleanup))
 	{
 		// 바뀐 칸이 없으면 알릴 것도 없다. 붓을 대고 가만히 있는 동안 패킷이 나가지 않는다.
 		return;
@@ -316,13 +448,13 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	if (HasAuthority())
 	{
 		// 리슨 서버의 호스트. 같은 붓질을 전원에게 뿌려 그림을 맞춘다.
-		Multicast_ApplyBrush(WorldLocation, BrushRadius, bNewFilled, bCleanup);
+		Multicast_ApplyBrush(WorldLocation, EffectiveRadius, bNewFilled, bCleanup);
 		return;
 	}
 
 	// 클라이언트. 방금 자기 화면에 확정한 붓질을 그대로 서버에 올린다.
 	// 진행도는 여기서 오르지 않는다. 서버가 올린 값이 리플리케이트되어 덮는다.
-	Worker->SubmitBrushStroke(this, WorldLocation, BrushRadius, bNewFilled, bCleanup);
+	Worker->SubmitBrushStroke(this, WorldLocation, EffectiveRadius, bNewFilled, bCleanup);
 }
 
 void ACWWorkZone_Cells::ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly)

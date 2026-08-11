@@ -56,6 +56,33 @@ public:
 	virtual bool ConsumeDirectionInput(const FVector2D& MoveInput) { return false; }
 
 	/**
+	 * 이 존에서 작업하는 동안 패링을 막는가.
+	 *
+	 * 미니게임처럼 화면과 입력을 붙잡는 존만 true 를 돌려준다.
+	 * 미니게임 중에는 이미 WASD 가 선 방향 전환에 묶여 캐릭터가 움직이지 않는데,
+	 * 패링만 되면 "못 피하는 대신 튕겨내면 된다" 가 되어 미니게임의 위험 부담이 사라진다.
+	 * 차가 오면 취소 키로 빠져나오는 것이 이 존의 정해진 대응이다.
+	 *
+	 * 게이지나 칸을 칠하는 존은 캐릭터가 자유롭게 움직이므로 막지 않는다.
+	 */
+	virtual bool BlocksParry() const { return false; }
+
+	/**
+	 * 이 존이 체온 상승을 스스로 보고하는가.
+	 *
+	 * 기본은 false 다. 작업 컴포넌트가 ApplyWork 에 넘긴 시간만큼 체온을 올려준다.
+	 *
+	 * 미니게임처럼 진행이 자기 Tick 에서 도는 존만 true 로 바꾼다. 그런 존은 작업 키를 누른
+	 * 프레임에만 ApplyWork 가 오기 때문에, 작업 컴포넌트에 맡기면 키를 누른 동안만 더워진다.
+	 * true 를 돌려주면 작업 컴포넌트는 손을 떼고, 존이 UCWWorkerComponent::SubmitWorkHeat 로
+	 * 직접 보고한다.
+	 *
+	 * 클래스 단위로 고정한 값이어야 한다. 미니게임이 도는 중인지 같은 로컬 상태로 판단하면,
+	 * 그 상태를 모르는 서버와 판단이 갈려 체온이 두 번 오르거나 아예 안 오른다.
+	 */
+	virtual bool DrivesOwnWorkHeat() const { return false; }
+
+	/**
 	 * 플레이어가 작업을 그만두겠다고 알렸을 때. (취소 키)
 	 *
 	 * 미니게임처럼 입력을 붙잡고 있는 존만 오버라이드하면 된다.

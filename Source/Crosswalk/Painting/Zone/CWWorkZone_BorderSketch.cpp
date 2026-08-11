@@ -103,10 +103,27 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 	}
 
 	// 꼭짓점에서는 올바른 방향키가 들어올 때까지 선이 멈춰 있는다.
-	if (!bWaitingAtCorner)
+	if (!bWaitingAtCorner && ActiveWorker != nullptr)
 	{
 		const bool bBoosting = GetWorld()->TimeSince(LastBoostTime) <= 2.f * DeltaSeconds;
-		AdvanceLine(DrawSpeed * (bBoosting ? BoostMultiplier : 1.f) * DeltaSeconds);
+
+		// 체온이 높으면 선도 느려진다. (체온 기획서 4.2)
+		//
+		// 작업 컴포넌트가 계수를 곱해 넘겨주는 시간은 ApplyWork 로만 오는데, 이 존은 진행이
+		// 여기 Tick 에서 돌아서 그 시간을 쓰지 않는다. 그래서 계수를 직접 물어와 곱한다.
+		const float EffectiveSeconds = DeltaSeconds
+			* (bBoosting ? BoostMultiplier : 1.f)
+			* ActiveWorker->GetWorkSpeedFactor();
+
+		// 선이 나아간 만큼 체온이 오른다. 부스트 중이면 그만큼 더 오른다.
+		// 꼭짓점에서 멈춰 있는 동안에는 진행이 없으므로 이 블록에 들어오지 않아 체온도 안 오른다.
+		//
+		// AdvanceLine 보다 먼저 부르는 이유:
+		// 선이 한 바퀴를 채우면 AdvanceLine 안에서 미니게임이 끝나면서 ActiveWorker 가 지워진다.
+		// 뒤에서 부르면 그 프레임에 null 포인터를 건드린다.
+		ActiveWorker->SubmitWorkHeat(EffectiveSeconds);
+
+		AdvanceLine(DrawSpeed * EffectiveSeconds);
 	}
 
 	ReportProgressIfDue(false);

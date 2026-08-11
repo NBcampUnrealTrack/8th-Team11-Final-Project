@@ -10,6 +10,7 @@
 class UAnimMontage;
 class UCameraComponent;
 class UCWParryComponent;
+class UCWTemperatureComponent;
 class UCWToolHolderComponent;
 class UCWVehicleHitReactionComponent;
 class UCWWorkerComponent;
@@ -29,6 +30,7 @@ struct FInputActionValue;
  *   - UCWToolHolderComponent : E 로 도구를 집고 놓는다
  *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
  *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
+ *   - UCWTemperatureComponent : 작업으로 오른 체온에 따라 이동속도와 작업속도를 깎는다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -71,7 +73,12 @@ protected:
 	/** WASD 8방향 이동. 카메라가 고정돼 있으므로 화면 기준 방향이 그대로 이동 방향이 된다. */
 	void Move(const FInputActionValue& Value);
 
-	/** E. 도구 집기 / 내려놓기. */
+	/**
+	 * E. 상호작용.
+	 *
+	 * 대상이 두 종류다. 바닥의 도구는 도구 소지 컴포넌트가, 작업차량처럼 도구가 아닌 것은
+	 * IInterface_Interactable 이 받는다. 둘 중 가까운 쪽을 고른다.
+	 */
 	void Interact();
 
 	/** 작업 키를 누른 순간. */
@@ -124,8 +131,30 @@ protected:
 	UFUNCTION()
 	void HandleParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
+	/**
+	 * 도구가 아닌 상호작용 대상을 서버에 요청한다.
+	 *
+	 * 상호작용 판정은 서버에서만 유효하다. (IInterface_Interactable 의 계약)
+	 * 어느 대상인지 클라이언트가 알려주지만, 승인 여부는 서버가 CanInteract 로 다시 판단한다.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_InteractWith(AActor* Target);
+
 private:
 	virtual void BeginPlay() override;
+
+	/**
+	 * 근처에서 상호작용할 수 있는 대상을 찾는다. 도구는 제외한다.
+	 *
+	 * 도구를 빼는 이유: 도구는 도구 소지 컴포넌트가 매 프레임 포커스를 계산하고 하이라이트까지
+	 * 관리하고 있다. 여기서 같이 잡으면 같은 도구를 두 경로가 서로 다른 기준으로 고르게 된다.
+	 *
+	 * @param OutDistanceSquared 찾은 대상까지의 거리(제곱). 도구와 어느 쪽이 가까운지 비교하는 데 쓴다.
+	 */
+	AActor* FindNearestInteractable(float& OutDistanceSquared) const;
+
+	/** 상호작용을 실행한다. 서버면 바로, 클라이언트면 요청을 보낸다. */
+	void PerformInteractWith(AActor* Target);
 
 	/** 피격으로 쓰러져 있는 동안인지. 이동·작업·패링이 전부 막힌다. */
 	bool IsHitLocked() const;
@@ -252,6 +281,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hit")
 	TObjectPtr<UCWVehicleHitReactionComponent> HitReactionComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
+	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
+
 protected:
 	/**
 	 * 넉백 속도를 차량 속도에서 뽑을 때 쓰는 배율.
@@ -259,6 +291,11 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float KnockbackSpeedScale = 1.2f;
+
+	// 도구가 아닌 상호작용 대상을 찾는 반경(cm). 도구 집기 반경(홀더의 PickupRadius)과 별개다.
+	// 작업차량은 도구보다 덩치가 커서 같은 반경으로 잡으면 트렁크 앞에 붙어야만 반응한다.
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0.0"))
+	float InteractRadius = 250.f;
 
 	/** 넉백에 섞는 위쪽 속도(cm/s). 0이면 바닥을 미끄러지듯 밀려나 우스꽝스러운 맛이 없다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
