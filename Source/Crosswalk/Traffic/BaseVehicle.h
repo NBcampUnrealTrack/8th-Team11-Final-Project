@@ -20,7 +20,11 @@ class UStaticMeshComponent;
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnVehicleHitActorSignature, ABaseVehicle*, Vehicle, AActor*, HitActor, FVector, ImpactDirection);
 
-/** 패링에 성공당했을 때 발행. 정지/퇴치 연출은 수신 측에서 붙인다. */
+/**
+ * 패링에 성공당했을 때 발행. 판정이 서버에서만 돌기 때문에 이 델리게이트도 서버에서만 뜬다.
+ * 게임플레이 반응(점수, 스택 같은 것)을 붙이는 자리다.
+ * 연출을 여기에 붙이면 클라이언트에서는 아무것도 안 보이므로 OnParriedFX 를 쓴다.
+ */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnVehicleParriedSignature, ABaseVehicle*, Vehicle, AActor*, Parrier);
 
 /**
@@ -104,6 +108,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	float GetParryWindow() const { return ParryWindow; }
 
+	/**
+	 * 패링당하는 순간 서버·클라이언트 모두에서 호출된다. 차량 BP 에서 구현해 연출을 붙이는 자리다.
+	 * 이펙트, 사운드, 트레일, 카메라 흔들림 전부 여기서 시작하면 되고 C++ 수정은 필요 없다.
+	 *
+	 * 호출 시점은 차량이 이미 새 방향으로 회전한 뒤다. 그래서 GetActorForwardVector 가
+	 * 곧 날아갈 방향이고, LaunchDirection 도 같은 값이다.
+	 *
+	 * @param LaunchDirection  차량이 날아가는 방향(정규화, 수평).
+	 * @param LaunchSpeed      그 순간의 실제 주행 속도(cm/s). 연출 세기 환산에 쓴다.
+	 * @param Parrier          쳐낸 플레이어. 그 사람 화면에서만 카메라를 흔들고 싶으면
+	 *                         BP 에서 이 액터가 로컬 조종 대상인지 확인하면 된다.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Traffic|Parry")
+	void OnParriedFX(const FVector& LaunchDirection, float LaunchSpeed, AActor* Parrier);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -130,6 +149,15 @@ private:
 	 * 커서 지점을 못 쓰면 플레이어 기준 방향으로, 그것도 비면 TryParry 가 온 길로 되돌려 보낸다.
 	 */
 	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
+
+	/**
+	 * 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
+	 *
+	 * 차량은 이동만 복제되므로, 클라이언트 입장에서는 차가 갑자기 방향을 트는 것으로만 보인다.
+	 * "패링당했다"는 사건 자체는 이 RPC 로만 전달된다.
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayParriedFX(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier);
 
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,

@@ -217,7 +217,17 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 
 	OnVehicleParried.Broadcast(this, Parrier);
 
+	// 연출은 따로 뿌린다. 위 델리게이트는 서버에서만 떠서 클라이언트에 아무것도 안 보인다.
+	// 방향은 회전이 끝난 뒤의 정면이라, 차가 실제로 가는 쪽과 항상 일치한다.
+	Multicast_PlayParriedFX(GetActorForwardVector().GetSafeNormal2D(), GetEffectiveSpeed(), Parrier);
+
 	return true;
+}
+
+void ABaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier)
+{
+	// C++ 은 통보만 하고 무엇을 재생할지는 차량 BP 가 정한다.
+	OnParriedFX(LaunchDirection, LaunchSpeed, Parrier);
 }
 
 void ABaseVehicle::BeginPlay()
