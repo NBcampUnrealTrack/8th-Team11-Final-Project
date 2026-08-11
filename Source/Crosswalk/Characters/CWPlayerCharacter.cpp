@@ -252,6 +252,10 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	bUsingRagdollPose = false;
 	GetWorldTimerManager().ClearTimer(RagdollPoseBlendTimerHandle);
 
+	// 일어나던 중(복귀 이어붙이기 진행 중)에 다시 치이면, 이 타이머가 살아남아
+	// 방금 SetSimulatePhysics(true) 한 메시의 상대 트랜스폼을 계속 덮어쓰려 든다.
+	GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
+
 	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->StopMovementImmediately();
@@ -300,6 +304,11 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 
 	USkeletalMeshComponent* MeshComponent = GetMesh();
 
+	// 캡슐을 옮기기 전, 메시가 지금 화면에 보이던 월드 위치를 떠 둔다.
+	// 서버·클라 물리가 크게 벌어졌을 때 곧장 스냅하면 순간이동한 것처럼 튀어서,
+	// 이 값에서부터 TickRecoverBlend 로 기본 포즈까지 짧게 이어붙인다.
+	const FTransform PreCorrectionMeshWorldTransform = MeshComponent->GetComponentTransform();
+
 	/**
 	 * 쓰러진 포즈를 물리를 끄기 전에 떠 둔다. 끄고 나면 이미 애니메이션 포즈로 돌아가 있다.
 	 *
@@ -347,8 +356,30 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	 *
 	 * Teleport 플래그를 주지 않으면 이 이동이 반영되지 않는다. 그러면 캡슐만 기상 위치로
 	 * 가고 메시는 엉뚱한 오프셋을 유지해서, 화면에서는 캐릭터가 사라진 것처럼 보인다.
+	 *
+	 * 다만 기본 포즈로 곧장 스냅하지는 않는다. 방금 캡슐을 옮기기 전 메시가 있던 자리를
+	 * 새 캡슐 기준 상대 트랜스폼으로 환산해 먼저 넣고, TickRecoverBlend 가 그 값에서
+	 * DefaultMeshRelativeTransform 까지 짧게 이어붙인다. 오차가 클수록 이 처리가 효과를 낸다.
 	 */
-	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	RecoverBlendFromRelativeTransform = PreCorrectionMeshWorldTransform.GetRelativeTransform(GetCapsuleComponent()->GetComponentTransform());
+
+	if (RecoverBlendDuration > 0.f)
+	{
+		MeshComponent->SetRelativeTransform(RecoverBlendFromRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+
+		RecoverBlendElapsed = 0.f;
+		GetWorldTimerManager().SetTimer(
+			RecoverBlendTimerHandle,
+			this,
+			&ACWPlayerCharacter::TickRecoverBlend,
+			RecoverBlendTickInterval,
+			true
+		);
+	}
+	else
+	{
+		MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	}
 
 	// 카메라를 캡슐 위로 돌려놓는다. 붐의 원점은 캐릭터 위치여야 한다.
 	CameraBoom->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
@@ -362,6 +393,26 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	if (HasAuthority())
 	{
 		SetReplicateMovement(true);
+	}
+}
+
+void ACWPlayerCharacter::TickRecoverBlend()
+{
+	RecoverBlendElapsed += RecoverBlendTickInterval;
+
+	const float Alpha = FMath::Clamp(RecoverBlendElapsed / RecoverBlendDuration, 0.f, 1.f);
+
+	const FTransform Blended(
+		FQuat::Slerp(RecoverBlendFromRelativeTransform.GetRotation(), DefaultMeshRelativeTransform.GetRotation(), Alpha),
+		FMath::Lerp(RecoverBlendFromRelativeTransform.GetLocation(), DefaultMeshRelativeTransform.GetLocation(), Alpha),
+		FMath::Lerp(RecoverBlendFromRelativeTransform.GetScale3D(), DefaultMeshRelativeTransform.GetScale3D(), Alpha)
+	);
+
+	GetMesh()->SetRelativeTransform(Blended, false, nullptr, ETeleportType::TeleportPhysics);
+
+	if (Alpha >= 1.f)
+	{
+		GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
 	}
 }
 

@@ -183,6 +183,14 @@ private:
 	void StopRagdoll(const FVector& RecoverLocation, float RecoverYaw);
 
 	/**
+	 * 복귀 스냅 직후, 메시를 방금 전(순간이동 전) 자리에서 기본 포즈까지 짧게 이어붙인다.
+	 * 래그돌 물리는 서버·클라이언트가 각자 따로 돌기 때문에, 다운 중 벌어진 위치 오차가 크면
+	 * StopRagdoll 의 순간이동이 그대로 "텔레포트"처럼 보인다. 게임플레이 위치(캡슐)는
+	 * 이미 RecoverLocation 으로 확정된 뒤라 조작 재개는 지연되지 않고, 보이는 몸통만 따라붙는다.
+	 */
+	void TickRecoverBlend();
+
+	/**
 	 * 기상 몬타주를 재생하고 길이(초)를 돌려준다. 애셋이 없거나 재생에 실패하면 0 이다.
 	 * 재생 자체는 각 머신이 한다. 몬타주 복제를 켜면 같은 연출이 두 번 흘러 어긋난다.
 	 */
@@ -331,6 +339,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RagdollRestCheckDelay = 0.4f;
 
+	/**
+	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 데 걸리는 시간(초). 0이면 즉시 스냅한다.
+	 * 다운 중 서버·클라이언트 물리가 크게 벌어졌을 때 "텔레포트"처럼 튀는 느낌을 줄이기 위한 값이다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RecoverBlendDuration = 0.2f;
+
+	/** 위 이어붙이기를 갱신하는 주기(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
+	float RecoverBlendTickInterval = 0.02f;
+
 protected:
 	// 아래 기상 설정은 전부 비워도 된다. 몬타주가 비어 있으면 연출만 빠지고 지금처럼 바로 일어선다.
 
@@ -454,4 +473,11 @@ private:
 	FTimerHandle GetUpTimerHandle;
 
 	FTimerHandle RagdollPoseBlendTimerHandle;
+
+	// 복귀 이어붙이기 진행 상태. 캡슐 기준 상대 트랜스폼으로 들고 있는다 (TickRecoverBlend 참고).
+	FTransform RecoverBlendFromRelativeTransform;
+
+	float RecoverBlendElapsed = 0.f;
+
+	FTimerHandle RecoverBlendTimerHandle;
 };
