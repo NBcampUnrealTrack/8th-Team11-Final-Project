@@ -101,6 +101,14 @@ protected:
 	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity, FVector_NetQuantize ServerActorLocation);
 
 	/**
+	 * 날아가는 도중 서버가 확인한 pelvis 위치를 주기적으로 뿌린다. 위치를 순간이동시키지 않고
+	 * 그 방향으로 살짝 임펄스만 얹어서, 시작점은 같아도 물리 시뮬레이션이 시간이 지나며
+	 * 벌어지는 것을 완화한다 (CheckRagdollRest 참고). 몇 번 빠져도 다음 것이 이어받으므로 Unreliable.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SyncRagdollPosition(FVector_NetQuantize ServerPelvisLocation);
+
+	/**
 	 * 래그돌을 풀고 기상 모션을 재생한다. 일어설 자리와 방향은 서버가 정해 넘긴다.
 	 *
 	 * 물리는 머신마다 조금씩 다르게 굴러서, 각자 자기 자리에서 일어나면 위치가 갈라진다.
@@ -171,8 +179,12 @@ private:
 	/**
 	 * 래그돌을 켜고 임펄스를 먹인다. 무브먼트와 캡슐 콜리전을 함께 내린다.
 	 * 캡슐이 살아 있으면 래그돌이 자기 캡슐에 걸려 튀고, 무브먼트가 돌면 물리와 서로 밀어낸다.
+	 *
+	 * 위치 동기화(ServerActorLocation)를 여기서 처리하는 이유: 무브먼트를 끄기 전에 위치부터
+	 * 옮기면, 맞은 사람 본인 화면(오토너머스 프록시)의 로컬 무브먼트 예측이 그 위치를 다시
+	 * 밀어낼 수 있다. 그래서 반드시 무브먼트를 끈 다음에 위치를 맞춰야 한다.
 	 */
-	void StartRagdoll(const FVector& LaunchVelocity);
+	void StartRagdoll(const FVector& LaunchVelocity, const FVector& ServerActorLocation);
 
 	/**
 	 * 래그돌을 끄고 캡슐을 주어진 자리와 방향으로 옮긴 뒤 다시 세운다.
@@ -340,6 +352,24 @@ protected:
 	float RagdollRestCheckDelay = 0.4f;
 
 	/**
+	 * 날아가는 도중 위치 보정을 몇 초마다 뿌릴지. RagdollRestCheckInterval 배수로 맞춰지므로
+	 * 이보다 짧게 잡아도 실제로는 그 주기로만 나간다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollCorrectionInterval = 0.3f;
+
+	/** 이 거리(cm)보다 오차가 작으면 보정을 건너뛴다. 매번 미세하게 당기면 떨리는 것처럼 보인다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollCorrectionMinDistance = 15.f;
+
+	/**
+	 * 오차를 임펄스로 환산하는 배율. 값이 클수록 세게 당겨온다.
+	 * 실측 튜닝이 필요한 값이다 — 너무 크면 홱 당겨져 부자연스럽고, 너무 작으면 효과가 없다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollCorrectionStrength = 0.6f;
+
+	/**
 	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 데 걸리는 시간(초). 0이면 즉시 스냅한다.
 	 * 다운 중 서버·클라이언트 물리가 크게 벌어졌을 때 "텔레포트"처럼 튀는 느낌을 줄이기 위한 값이다.
 	 */
@@ -469,6 +499,10 @@ private:
 	bool bUsingRagdollPose = false;
 
 	FTimerHandle RagdollRestTimerHandle;
+
+	// CheckRagdollRest 틱(RagdollRestCheckInterval)을 누적해서 RagdollCorrectionInterval마다
+	// 위치 보정을 내보낸다. 서버에서만 의미가 있다.
+	float RagdollCorrectionElapsed = 0.f;
 
 	FTimerHandle GetUpTimerHandle;
 
