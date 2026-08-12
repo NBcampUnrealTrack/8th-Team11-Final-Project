@@ -141,11 +141,8 @@ void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(
 	FVector_NetQuantize LaunchVelocity,
 	FVector_NetQuantize ServerActorLocation)
 {
-	// 래그돌 물리를 켜기 전에 서버 기준 위치로 맞춘다.
-	// 각 클라이언트가 자기 화면의 보간 위치에서 래그돌을 시작하면 4인 화면에서 피격 시작점이 갈라진다.
-	SetActorLocation(ServerActorLocation, false, nullptr, ETeleportType::TeleportPhysics);
-
-	StartRagdoll(LaunchVelocity);
+	// 위치 동기화는 StartRagdoll 안, 무브먼트를 끈 다음으로 옮겼다 (아래 StartRagdoll 주석 참고).
+	StartRagdoll(LaunchVelocity, ServerActorLocation);
 
 	if (!HasAuthority())
 	{
@@ -206,7 +203,7 @@ void ACWPlayerCharacter::Multicast_StopRagdoll_Implementation(FVector_NetQuantiz
 	);
 }
 
-void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
+void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVector& ServerActorLocation)
 {
 	if (bRagdollActive)
 	{
@@ -256,11 +253,24 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity)
 	// 방금 SetSimulatePhysics(true) 한 메시의 상대 트랜스폼을 계속 덮어쓰려 든다.
 	GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
 
+	// 이전 비행에서 누적된 값이 새 비행 초반에 바로 보정을 쏘게 만들면 안 된다.
+	RagdollCorrectionElapsed = 0.f;
+
 	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->StopMovementImmediately();
 	Movement->DisableMovement();
 	Movement->SetComponentTickEnabled(false);
+
+	/**
+	 * 무브먼트를 끈 다음에 위치를 맞춘다.
+	 *
+	 * 맞은 사람 본인 화면(오토너머스 프록시)만 이 캐릭터의 무브먼트를 로컬로 예측하고 있다.
+	 * 무브먼트가 아직 살아있는 상태에서 SetActorLocation을 먼저 부르면, 다음 틱에 무브먼트
+	 * 컴포넌트가 자기 예측 위치와 다르다고 보고 이 위치를 다시 밀어낼 수 있다. 서버나
+	 * 시뮬레이티드 프록시(다른 사람 화면)는 로컬 예측이 없어서 이 문제가 안 보였다.
+	 */
+	SetActorLocation(ServerActorLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
 	// 캡슐이 살아 있으면 쓰러진 몸이 자기 캡슐에 걸려 튄다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -424,6 +434,20 @@ void ACWPlayerCharacter::CheckRagdollRest()
 		return;
 	}
 
+	/**
+	 * 날아가는 동안 서버가 확인한 위치를 주기적으로 뿌린다.
+	 *
+	 * 시작점을 맞춰도(Multicast_StartRagdoll) 물리 시뮬레이션은 각 머신에서 따로 돌아
+	 * 시간이 지날수록 벌어진다. 이 틱에 얹어서 RagdollCorrectionInterval마다 한 번씩만
+	 * 내보낸다 — 별도 타이머를 새로 만들지 않는다.
+	 */
+	RagdollCorrectionElapsed += RagdollRestCheckInterval;
+	if (RagdollCorrectionElapsed >= RagdollCorrectionInterval)
+	{
+		RagdollCorrectionElapsed = 0.f;
+		Multicast_SyncRagdollPosition(GetMesh()->GetSocketLocation(RagdollPivotBone));
+	}
+
 	const float PivotSpeed = GetMesh()->GetPhysicsLinearVelocity(RagdollPivotBone).Size();
 	if (PivotSpeed > RagdollRestSpeed)
 	{
@@ -434,6 +458,33 @@ void ACWPlayerCharacter::CheckRagdollRest()
 
 	// 여기서부터 잠금 시간이 흐른다. 다 지나면 HandleHitLockChanged 로 돌아온다.
 	HitReactionComponent->NotifyLanded();
+}
+
+void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_NetQuantize ServerPelvisLocation)
+{
+	// 아직 안 날고 있거나 이미 복귀했으면 늦게 도착한 보정이다. 무시한다.
+	if (!bRagdollActive)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (MeshComponent == nullptr)
+	{
+		return;
+	}
+
+	const FVector Delta = FVector(ServerPelvisLocation) - MeshComponent->GetSocketLocation(RagdollPivotBone);
+
+	// 오차가 작으면 그냥 둔다. 매번 미세하게 당기면 가만히 있어야 할 때도 떨리는 것처럼 보인다.
+	if (Delta.SizeSquared() < FMath::Square(RagdollCorrectionMinDistance))
+	{
+		return;
+	}
+
+	// 순간이동시키지 않는다. 서버 위치 쪽으로 당기는 임펄스만 살짝 얹어서, 물리 시뮬레이션이
+	// 스스로 그 방향으로 흘러가게 한다. bVelChange 를 켜서 질량과 무관하게 같은 세기로 당긴다.
+	MeshComponent->AddImpulse(Delta * RagdollCorrectionStrength, RagdollPivotBone, true);
 }
 
 FVector ACWPlayerCharacter::ResolveRecoverLocation() const
