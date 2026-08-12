@@ -563,80 +563,103 @@ void UCWUISubsystem::EndTransition()
 
 void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 {
-    // 입력 모드를 적용할 LocalPlayer 확인
-    ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	// 입력 모드를 적용할 LocalPlayer 확인
+	ULocalPlayer* LocalPlayer = GetLocalPlayer();
 
-    if (!IsValid(LocalPlayer))
-    {
-        return;
-    }
+	if (!IsValid(LocalPlayer))
+	{
+		return;
+	}
 
-    // 입력과 마우스 커서를 제어할 PlayerController 확인
-    APlayerController* PlayerController =
-        LocalPlayer->GetPlayerController(GetWorld());
+	// 입력과 마우스 커서를 제어할 PlayerController 확인
+	APlayerController* PlayerController =
+		LocalPlayer->GetPlayerController(GetWorld());
 
-    if (!IsValid(PlayerController))
-    {
-        return;
-    }
+	if (!IsValid(PlayerController))
+	{
+		return;
+	}
 
-    // 요청받은 정책에 따라 입력 방식 변경
-    switch (InInputMode)
-    {
-    case ECWUIInputMode::GameOnly:
-    {
-        FInputModeGameOnly InputMode;
+	// 요청받은 정책에 따라 입력 방식과 커서 모양 변경
+	switch (InInputMode)
+	{
+	case ECWUIInputMode::GameOnly:
+	{
+		FInputModeGameOnly InputMode;
 
-        PlayerController->SetInputMode(InputMode);
-        PlayerController->SetShowMouseCursor(false);
-        break;
-    }
+		// 게임 전용 입력에서는 마우스 커서를 숨김
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->SetShowMouseCursor(false);
+		break;
+	}
 
-    case ECWUIInputMode::UIOnly:
-    {
-        FInputModeUIOnly InputMode;
+	case ECWUIInputMode::UIOnly:
+	{
+		FInputModeUIOnly InputMode;
 
-        // 현재 화면이 있으면 키보드 포커스 대상으로 지정
-        if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
-        {
-            const TSharedPtr<SWidget> CachedWidget =
-                ScreenWidget->GetCachedWidget();
+		// Title·MainMenu·Room 등의 UI 화면에서는 일반 커서 사용
+		PlayerController->DefaultMouseCursor =
+			EMouseCursor::Default;
 
-            if (CachedWidget.IsValid())
-            {
-                InputMode.SetWidgetToFocus(CachedWidget);
-            }
-        }
+		PlayerController->CurrentMouseCursor =
+			EMouseCursor::Default;
 
-        PlayerController->SetInputMode(InputMode);
-        PlayerController->SetShowMouseCursor(true);
-        break;
-    }
+		// 현재 화면이 있으면 키보드 포커스 대상으로 지정
+		if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+		{
+			const TSharedPtr<SWidget> CachedWidget =
+				ScreenWidget->GetCachedWidget();
 
-    case ECWUIInputMode::GameAndUI:
-    {
-        FInputModeGameAndUI InputMode;
+			if (CachedWidget.IsValid())
+			{
+				InputMode.SetWidgetToFocus(CachedWidget);
+			}
+		}
 
-        // 현재 화면이 있으면 UI 포커스 대상으로 지정
-        if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
-        {
-            const TSharedPtr<SWidget> CachedWidget =
-                ScreenWidget->GetCachedWidget();
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->SetShowMouseCursor(true);
+		break;
+	}
 
-            if (CachedWidget.IsValid())
-            {
-                InputMode.SetWidgetToFocus(CachedWidget);
-            }
-        }
+	case ECWUIInputMode::GameAndUI:
+	{
+		FInputModeGameAndUI InputMode;
 
-        PlayerController->SetInputMode(InputMode);
-        PlayerController->SetShowMouseCursor(true);
-        break;
-    }
+		// 인게임에서는 작업 위치를 가리키는 십자가 커서 사용
+		PlayerController->DefaultMouseCursor =
+			EMouseCursor::Crosshairs;
 
-    default:
-        break;
-    }
+		PlayerController->CurrentMouseCursor =
+			EMouseCursor::Crosshairs;
+
+		// 게임 화면을 클릭해도 커서를 계속 표시
+		InputMode.SetHideCursorDuringCapture(false);
+
+		// 게임과 UI를 함께 사용할 때 커서를 뷰포트에 강제로 고정하지 않음
+		InputMode.SetLockMouseToViewportBehavior(
+			EMouseLockMode::DoNotLock
+		);
+
+		// 현재 화면이 있으면 UI 포커스 대상으로 지정
+		if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+		{
+			const TSharedPtr<SWidget> CachedWidget =
+				ScreenWidget->GetCachedWidget();
+
+			if (CachedWidget.IsValid())
+			{
+				InputMode.SetWidgetToFocus(CachedWidget);
+			}
+		}
+
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->SetShowMouseCursor(true);
+		break;
+	}
+
+	default:
+		break;
+	}
 }
 
 void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)

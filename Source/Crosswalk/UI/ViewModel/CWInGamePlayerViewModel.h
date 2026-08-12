@@ -113,6 +113,11 @@ private:
 	UPROPERTY()
 	TWeakObjectPtr<UWorld> BoundWorld;
 
+	// Initialize에 전달된 위젯
+	// 해당 위젯의 Owning Player를 통해 로컬 플레이어를 식별
+	UPROPERTY()
+	TWeakObjectPtr<UObject> BoundContextObject;
+
 	// GameState 생성 이벤트 구독 해제용 핸들
 	FDelegateHandle GameStateSetHandle;
 
