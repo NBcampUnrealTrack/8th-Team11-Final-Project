@@ -20,6 +20,8 @@
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Interfaces/Interface_Interactable.h"
@@ -104,6 +106,9 @@ void ACWPlayerCharacter::BeginPlay()
 	// 래그돌을 풀 때 되돌릴 기준값을 미리 잡아 둔다.
 	DefaultMeshRelativeTransform = GetMesh()->GetRelativeTransform();
 	DefaultMeshCollisionProfile = GetMesh()->GetCollisionProfileName();
+
+	// 카메라 붐도 같이 잡아 둔다. 래그돌 중 pelvis 에 붙었다 돌아오면 스케일이 오염된다.
+	DefaultCameraBoomRelativeTransform = CameraBoom->GetRelativeTransform();
 }
 
 void ACWPlayerCharacter::Landed(const FHitResult& Hit)
@@ -414,11 +419,23 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	else
 	{
 		MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+		VerifyRecoverAlignment();
 	}
 
-	// 카메라를 캡슐 위로 돌려놓는다. 붐의 원점은 캐릭터 위치여야 한다.
+	/**
+	 * 카메라를 캡슐 위로 돌려놓는다. 붐의 원점은 캐릭터 위치여야 한다.
+	 *
+	 * 위치만 0 으로 되돌리면 스케일이 남는다. 래그돌을 켤 때 KeepWorldTransform 으로 pelvis 에
+	 * 붙는데, 그 규칙은 월드 트랜스폼을 유지하려고 상대 스케일까지 다시 계산한다.
+	 *
+	 *   SetRelativeScale3D_Direct(RelativeTM.GetScale3D());   // SceneComponent.cpp
+	 *
+	 * 메시 스케일이 1 이면 결과가 같아서 지금 당장 눈에 보이는 문제는 아니다. 다만 캐릭터를
+	 * 갈아끼우며 스케일을 조정하면 붐 팔 길이가 조용히 어긋난다.
+	 * 메시와 같은 방식으로 기본 트랜스폼을 통째로 되돌려 그 여지를 없앤다.
+	 */
 	CameraBoom->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-	CameraBoom->SetRelativeLocation(FVector::ZeroVector);
+	CameraBoom->SetRelativeTransform(DefaultCameraBoomRelativeTransform);
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->StopMovementImmediately();
@@ -448,7 +465,52 @@ void ACWPlayerCharacter::TickRecoverBlend()
 	if (Alpha >= 1.f)
 	{
 		GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
+
+		// 블렌드가 끝나야 기본 트랜스폼에 도달한다. 그 전에 재면 어긋난 값이 정상으로 잡힌다.
+		VerifyRecoverAlignment();
 	}
+}
+
+void ACWPlayerCharacter::VerifyRecoverAlignment() const
+{
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (MeshComponent == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 캡슐과 메시의 거리를 그냥 재면 안 된다. 메시 기본 오프셋이 (0, 0, -90) 이라
+	 * 정상 상태에서도 90cm 가 나온다. 기본 트랜스폼으로 계산한 기대 위치와의 편차를 잰다.
+	 *
+	 * FTransform 은 자식 * 부모 순서로 곱해 월드를 얻는다.
+	 */
+	const FTransform& CapsuleTransform = GetCapsuleComponent()->GetComponentTransform();
+
+	const FVector ExpectedMeshLocation = (DefaultMeshRelativeTransform * CapsuleTransform).GetLocation();
+	const FVector ExpectedBoomLocation = (DefaultCameraBoomRelativeTransform * CapsuleTransform).GetLocation();
+
+	const float MeshDrift = FVector::Dist(ExpectedMeshLocation, MeshComponent->GetComponentLocation());
+	const float BoomDrift = FVector::Dist(ExpectedBoomLocation, CameraBoom->GetComponentLocation());
+
+	// 정상이면 둘 다 0 에 가깝다. 물리 한 틱 차이 정도는 넘어간다.
+	constexpr float AlignmentTolerance = 50.f;
+
+	if (MeshDrift <= AlignmentTolerance && BoomDrift <= AlignmentTolerance)
+	{
+		return;
+	}
+
+	/**
+	 * 여기가 찍히면 기상 후 몸이나 카메라가 제자리에 없다는 뜻이다.
+	 *
+	 * 과거에 이 어긋남이 피격마다 누적되어, 어느 방향으로 쌓이느냐에 따라 "메시가 사라진다"
+	 * 또는 "카메라가 몸에 박힌다"로 나타났다. #32 와 #37 이 각각의 경로를 막았지만,
+	 * 래그돌 복귀 순서를 다시 손대면 되살아날 수 있는 종류의 버그라 감시를 남긴다.
+	 */
+	UE_LOG(LogTemp, Warning,
+		TEXT("[%s] 기상 정렬이 어긋났습니다. 메시 %.0fcm, 카메라 붐 %.0fcm 벗어남 (허용 %.0fcm)"),
+		*GetName(), MeshDrift, BoomDrift, AlignmentTolerance);
 }
 
 void ACWPlayerCharacter::CheckRagdollRest()
@@ -546,6 +608,7 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 	if (bHitLocked)
 	{
 		PlayVehicleHitSound();
+		PlayVehicleHitEffect();
 	}
 
 	// 작업 중단 상태는 복제되므로 서버에서만 바꾼다. 도구 드롭도 서버 전용이다.
@@ -836,6 +899,39 @@ void ACWPlayerCharacter::PlayVehicleHitSound()
 			ResolveSoundAttenuation()
 		);
 	}
+}
+
+void ACWPlayerCharacter::PlayVehicleHitEffect()
+{
+	if (VehicleHitEffect == nullptr)
+	{
+		return;
+	}
+
+	const FCWVehicleHitContext HitContext = HitReactionComponent->GetLastHitContext();
+
+	// 부딪히는 소리와 같은 자리에 낸다. 몸을 따라가면 충격이 어디서 났는지 알 수 없다.
+	FVector EffectLocation = HitContext.HitLocation;
+
+	// 사운드와 같은 폴백이다. 클라이언트에서는 잠금 플래그가 피격 정보보다 먼저 도착할 수 있다.
+	if (EffectLocation.IsNearlyZero())
+	{
+		EffectLocation = GetActorLocation();
+	}
+
+	/**
+	 * 이펙트 정면을 차가 밀고 나가는 방향으로 돌린다. 방향성이 있는 이펙트(스파크, 임팩트
+	 * 콘)를 꽂았을 때 튀는 쪽이 넉백 방향과 맞아야 한다.
+	 * HitDirection 이 비어 있으면 Rotation() 이 ZeroRotator 를 내므로 그대로 둬도 안전하다.
+	 */
+	const FRotator EffectRotation = HitContext.HitDirection.Rotation();
+
+	UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		this,
+		VehicleHitEffect,
+		EffectLocation,
+		EffectRotation
+	);
 }
 
 USoundAttenuation* ACWPlayerCharacter::ResolveSoundAttenuation()
