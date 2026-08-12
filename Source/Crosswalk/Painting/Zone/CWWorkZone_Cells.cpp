@@ -342,6 +342,21 @@ FString ACWWorkZone_Cells::GetDebugDetailText() const
 		Detail += TEXT(" 마름");
 	}
 
+	// 격자 구성을 같이 찍는다.
+	//
+	// 서버와 클라이언트가 같은 붓질을 적용하는데도 칸 상태가 서로 다르면, 붓질이 아니라
+	// 격자가 어긋난 것이다. 격자가 다르면 같은 지점이 한쪽에서는 점수 영역, 다른 쪽에서는
+	// 바깥 고리로 잡혀서 "한쪽에만 있는 칸" 이 양방향으로 생긴다.
+	// 두 화면의 이 값이 같은지부터 봐야 원인을 좁힐 수 있다.
+	if (bShowDebugGridLayout)
+	{
+		const FVector2D CellSize = GetCellSize();
+		Detail += FString::Printf(TEXT(" | 격자 %dx%d 원점(%d,%d) 칸크기 %.2fx%.2f"),
+			FullGridSize.X, FullGridSize.Y,
+			CountedOrigin.X, CountedOrigin.Y,
+			CellSize.X, CellSize.Y);
+	}
+
 	return Detail;
 }
 
@@ -438,8 +453,11 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 		? BrushRadius * Worker->GetWorkSpeedFactor()
 		: BrushRadius;
 
+	// 로컬 적용도 네트워크로 나갈 좌표로 한다. 이유는 QuantizeStrokeLocation 주석 참고.
+	const FVector StrokeLocation = QuantizeStrokeLocation(WorldLocation);
+
 	// 붓질을 확정하는 것은 언제나 그 플레이어의 기계다. 서버 왕복을 기다리면 붓이 손에서 밀린다.
-	if (!ApplyBrush(WorldLocation, EffectiveRadius, bNewFilled, bCleanup))
+	if (!ApplyBrush(StrokeLocation, EffectiveRadius, bNewFilled, bCleanup))
 	{
 		// 바뀐 칸이 없으면 알릴 것도 없다. 붓을 대고 가만히 있는 동안 패킷이 나가지 않는다.
 		return;
@@ -448,13 +466,13 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	if (HasAuthority())
 	{
 		// 리슨 서버의 호스트. 같은 붓질을 전원에게 뿌려 그림을 맞춘다.
-		Multicast_ApplyBrush(WorldLocation, EffectiveRadius, bNewFilled, bCleanup);
+		Multicast_ApplyBrush(StrokeLocation, EffectiveRadius, bNewFilled, bCleanup);
 		return;
 	}
 
 	// 클라이언트. 방금 자기 화면에 확정한 붓질을 그대로 서버에 올린다.
 	// 진행도는 여기서 오르지 않는다. 서버가 올린 값이 리플리케이트되어 덮는다.
-	Worker->SubmitBrushStroke(this, WorldLocation, EffectiveRadius, bNewFilled, bCleanup);
+	Worker->SubmitBrushStroke(this, StrokeLocation, EffectiveRadius, bNewFilled, bCleanup);
 }
 
 void ACWWorkZone_Cells::ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
@@ -480,10 +498,22 @@ void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, b
 		return;
 	}
 
-	if (ApplyBrush(WorldLocation, Radius, true, bSpillOnly))
+	// 여기도 같은 이유로 먼저 반올림한다. 서버만 정확한 좌표로 찍으면 차량 자국이 기계마다 달라진다.
+	const FVector StrokeLocation = QuantizeStrokeLocation(WorldLocation);
+
+	if (ApplyBrush(StrokeLocation, Radius, true, bSpillOnly))
 	{
-		Multicast_ApplyBrush(WorldLocation, Radius, true, bSpillOnly);
+		Multicast_ApplyBrush(StrokeLocation, Radius, true, bSpillOnly);
 	}
+}
+
+FVector ACWWorkZone_Cells::QuantizeStrokeLocation(const FVector& WorldLocation)
+{
+	// FVector_NetQuantize 는 1cm 단위로 반올림해서 보낸다. 같은 규칙으로 미리 맞춘다.
+	return FVector(
+		FMath::RoundToFloat(WorldLocation.X),
+		FMath::RoundToFloat(WorldLocation.Y),
+		FMath::RoundToFloat(WorldLocation.Z));
 }
 
 bool ACWWorkZone_Cells::IsCleanupTool(ECWToolType ToolType) const

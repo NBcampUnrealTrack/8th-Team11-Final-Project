@@ -189,6 +189,21 @@ private:
 	FVector2D GetCellSize() const;
 
 	/**
+	 * 붓질 좌표를 네트워크로 나갈 때와 같은 정밀도로 미리 맞춘다.
+	 *
+	 * 붓질 좌표는 FVector_NetQuantize 로 나가면서 1cm 단위로 반올림된다. 그런데 붓질을 찍는
+	 * 본인 기계는 커서의 정확한 실수 좌표로 로컬 적용을 해서, 다른 기계와 최대 0.5cm 어긋난다.
+	 *
+	 * 칸이 크면 무시할 차이지만 이 존의 칸은 한 변이 4cm 도 안 될 수 있다. 그러면 붓 원의
+	 * 경계에 걸친 칸들이 기계마다 다르게 뒤집힌다. 게다가 본인 기계는 이미 칠한 것으로 알아서
+	 * (ApplyBrush 가 false 를 반환) 그 붓질을 다시 보내지 않기 때문에, 서버가 놓친 칸은
+	 * 영영 안 채워진다. 칠한 사람 기계만 조금씩 더 칠해진 상태로 굳는다.
+	 *
+	 * 그래서 로컬에 적용하기 전에 먼저 반올림한다. 모든 기계가 같은 입력을 적용하게 된다.
+	 */
+	static FVector QuantizeStrokeLocation(const FVector& WorldLocation);
+
+	/**
 	 * 남은 칸을 눈에 보이게 그린다.
 	 *   빨강 = 아직 안 칠한 점수 영역 칸 (도색이 덜 끝난 자리)
 	 *   주황 = 바깥 고리로 삐져나간 칸 (검은색 롤러로 지워야 하는 자리)
@@ -277,6 +292,11 @@ protected:
 	// 이웃 메쉬에 덮여 눈에 안 보일 수 있다. 이걸 켜면 남은 칸의 위치가 그대로 보인다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
 	bool bShowDebugUnfilledCells = false;
+
+	// 격자 구성(전체 크기, 점수 영역 원점, 칸 크기)을 진행도 줄 뒤에 같이 찍는다.
+	// 서버와 클라이언트의 칸 상태가 어긋날 때, 붓질 문제인지 격자 문제인지 가르는 데 쓴다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
+	bool bShowDebugGridLayout = true;
 
 	// 바깥 고리로 삐져나간 칸을 주황 상자로 그린다.
 	//

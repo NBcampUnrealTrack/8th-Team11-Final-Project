@@ -65,6 +65,9 @@ void ACWWorkTruck::CollectStageTools()
 	}
 
 	// 레벨에 이미 놓여 있는 도구를 걷어 온다.
+	//
+	// 여기만 TActorIterator 를 쓴다. 레벨 액터 전체를 훑는 비용이 있지만 BeginPlay 에서
+	// 한 번만 도는 코드다. 매 프레임 도는 자리라면 UCWPaintingSubsystem 처럼 등록 목록이 필요하다.
 	if (bCollectExistingTools)
 	{
 		for (TActorIterator<ACWBaseTool> ToolIter(World); ToolIter; ++ToolIter)

@@ -5,12 +5,11 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
-#include "GameFramework/Pawn.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Painting/CWPaintingSubsystem.h"
 #include "Painting/CWWorkerComponent.h"
 
 ACWWorkZone_Dust::ACWWorkZone_Dust()
@@ -115,23 +114,33 @@ void ACWWorkZone_Dust::Tick(float DeltaSeconds)
 		return;
 	}
 
+	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
+	if (PaintingSubsystem == nullptr)
+	{
+		return;
+	}
+
 	// 지금 빗자루를 들고 쓸고 있는 캐릭터를 찾는다.
 	// 도구와 작업 상태가 모두 리플리케이트되므로 클라이언트도 서버와 같은 판단을 할 수 있다.
-	for (TActorIterator<APawn> PawnIter(GetWorld()); PawnIter; ++PawnIter)
+	//
+	// 등록된 작업자만 돈다. 예전에는 TActorIterator<APawn> 으로 훑었는데, 그러면 레벨 액터
+	// 전체를 타입 테스트한 뒤 폰마다 컴포넌트 배열을 또 훑는 이중 스캔이 매 프레임,
+	// 먼지 존 개수만큼, 모든 머신에서 돌았다. 실제로 찾는 대상은 플레이어 4명뿐이다.
+	for (const TWeakObjectPtr<UCWWorkerComponent>& WeakWorker : PaintingSubsystem->GetWorkers())
 	{
-		const APawn* Pawn = *PawnIter;
-		if (Pawn == nullptr)
-		{
-			continue;
-		}
-
-		const UCWWorkerComponent* Worker = Pawn->FindComponentByClass<UCWWorkerComponent>();
+		const UCWWorkerComponent* Worker = WeakWorker.Get();
 		if (Worker == nullptr || !Worker->IsWorking() || !CanUseTool(Worker->GetHeldTool()))
 		{
 			continue;
 		}
 
-		PaintAt(Pawn->GetActorLocation());
+		const AActor* WorkerActor = Worker->GetOwner();
+		if (WorkerActor == nullptr)
+		{
+			continue;
+		}
+
+		PaintAt(WorkerActor->GetActorLocation());
 	}
 }
 

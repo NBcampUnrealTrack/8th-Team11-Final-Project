@@ -2,10 +2,10 @@
 
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
+#include "Painting/CWPaintingSubsystem.h"
 #include "Painting/CWTemperatureComponent.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
@@ -33,6 +33,23 @@ void UCWWorkerComponent::BeginPlay()
 	{
 		TemperatureComponent = Owner->FindComponentByClass<UCWTemperatureComponent>();
 	}
+
+	// 등록은 권한과 무관하게 모든 머신에서 한다.
+	// 먼지 존이 "지금 쓸고 있는 사람" 을 각 머신에서 찾아야 원격 화면에도 붓 자취가 남는다.
+	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
+	{
+		PaintingSubsystem->RegisterWorker(this);
+	}
+}
+
+void UCWWorkerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
+	{
+		PaintingSubsystem->UnregisterWorker(this);
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -306,14 +323,23 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 		OutWorkLocation = ReceivedWorkLocation;
 	}
 
+	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
+	if (PaintingSubsystem == nullptr)
+	{
+		return nullptr;
+	}
+
 	// 캐릭터에서 가장 가까운, 지금 작업할 수 있는 존을 고른다.
-	// 레벨의 존은 많아도 5~6개 수준이라 전부 훑어도 부담이 없다.
+	//
+	// 등록된 존만 돈다. 이 함수는 매 프레임, 서버에서는 플레이어 수만큼 돌기 때문에
+	// TActorIterator 로 레벨 액터 전체를 훑으면 맵이 커질수록 그대로 비용이 된다.
+	// (스캔 비용은 존 개수가 아니라 레벨 액터 총 개수에 비례한다)
 	ACWBaseWorkZone* NearestZone = nullptr;
 	float NearestDistanceSquared = TNumericLimits<float>::Max();
 
-	for (TActorIterator<ACWBaseWorkZone> ZoneIter(World); ZoneIter; ++ZoneIter)
+	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
 	{
-		ACWBaseWorkZone* Zone = *ZoneIter;
+		ACWBaseWorkZone* Zone = WeakZone.Get();
 		if (Zone == nullptr || !Zone->CanWorkNow(HeldTool))
 		{
 			continue;

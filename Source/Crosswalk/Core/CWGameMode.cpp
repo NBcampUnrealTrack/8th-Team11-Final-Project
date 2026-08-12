@@ -1,10 +1,10 @@
 ﻿#include "Core/CWGameMode.h"
 
-#include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Characters/CWPlayerCharacter.h"
 #include "Characters/CWPlayerController.h"
 #include "Core/CWGameState.h"
+#include "Painting/CWPaintingSubsystem.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
 namespace
@@ -47,38 +47,77 @@ void ACWGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 존 수집을 다음 틱으로 미룬다.
-	// 액터들의 BeginPlay 순서는 보장되지 않아서, 여기서 바로 모으면 아직 시작 진행도를
-	// 세팅하지 않은 존을 잡을 수 있다.
-	GetWorldTimerManager().SetTimerForNextTick(this, &ACWGameMode::CollectWorkZones);
-}
-
-void ACWGameMode::CollectWorkZones()
-{
-	UWorld* World = GetWorld();
-	if (World == nullptr)
+	UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
+	if (PaintingSubsystem == nullptr)
 	{
 		return;
 	}
 
-	WorkZones.Reset();
+	// 한 번 모으고 끝내지 않고 등록을 계속 지켜본다.
+	// 시작할 때만 모으면 레벨 스트리밍이나 런타임 스폰으로 늦게 들어온 존이 체크리스트에
+	// 영영 안 잡힌다. 존이 스스로 등록할 때 알려주므로 들어오고 나가는 것을 모두 따라간다.
+	PaintingSubsystem->OnWorkZoneRegistered.AddDynamic(this, &ACWGameMode::HandleZoneRegistered);
+	PaintingSubsystem->OnWorkZoneUnregistered.AddDynamic(this, &ACWGameMode::HandleZoneUnregistered);
 
-	for (TActorIterator<ACWBaseWorkZone> It(World); It; ++It)
+	// 액터의 BeginPlay 순서는 보장되지 않아서 게임모드보다 먼저 시작한 존이 있을 수 있다.
+	// 그 존들은 등록 이벤트를 이미 흘려보냈으므로 지금 목록에서 직접 가져온다.
+	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
 	{
-		ACWBaseWorkZone* Zone = *It;
-		if (Zone == nullptr)
-		{
-			continue;
-		}
+		HandleZoneRegistered(WeakZone.Get());
+	}
+}
 
-		WorkZones.Add(Zone);
-
-		// 완료 델리게이트가 아니라 진행도 델리게이트에 붙는다.
-		// 완료가 풀리는 순간에는 OnWorkCompleted 가 발행되지 않아서 그것만 봐서는 되돌림을 놓친다.
-		Zone->OnWorkProgress.AddDynamic(this, &ACWGameMode::HandleZoneProgress);
+void ACWGameMode::HandleZoneRegistered(ACWBaseWorkZone* Zone)
+{
+	if (Zone == nullptr || WorkZones.Contains(Zone))
+	{
+		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[Stage] 작업 존 %d개를 찾았습니다."), WorkZones.Num());
+	WorkZones.Add(Zone);
+
+	// 완료 델리게이트가 아니라 진행도 델리게이트에 붙는다.
+	// 완료가 풀리는 순간에는 OnWorkCompleted 가 발행되지 않아서 그것만 봐서는 되돌림을 놓친다.
+	Zone->OnWorkProgress.AddDynamic(this, &ACWGameMode::HandleZoneProgress);
+
+	ScheduleStageProgressRefresh();
+}
+
+void ACWGameMode::HandleZoneUnregistered(ACWBaseWorkZone* Zone)
+{
+	if (Zone == nullptr || WorkZones.Remove(Zone) == 0)
+	{
+		return;
+	}
+
+	Zone->OnWorkProgress.RemoveDynamic(this, &ACWGameMode::HandleZoneProgress);
+
+	ScheduleStageProgressRefresh();
+}
+
+void ACWGameMode::ScheduleStageProgressRefresh()
+{
+	// 집계를 다음 틱으로 미룬다.
+	//
+	// 두 가지를 한 번에 해결한다.
+	// 하나, 존은 BeginPlay 맨 앞에서 등록하므로 이 시점에는 시작 진행도가 아직 없다.
+	//       (칸 존의 BuildGrid 가 등록 뒤에 돈다) 한 틱 미루면 확정된 값을 본다.
+	// 둘, 존이 여러 개 한꺼번에 등록돼도 집계는 한 번만 돈다.
+	if (bStageProgressRefreshScheduled)
+	{
+		return;
+	}
+
+	bStageProgressRefreshScheduled = true;
+
+	GetWorldTimerManager().SetTimerForNextTick(this, &ACWGameMode::FlushStageProgressRefresh);
+}
+
+void ACWGameMode::FlushStageProgressRefresh()
+{
+	bStageProgressRefreshScheduled = false;
+
+	UE_LOG(LogTemp, Log, TEXT("[Stage] 작업 존 %d개를 집계합니다."), WorkZones.Num());
 
 	RefreshStageProgress();
 }
