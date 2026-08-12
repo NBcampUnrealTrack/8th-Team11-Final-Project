@@ -3,8 +3,8 @@
 #include "Components/BoxComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
+#include "Painting/CWPaintingSubsystem.h"
 #include "TimerManager.h"
 
 ACWBaseWorkZone::ACWBaseWorkZone()
@@ -44,12 +44,43 @@ void ACWBaseWorkZone::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 등록은 권한과 무관하게 모든 머신에서 한다. 아래 서버 조기 반환보다 위에 있어야 한다.
+	// 붓 자취를 찍는 존은 각 클라이언트에서도 목록을 봐야 원격 화면에 자취가 남는다.
+	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
+	{
+		PaintingSubsystem->RegisterZone(this);
+	}
+
 	// 잠금 판정은 서버만 한다. bLocked 는 리플리케이트되므로 클라이언트는 결과만 받는다.
 	if (!HasAuthority())
 	{
 		return;
 	}
 
+	// 기다릴 것이 있을 수 있으면 일단 잠가둔다.
+	//
+	// 감시 대상을 아직 모으지 않았으므로 개수 대신 설정값으로 판단한다. 앞 존이 실제로
+	// 없더라도 다음 틱에 풀리므로, 한 프레임 더 잠겨 있는 쪽이 열려 있는 쪽보다 안전하다.
+	bLocked = (WorkOrder > 0 || PrerequisiteZone != nullptr);
+
+	// 전원의 BeginPlay 가 끝난 뒤에 감시 대상을 모으고 제대로 판정한다.
+	// 존의 시작 진행도는 각자의 BeginPlay 에서 정해지는데(칸 존의 BuildGrid) 액터의
+	// BeginPlay 순서는 보장되지 않는다. 한 틱 미루면 순서를 신경 쓸 필요가 없다.
+	GetWorldTimerManager().SetTimerForNextTick(this, &ACWBaseWorkZone::InitializeLockWatch);
+}
+
+void ACWBaseWorkZone::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
+	{
+		PaintingSubsystem->UnregisterZone(this);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACWBaseWorkZone::InitializeLockWatch()
+{
 	CollectWatchedZones();
 
 	for (ACWBaseWorkZone* Zone : WatchedZones)
@@ -57,14 +88,7 @@ void ACWBaseWorkZone::BeginPlay()
 		Zone->OnWorkProgress.AddDynamic(this, &ACWBaseWorkZone::HandleWatchedZoneProgress);
 	}
 
-	// 기다릴 존이 하나라도 있으면 일단 잠가둔다.
-	// 이 시점에는 앞 존의 BeginPlay 가 아직 안 돌았을 수 있어서 진행도를 믿을 수 없다.
-	bLocked = (WatchedZones.Num() > 0);
-
-	// 전원의 BeginPlay 가 끝난 뒤에 제대로 판정한다.
-	// 존의 시작 진행도는 각자의 BeginPlay 에서 정해지는데(칸 존의 BuildGrid) 액터의
-	// BeginPlay 순서는 보장되지 않는다. 한 틱 미루면 순서를 신경 쓸 필요가 없다.
-	GetWorldTimerManager().SetTimerForNextTick(this, &ACWBaseWorkZone::RefreshLock);
+	RefreshLock();
 }
 
 void ACWBaseWorkZone::CollectWatchedZones()
@@ -83,10 +107,17 @@ void ACWBaseWorkZone::CollectWatchedZones()
 		return;
 	}
 
-	// 레벨의 존은 많아야 5~6개라 전부 훑어도 부담이 없다.
-	for (TActorIterator<ACWBaseWorkZone> ZoneIter(GetWorld()); ZoneIter; ++ZoneIter)
+	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
+	if (PaintingSubsystem == nullptr)
 	{
-		ACWBaseWorkZone* Zone = *ZoneIter;
+		return;
+	}
+
+	// 등록된 존만 돈다. TActorIterator 로 훑으면 레벨 액터 전체를 타입 테스트하게 되는데,
+	// 그 비용은 존 개수가 아니라 레벨 액터 총 개수에 비례한다.
+	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
+	{
+		ACWBaseWorkZone* Zone = WeakZone.Get();
 		if (Zone == nullptr || Zone == this || Zone->WorkGroup != WorkGroup)
 		{
 			continue;

@@ -35,6 +35,8 @@ public:
 
 	virtual void BeginPlay() override;
 
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	/**
 	 * 플레이어가 작업 키를 누르고 있는 동안 매 프레임 호출된다.
 	 *
@@ -201,6 +203,15 @@ protected:
 	void NotifyStateChanged();
 
 private:
+	/**
+	 * 감시 대상을 모으고 잠금을 처음 판정한다. BeginPlay 가 아니라 다음 틱에 돈다.
+	 *
+	 * 감시 대상을 서브시스템 등록 목록에서 찾기 때문이다. 액터의 BeginPlay 순서는 보장되지
+	 * 않으므로, BeginPlay 안에서 바로 모으면 아직 등록되지 않은 존을 놓친다.
+	 * 그 사이에는 보수적으로 잠가둔다. (BeginPlay 의 bLocked 초기값)
+	 */
+	void InitializeLockWatch();
+
 	/** 같은 WorkGroup 안에서 나보다 WorkOrder 가 작은 존을 모아 잠금 감시 대상으로 등록한다. */
 	void CollectWatchedZones();
 
