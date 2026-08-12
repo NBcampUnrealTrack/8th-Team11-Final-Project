@@ -243,6 +243,9 @@ private:
 	/**
 	 * 차에 치인 소리를 낸다. 각 머신이 알아서 내므로 권한과 무관하게 불린다.
 	 *
+	 * 두 소리를 다르게 놓는다. 부딪히는 소리는 충돌 지점에 고정하고, 비명은 몸에 붙여
+	 * 날아가는 동안 같이 따라가게 한다. 둘 다 비워둬도 되고, 한쪽만 채워도 된다.
+	 *
 	 * 본인 피격도 감쇠에 태운다. 내가 맞은 지점은 리스너와 거리가 0 이라
 	 * 어차피 풀볼륨으로 나오고, 남이 맞는 소리만 거리에 따라 멀어진다.
 	 */
@@ -411,13 +414,33 @@ protected:
 	float GetUpFromFrontYawOffset = 0.f;
 
 	/**
-	 * 몬타주가 끝나기 이만큼 전에 조작을 돌려준다(초).
+	 * 몬타주가 끝나기 이만큼 전에 조작을 돌려주고, 동시에 몬타주를 블렌드 아웃시킨다(초).
 	 *
 	 * 기상 애니 끝자락은 이미 다 선 자세를 유지하는 구간이라, 끝까지 기다리면 화면상 서 있는데
 	 * 키가 안 먹는 답답한 순간이 생긴다. 조금 일찍 풀어 이동 애니로 자연스럽게 넘어가게 한다.
+	 *
+	 * 몬타주 애셋의 Blend Out 시간과 같게 맞추는 것이 기준이다. 그러면 조작이 풀리는 순간부터
+	 * 블렌드가 시작되어 몬타주 끝에 정확히 이동 애니로 넘어간다. 이 값이 더 짧으면 기상 포즈로
+	 * 굳은 채 미끄러지는 구간이 생기고, 더 길면 애니 뒷부분이 그만큼 잘린다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.0"))
-	float GetUpUnlockLeadTime = 0.15f;
+	float GetUpUnlockLeadTime = 0.25f;
+
+	/**
+	 * 기상 몬타주 재생 속도. 1 보다 크면 빨리 일어난다. 앞뒤 애니의 길이와 템포가 달라
+	 * 각각 따로 둔다. 재생할 몬타주를 고를 때 짝지은 값이 함께 선택된다.
+	 *
+	 * 잠금 시간은 이 값이 반영된 실제 재생 시간으로 잰다. 그래서 여기를 올려도 몬타주가
+	 * 먼저 끝나고 잠금만 남아 가만히 서 있는 구간이 생기지 않는다.
+	 *
+	 * 속도는 여기서만 조절하는 것을 권한다. 몬타주 애셋이나 애니 시퀀스의 Rate Scale 로도
+	 * 바꿀 수 있지만, 조절 지점이 두 곳으로 갈리면 최종 속도가 두 값의 곱이 되어 헷갈린다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.01"))
+	float GetUpFromBackPlayRate = 1.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.01"))
+	float GetUpFromFrontPlayRate = 1.f;
 
 	/**
 	 * 래그돌 스냅샷 포즈를 밑에 깔아 두는 시간(초). IsUsingRagdollPose 가 이 시간만큼 true 다.
@@ -430,9 +453,16 @@ protected:
 protected:
 	// 아래 사운드 셋은 전부 비워도 된다. 비어 있으면 그 소리만 나지 않고 나머지는 정상 동작한다.
 
-	/** 차에 치이는 순간 나는 소리. */
+	/**
+	 * 차에 치이는 순간 부딪히는 소리. 충돌 지점에서 나고 몸을 따라가지 않는다.
+	 * 넉백으로 몸이 멀어지면 같이 멀어지므로 짧게 잡는 게 좋다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Sound")
 	TObjectPtr<USoundBase> VehicleHitSound;
+
+	/** 맞은 사람이 지르는 비명. 머리 본에 붙어 날아가는 몸을 따라간다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sound")
+	TObjectPtr<USoundBase> VehicleHitVoiceSound;
 
 	/** 패링에 성공해 차를 튕겨낸 순간 나는 소리. */
 	UPROPERTY(EditDefaultsOnly, Category = "Sound")
