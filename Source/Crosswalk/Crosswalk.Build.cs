@@ -34,6 +34,9 @@ public class Crosswalk : ModuleRules
             "SlateCore",
             "ModelViewViewModel",
             "FieldNotification",
+
+            // 피격 이펙트를 코드에서 스폰한다.
+            "Niagara",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[]

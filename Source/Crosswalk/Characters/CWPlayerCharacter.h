@@ -9,6 +9,7 @@
 
 class UAnimMontage;
 class UCameraComponent;
+class UNiagaraSystem;
 class UCWParryComponent;
 class UCWTemperatureComponent;
 class UCWToolHolderComponent;
@@ -237,6 +238,15 @@ private:
 	 */
 	void CheckRagdollRest();
 
+	/**
+	 * 기상이 끝난 뒤 메시와 카메라 붐이 제자리에 있는지 확인하고, 벗어나면 경고를 남긴다.
+	 *
+	 * 과거에 래그돌 복귀 시 상대 트랜스폼 오프셋이 피격마다 누적되던 버그가 있었다.
+	 * 쌓이는 방향에 따라 메시가 사라진 것처럼도, 카메라가 몸에 박힌 것처럼도 보였다.
+	 * 복귀 순서를 다시 손댈 때 되살아나기 쉬운 종류라 감시를 남겨 둔다.
+	 */
+	void VerifyRecoverAlignment() const;
+
 	/** 일어설 자리를 고른다. 쓰러진 몸통 아래 바닥을 찾아 캡슐을 올려놓는다. */
 	FVector ResolveRecoverLocation() const;
 
@@ -250,6 +260,14 @@ private:
 	 * 어차피 풀볼륨으로 나오고, 남이 맞는 소리만 거리에 따라 멀어진다.
 	 */
 	void PlayVehicleHitSound();
+
+	/**
+	 * 차에 치인 이펙트를 낸다. 사운드와 마찬가지로 권한과 무관하게 각 머신에서 불린다.
+	 *
+	 * 스폰 위치와 방향은 복제된 피격 정보에서 가져온다. 그래서 이펙트용 멀티캐스트를
+	 * 따로 만들 필요가 없다. 잠금 플래그가 복제되는 것만으로 모든 머신에서 한 번씩 난다.
+	 */
+	void PlayVehicleHitEffect();
 
 	/**
 	 * 쓸 감쇠 설정을 고른다. 애셋이 지정돼 있으면 그것을, 없으면 기본값으로 하나 만들어 쓴다.
@@ -464,6 +482,17 @@ protected:
 	float RagdollPoseBlendTime = 0.35f;
 
 protected:
+	/**
+	 * 차에 치이는 순간 충돌 지점에 스폰되는 이펙트. 비워두면 이 연출만 빠진다.
+	 *
+	 * 부딪히는 소리와 같은 자리에 낸다. 몸이 날아가도 부딪힌 자리는 그 자리다.
+	 * 이펙트 정면은 차가 밀고 나가는 방향으로 맞춰진다. 크기와 지속 시간은 코드에서
+	 * 손대지 않으므로 Niagara 시스템 애셋 쪽에서 잡는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Effect")
+	TObjectPtr<UNiagaraSystem> VehicleHitEffect;
+
+protected:
 	// 아래 사운드 셋은 전부 비워도 된다. 비어 있으면 그 소리만 나지 않고 나머지는 정상 동작한다.
 
 	/**
@@ -533,6 +562,9 @@ private:
 
 	// 래그돌을 풀 때 메시를 되돌릴 기준값. BP 에서 다르게 놨을 수 있어 BeginPlay 에서 읽는다.
 	FTransform DefaultMeshRelativeTransform;
+
+	// 카메라 붐을 되돌릴 기준값. 같은 이유로 BeginPlay 에서 읽는다.
+	FTransform DefaultCameraBoomRelativeTransform;
 
 	FName DefaultMeshCollisionProfile;
 
