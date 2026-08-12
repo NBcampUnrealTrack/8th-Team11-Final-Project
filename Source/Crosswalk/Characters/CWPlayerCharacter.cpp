@@ -172,22 +172,20 @@ void ACWPlayerCharacter::Multicast_StopRagdoll_Implementation(FVector_NetQuantiz
 	{
 		bUsingRagdollPose = false;
 		GetWorldTimerManager().ClearTimer(RagdollPoseBlendTimerHandle);
-	}
 
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	// 잠금을 푸는 시점은 서버가 정한다. 몬타주가 없으면 기다릴 이유도 없다.
-	if (MontageLength <= 0.f)
-	{
 		FinishGetUp();
 		return;
 	}
 
-	// 리드 타임이 몬타주보다 길면 기다릴 게 없다. SetTimer 는 0 이하를 받으면 조용히 타이머를 지운다.
+	/**
+	 * 블렌드 아웃 시점은 각 머신이 자기 타이머로 잡는다. 서버만 재는 게 아니다.
+	 *
+	 * 몬타주 재생이 모든 머신에서 같은 시점에 시작되므로 결과도 같다. 서버의 잠금 해제
+	 * 복제를 기다리면 그만큼 늦게 블렌드 아웃해서, 남의 화면에서만 기상 포즈가 더 오래 굳어 있다.
+	 */
 	const float LockDuration = MontageLength - GetUpUnlockLeadTime;
+
+	// 리드 타임이 몬타주보다 길면 기다릴 게 없다. SetTimer 는 0 이하를 받으면 조용히 타이머를 지운다.
 	if (LockDuration <= 0.f)
 	{
 		FinishGetUp();
@@ -572,23 +570,59 @@ void ACWPlayerCharacter::HandleGetUpRequested(UCWVehicleHitReactionComponent* /*
 
 float ACWPlayerCharacter::PlayGetUpMontage(bool bFaceDown)
 {
-	// 한쪽만 채워 넣었으면 있는 쪽으로 대신한다. 방향이 어색해도 아예 안 일어나는 것보단 낫다.
-	UAnimMontage* PreferredMontage = bFaceDown ? GetUpFromFrontMontage : GetUpFromBackMontage;
-	UAnimMontage* FallbackMontage = bFaceDown ? GetUpFromBackMontage : GetUpFromFrontMontage;
+	UAnimMontage* Montage = bFaceDown ? GetUpFromFrontMontage : GetUpFromBackMontage;
+	float PlayRate = bFaceDown ? GetUpFromFrontPlayRate : GetUpFromBackPlayRate;
 
-	UAnimMontage* Montage = PreferredMontage != nullptr ? PreferredMontage : FallbackMontage;
+	// 한쪽만 채워 넣었으면 있는 쪽으로 대신한다. 방향이 어색해도 아예 안 일어나는 것보단 낫다.
+	// 재생 속도도 그 몬타주에 짝지은 값으로 함께 바꾼다. 남의 속도를 쓰면 길이 계산이 어긋난다.
+	if (Montage == nullptr)
+	{
+		Montage = bFaceDown ? GetUpFromBackMontage : GetUpFromFrontMontage;
+		PlayRate = bFaceDown ? GetUpFromBackPlayRate : GetUpFromFrontPlayRate;
+	}
+
 	if (Montage == nullptr)
 	{
 		return 0.f;
 	}
 
-	// AnimBP 에 슬롯 노드가 없으면 길이는 정상으로 나오지만 화면에는 아무것도 보이지 않는다.
-	return PlayAnimMontage(Montage);
+	UAnimInstance* AnimInstance = GetMesh() != nullptr ? GetMesh()->GetAnimInstance() : nullptr;
+	if (AnimInstance == nullptr)
+	{
+		return 0.f;
+	}
+
+	/**
+	 * ACharacter::PlayAnimMontage 를 쓰지 않고 직접 재생한다. 반환값의 의미가 필요하기 때문이다.
+	 *
+	 * PlayAnimMontage 는 ReturnValueType 을 넘기지 않아 기본값인 MontageLength 로 받는다.
+	 * 그건 몬타주 길이라서 재생 속도를 반영하지 않는다. 속도를 2배로 주면 몬타주는 절반 시간에
+	 * 끝나는데 잠금은 원래 길이만큼 유지되어, 다 일어선 자세로 가만히 서 있는 구간이 생긴다.
+	 *
+	 * Duration 은 길이를 재생 속도로 나눈 실제 재생 시간이다. 애셋 쪽 Rate Scale 은 이미
+	 * 몬타주 길이에 녹아 있으므로, 어느 쪽에서 속도를 바꾸든 이 값 하나로 맞는다.
+	 *
+	 * AnimBP 에 슬롯 노드가 없으면 시간은 정상으로 나오지만 화면에는 아무것도 보이지 않는다.
+	 */
+	return AnimInstance->Montage_Play(
+		Montage,
+		PlayRate,
+		EMontagePlayReturnType::Duration
+	);
 }
 
 void ACWPlayerCharacter::FinishGetUp()
 {
 	GetWorldTimerManager().ClearTimer(GetUpTimerHandle);
+
+	/**
+	 * 조작을 돌려주는 것과 같은 시점에 몬타주를 블렌드 아웃시킨다.
+	 *
+	 * 몬타주를 그냥 두면 슬롯이 기상 마지막 포즈로 100% 덮고 있어서, 캐릭터가 그 자세로
+	 * 굳은 채 미끄러지다가 몬타주가 끝나는 순간 이동 애니로 뚝 끊긴다.
+	 * 블렌드 아웃 길이는 몬타주 애셋의 Blend Out 설정을 그대로 쓴다.
+	 */
+	StopAnimMontage();
 
 	if (!HasAuthority())
 	{
@@ -715,37 +749,61 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 
 void ACWPlayerCharacter::PlayVehicleHitSound()
 {
-	if (VehicleHitSound == nullptr)
-	{
-		return;
-	}
-
 	/**
-	 * 본인 피격도 감쇠에 태운다. 따로 2D 로 뺄 이유가 없다.
+	 * 부딪히는 소리는 충돌 지점에 놔둔다. 몸이 날아가도 부딪힌 자리는 그 자리다.
 	 *
+	 * 본인 피격도 감쇠에 태운다. 따로 2D 로 뺄 이유가 없다.
 	 * 내가 맞은 지점은 리스너(캐릭터 위치)와 거리가 0 이라 AttenuationInnerRadius 안쪽이고,
 	 * NonSpatializedRadiusStart 안에도 들어가 어차피 풀볼륨 2D 로 재생된다.
 	 * 남이 맞는 소리만 거리에 따라 자연스럽게 멀어진다.
 	 */
-	FVector HitLocation = HitReactionComponent->GetLastHitContext().HitLocation;
-
-	// 클라이언트에서는 잠금 플래그가 피격 정보보다 먼저 도착할 수 있다.
-	// 그때는 맞은 사람 위치로 대신한다. 어차피 충돌 지점 바로 옆이다.
-	if (HitLocation.IsNearlyZero())
+	if (VehicleHitSound != nullptr)
 	{
-		HitLocation = GetActorLocation();
+		FVector HitLocation = HitReactionComponent->GetLastHitContext().HitLocation;
+
+		// 클라이언트에서는 잠금 플래그가 피격 정보보다 먼저 도착할 수 있다.
+		// 그때는 맞은 사람 위치로 대신한다. 어차피 충돌 지점 바로 옆이다.
+		if (HitLocation.IsNearlyZero())
+		{
+			HitLocation = GetActorLocation();
+		}
+
+		UGameplayStatics::PlaySoundAtLocation(
+			this,
+			VehicleHitSound,
+			HitLocation,
+			FRotator::ZeroRotator,
+			1.f,
+			1.f,
+			0.f,
+			ResolveSoundAttenuation()
+		);
 	}
 
-	UGameplayStatics::PlaySoundAtLocation(
-		this,
-		VehicleHitSound,
-		HitLocation,
-		FRotator::ZeroRotator,
-		1.f,
-		1.f,
-		0.f,
-		ResolveSoundAttenuation()
-	);
+	/**
+	 * 비명은 사람 입에서 나오는 소리라 몸에 붙여 같이 날아가게 한다.
+	 *
+	 * 충돌 지점에 고정하면 안 된다. 리스너가 붐에 물려 있어 날아가는 몸을 따라가는데,
+	 * 소리만 맞은 자리에 남으면 재생 도중에 감쇠 거리를 벗어나 중간에 꺼진다.
+	 * 넉백이 세서 비명 길이보다 훨씬 빨리 2500cm 를 벗어난다.
+	 */
+	if (VehicleHitVoiceSound != nullptr)
+	{
+		UGameplayStatics::SpawnSoundAttached(
+			VehicleHitVoiceSound,
+			GetMesh(),
+			RagdollHeadBone,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			EAttachLocation::SnapToTarget,
+			// 캐릭터가 사라지면 비명도 같이 멈춘다. 두면 빈 자리에서 소리만 남는다.
+			true,
+			1.f,
+			1.f,
+			0.f,
+			ResolveSoundAttenuation()
+		);
+	}
 }
 
 USoundAttenuation* ACWPlayerCharacter::ResolveSoundAttenuation()
