@@ -69,7 +69,12 @@ void ABaseVehicle::Tick(float DeltaSeconds)
 
 float ABaseVehicle::GetVehicleLength() const
 {
-	return CollisionBox ? CollisionBox->GetUnscaledBoxExtent().X * 2.f : 0.f;
+	// 스케일을 적용한 크기로 잰다. 차종 BP 가 콜리전 박스를 키워 놓으면 그만큼 길어져야 한다.
+	//
+	// GetDistanceToPoint 는 실제 콜리전 바디로 거리를 재기 때문에 이미 스케일이 반영돼 있다.
+	// 여기만 스케일 전 크기를 쓰면 두 기준이 갈려서, 패링 반경 판정과 스포너 간격 계산이
+	// 서로 다른 차량 크기를 보게 된다.
+	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X * 2.f : 0.f;
 }
 
 void ABaseVehicle::InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleSpawnParams& Params)
@@ -117,7 +122,8 @@ bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImp
 	}
 
 	// 차량 앞면 기준으로 재서, 이미 박스 안에 들어온 대상은 0초로 취급한다.
-	const float FrontOffset = CollisionBox ? CollisionBox->GetUnscaledBoxExtent().X : 0.f;
+	// 크기 기준은 GetVehicleLength 와 맞춘다. (스케일 적용 후)
+	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
 	OutTimeToImpact = FMath::Max(0.f, (ForwardDistance - FrontOffset) / EffectiveSpeed);
 
 	return true;
@@ -327,7 +333,13 @@ void ABaseVehicle::UpdateTransformOnLane()
 		LaneTransform.AddToTranslation(LaneTransform.GetRotation().GetRightVector() * LaneLateralOffset);
 	}
 
-	SetActorTransform(LaneTransform);
+	// 위치와 회전만 가져간다. 스케일은 차량 BP 가 정한 값을 그대로 둔다.
+	//
+	// 스플라인이 내주는 월드 트랜스폼에는 ATrafficLane 액터의 스케일이 섞여 있다.
+	// SetActorTransform 으로 통째로 덮으면 차선을 늘려 놓은 만큼 차량도 같이 커지는데,
+	// GetVehicleLength 가 재는 콜리전 크기와 화면에 보이는 크기가 어긋나면서
+	// 스포너의 간격 계산이 실제보다 짧아져 차가 겹쳐 스폰된다.
+	SetActorLocationAndRotation(LaneTransform.GetLocation(), LaneTransform.GetRotation());
 }
 
 void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
