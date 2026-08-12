@@ -385,7 +385,20 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	 */
 	RecoverBlendFromRelativeTransform = PreCorrectionMeshWorldTransform.GetRelativeTransform(GetCapsuleComponent()->GetComponentTransform());
 
-	if (RecoverBlendDuration > 0.f)
+	/**
+	 * 이어붙일 실제 거리(=오차)에 맞춰 이어붙이는 시간을 늘린다.
+	 *
+	 * 비행 중 임펄스 보정([RagdollSync] 3번 로그)이 물리 발산을 다 못 따라잡고 남은 오차가
+	 * StopRagdoll 시점까지 그대로 남을 수 있다는 게 로그로 확인됐다. 오차가 1m 넘게 남아도
+	 * 고정된 짧은 시간에 억지로 이어붙이면 그 자체가 순간이동처럼 보인다. 오차가 클수록
+	 * 더 천천히 미끄러지듯 이어붙여서, 눈에는 "늦게 따라잡는" 것처럼 보이게 한다.
+	 */
+	const float RecoverBlendDistance = (RecoverBlendFromRelativeTransform.GetLocation() - DefaultMeshRelativeTransform.GetLocation()).Size();
+	RecoverBlendActiveDuration = RecoverBlendDuration > 0.f
+		? FMath::Clamp(RecoverBlendDistance / RecoverBlendSpeed, RecoverBlendDuration, RecoverBlendMaxDuration)
+		: 0.f;
+
+	if (RecoverBlendActiveDuration > 0.f)
 	{
 		MeshComponent->SetRelativeTransform(RecoverBlendFromRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 
@@ -422,7 +435,7 @@ void ACWPlayerCharacter::TickRecoverBlend()
 {
 	RecoverBlendElapsed += RecoverBlendTickInterval;
 
-	const float Alpha = FMath::Clamp(RecoverBlendElapsed / RecoverBlendDuration, 0.f, 1.f);
+	const float Alpha = FMath::Clamp(RecoverBlendElapsed / RecoverBlendActiveDuration, 0.f, 1.f);
 
 	const FTransform Blended(
 		FQuat::Slerp(RecoverBlendFromRelativeTransform.GetRotation(), DefaultMeshRelativeTransform.GetRotation(), Alpha),

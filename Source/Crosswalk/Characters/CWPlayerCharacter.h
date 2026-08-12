@@ -373,11 +373,24 @@ protected:
 	float RagdollCorrectionStrength = 0.6f;
 
 	/**
-	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 데 걸리는 시간(초). 0이면 즉시 스냅한다.
-	 * 다운 중 서버·클라이언트 물리가 크게 벌어졌을 때 "텔레포트"처럼 튀는 느낌을 줄이기 위한 값이다.
+	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 최소 시간(초). 0이면 즉시 스냅한다.
+	 * 오차가 작을 때(=대부분의 경우) 이 시간으로 끝난다. 실제 걸리는 시간은 오차 크기에 따라
+	 * 아래 RecoverBlendSpeed 로 늘어난다 (StopRagdoll에서 계산하는 RecoverBlendActiveDuration 참고).
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RecoverBlendDuration = 0.2f;
+
+	/**
+	 * 이어붙이기 시간을 늘릴 때 기준이 되는 속도(cm/초). 오차 거리를 이 값으로 나눠 걸리는 시간을
+	 * 정한다 — 서버·클라 물리가 크게 벌어졌을수록(비행 중 보정으로도 못 좁힌 경우) 더 길게 이어붙여서
+	 * 순간이동처럼 보이지 않게 한다. 값이 작을수록 큰 오차에서 더 오래, 더 느리게 미끄러진다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "1.0"))
+	float RecoverBlendSpeed = 400.f;
+
+	/** 오차가 아무리 커도 이어붙이기가 이 시간을 넘기지는 않는다. 너무 길면 그동안 조작감이 이상해진다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RecoverBlendMaxDuration = 0.6f;
 
 	/** 위 이어붙이기를 갱신하는 주기(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
@@ -542,6 +555,9 @@ private:
 	FTransform RecoverBlendFromRelativeTransform;
 
 	float RecoverBlendElapsed = 0.f;
+
+	// 이번 이어붙이기에 실제로 쓸 시간. 오차 크기에 따라 StopRagdoll에서 매번 다시 계산해 넣는다.
+	float RecoverBlendActiveDuration = 0.f;
 
 	FTimerHandle RecoverBlendTimerHandle;
 };
