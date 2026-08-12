@@ -17,7 +17,7 @@ namespace CrosswalkSession
 }
 
 UCWGameInstance::UCWGameInstance()
-	: ListenMapPath(TEXT("/Game/CrossWalk/Maps/Dev/Test"))
+	: ListenMapPath(TEXT("/Game/CrossWalk/Maps/Dev/Prototype"))
 	, MaxPublicConnections(4)
 	, RoomCodeLength(6)
 	, MaxRoomCodeGenerateAttempts(20)
