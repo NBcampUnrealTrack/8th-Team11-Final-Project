@@ -143,7 +143,12 @@ ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ABaseVehic
 	// 차선 시작점이 다른 액터와 겹쳐도 트래픽 흐름이 끊기지 않도록 그대로 스폰한다.
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-	ABaseVehicle* Vehicle = World->SpawnActor<ABaseVehicle>(SpawnClass, TargetLane->GetTransformAtDistance(StartDistance), SpawnParams);
+	// 스폰에도 위치와 회전만 넘긴다. 트랜스폼째로 넘기면 차선 액터의 스케일이 그대로 박혀서
+	// 차량 BP 가 정한 크기가 무시된다. (자세한 이유는 ABaseVehicle::UpdateTransformOnLane 참고)
+	const FTransform LaneTransform = TargetLane->GetTransformAtDistance(StartDistance);
+
+	ABaseVehicle* Vehicle = World->SpawnActor<ABaseVehicle>(
+		SpawnClass, LaneTransform.GetLocation(), LaneTransform.Rotator(), SpawnParams);
 	if (Vehicle)
 	{
 		Vehicle->InitializeOnLane(TargetLane, RollSpawnParams(StartDistance));
