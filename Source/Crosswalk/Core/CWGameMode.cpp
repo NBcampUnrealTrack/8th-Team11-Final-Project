@@ -4,6 +4,7 @@
 #include "Characters/CWPlayerCharacter.h"
 #include "Characters/CWPlayerController.h"
 #include "Core/CWGameState.h"
+#include "Engine/World.h"
 #include "Painting/CWPaintingSubsystem.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
@@ -65,6 +66,70 @@ void ACWGameMode::BeginPlay()
 	{
 		HandleZoneRegistered(WeakZone.Get());
 	}
+}
+
+bool ACWGameMode::ReturnToRoom()
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	if (RoomMap.IsNull())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("GameMode: RoomMap is not configured."));
+
+		return false;
+	}
+
+	const FString RoomMapPath =
+		RoomMap
+		.ToSoftObjectPath()
+		.GetLongPackageName();
+
+	if (RoomMapPath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("GameMode: RoomMap path is empty."));
+
+		return false;
+	}
+
+	// 이미 다른 맵으로 이동 중이면 중복 요청 무시
+	if (!World->NextURL.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("GameMode: travel is already pending."));
+
+		return false;
+	}
+
+	// 현재 연결된 플레이어 전원을 방 대기실로 이동
+	const bool bTravelStarted =
+		World->ServerTravel(RoomMapPath);
+
+	if (!bTravelStarted)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("GameMode: failed to start ServerTravel. Map=%s"),
+			*RoomMapPath);
+
+		return false;
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("GameMode: ServerTravel started. Map=%s"),
+		*RoomMapPath);
+
+	return true;
 }
 
 void ACWGameMode::HandleZoneRegistered(ACWBaseWorkZone* Zone)

@@ -68,6 +68,7 @@ void UCWInGamePlayerViewModel::Uninitialize()
 	BoundWorld.Reset();
 
 	// 이전 맵의 플레이어 데이터가 다음 화면에 남지 않도록 초기화
+	SetIsHost(false);
 	SetLocalPlayerName(FText::GetEmpty());
 	SetRemotePlayers(TArray<FCWRoomPlayerInfo>());
 }
@@ -110,6 +111,12 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 		return;
 	}
+
+	// Listen Server의 로컬 컨트롤러만 호스트로 판정
+	SetIsHost(
+		LocalPlayerController->IsLocalController() &&
+		LocalPlayerController->HasAuthority()
+	);
 
 	APlayerState* LocalPlayerState =
 		LocalPlayerController->PlayerState;
@@ -329,6 +336,16 @@ void UCWInGamePlayerViewModel::HandleGameStateSet(
 #pragma endregion
 
 #pragma region ViewModelSetters
+
+void UCWInGamePlayerViewModel::SetIsHost(
+	bool bInIsHost
+)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		bIsHost,
+		bInIsHost
+	);
+}
 
 void UCWInGamePlayerViewModel::SetLocalPlayerName(
 	const FText& InPlayerName

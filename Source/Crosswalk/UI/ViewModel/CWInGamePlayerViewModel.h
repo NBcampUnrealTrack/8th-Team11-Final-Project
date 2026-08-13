@@ -33,6 +33,13 @@ public:
 #pragma region PlayerData
 
 public:
+	// 현재 화면의 로컬 플레이어가 Listen Server 호스트인지 반환
+	UFUNCTION(BlueprintPure, Category = "CW|UI|InGamePlayer")
+	bool GetIsHost() const
+	{
+		return bIsHost;
+	}
+
 	// 현재 로컬 플레이어의 표시 이름 반환
 	UFUNCTION(BlueprintPure, Category = "CW|UI|InGamePlayer")
 	FText GetLocalPlayerName() const
@@ -74,6 +81,9 @@ private:
 #pragma region ViewModelSetters
 
 private:
+	// 로컬 플레이어의 호스트 여부 저장 후 FieldNotify 발생
+	void SetIsHost(bool bInIsHost);
+
 	// 로컬 플레이어 표시 이름 저장 후 FieldNotify 발생
 	void SetLocalPlayerName(const FText& InPlayerName);
 
@@ -87,6 +97,15 @@ private:
 #pragma region ViewModelState
 
 private:
+	// Result 화면에서 호스트 전용 버튼 표시 여부
+	UPROPERTY(
+		BlueprintReadOnly,
+		FieldNotify,
+		Category = "CW|UI|InGamePlayer",
+		meta = (AllowPrivateAccess = "true")
+	)
+	bool bIsHost = false;
+
 	// 좌측 하단 본인 상태 영역에 표시할 로컬 플레이어 이름
 	UPROPERTY(
 		BlueprintReadOnly,

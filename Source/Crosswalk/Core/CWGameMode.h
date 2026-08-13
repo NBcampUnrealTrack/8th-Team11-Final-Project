@@ -34,6 +34,11 @@ public:
 
 	virtual void BeginPlay() override;
 
+	// 연결된 플레이어 전원을 방 대기실 맵으로 이동
+	// Listen Server 서버에서만 실행 가능
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Stage")
+	bool ReturnToRoom();
+
 private:
 	/** 완료된 존 수를 다시 세어 게임 상태에 반영하고, 전부 끝났으면 클리어로 넘긴다. */
 	void RefreshStageProgress();
@@ -57,6 +62,11 @@ private:
 
 	UFUNCTION()
 	void HandleZoneProgress(ACWBaseWorkZone* Zone, float Progress);
+
+	// 인게임 종료 후 돌아갈 방 대기실 맵
+	// 대기실 맵은 Room GameMode를 사용
+	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Stage")
+	TSoftObjectPtr<UWorld> RoomMap;
 
 private:
 	// 이 스테이지의 작업 목표들. 서버에서만 채운다.
