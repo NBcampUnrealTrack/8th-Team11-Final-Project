@@ -140,7 +140,8 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 		+ FVector::UpVector * KnockbackUpSpeed;
 
 	// [진단로그 1/4] 서버가 보내는 시작 위치. 각 머신의 2번 로그와 비교해 전달이 제대로 됐는지 확인한다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] 1.서버발신 위치=%s"), *GetActorLocation().ToString());
+	// 이름을 찍어두는 이유: 4인 테스트라 동시에 여러 명이 맞으면 로그가 섞여서 어느 캐릭터 건지 헷갈린다.
+	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 1.서버발신 위치=%s"), *GetName(), *GetActorLocation().ToString());
 
 	Multicast_StartRagdoll(LaunchVelocity, GetActorLocation());
 }
@@ -280,8 +281,8 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 
 	// [진단로그 2/4] Role별로 실제 반영된 위치. 오토너머스 프록시(내 캐릭터, 값=2)에서만
 	// 목표위치와 실제위치가 벌어진다면 무브먼트가 여전히 이 SetActorLocation을 밀어내고 있다는 뜻이다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] 2.StartRagdoll직후 Role=%d(0무권한/1시뮬/2오토/3서버) 목표위치=%s 실제위치=%s"),
-		(int32)GetLocalRole(), *ServerActorLocation.ToString(), *GetActorLocation().ToString());
+	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 2.StartRagdoll직후 Role=%d(0무권한/1시뮬/2오토/3서버) 목표위치=%s 실제위치=%s"),
+		*GetName(), (int32)GetLocalRole(), *ServerActorLocation.ToString(), *GetActorLocation().ToString());
 
 	// 캡슐이 살아 있으면 쓰러진 몸이 자기 캡슐에 걸려 튄다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -327,8 +328,8 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 
 	// [진단로그 4/4] 순간이동 직전 서버가 준 최종 위치 vs 지금 내 pelvis 위치. 여기 Delta가 크면
 	// 3번 로그의 비행 중 보정이 다 끝나기도 전에 서버가 "멈췄다"고 판단해 StopRagdoll을 쏜 것이다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] 4.StopRagdoll직전 Role=%d 서버RecoverLoc=%s 내pelvis=%s Delta크기=%.1f"),
-		(int32)GetLocalRole(), *RecoverLocation.ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(),
+	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 4.StopRagdoll직전 Role=%d 서버RecoverLoc=%s 내pelvis=%s Delta크기=%.1f"),
+		*GetName(), (int32)GetLocalRole(), *RecoverLocation.ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(),
 		(RecoverLocation - MeshComponent->GetSocketLocation(RagdollPivotBone)).Size());
 
 	// 캡슐을 옮기기 전, 메시가 지금 화면에 보이던 월드 위치를 떠 둔다.
@@ -565,8 +566,8 @@ void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_Ne
 
 	// [진단로그 3/4] 시간이 지나며 서버-내 pelvis 오차가 벌어지는지/줄어드는지 추세를 본다.
 	// 임계값(15cm) 미달로 보정을 건너뛰는 경우도 포함해서 매번 찍는다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] 3.비행중보정 Role=%d 서버pelvis=%s 내pelvis=%s Delta크기=%.1f"),
-		(int32)GetLocalRole(), *FVector(ServerPelvisLocation).ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(), Delta.Size());
+	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 3.비행중보정 Role=%d 서버pelvis=%s 내pelvis=%s Delta크기=%.1f"),
+		*GetName(), (int32)GetLocalRole(), *FVector(ServerPelvisLocation).ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(), Delta.Size());
 
 	// 오차가 작으면 그냥 둔다. 매번 미세하게 당기면 가만히 있어야 할 때도 떨리는 것처럼 보인다.
 	if (Delta.SizeSquared() < FMath::Square(RagdollCorrectionMinDistance))
