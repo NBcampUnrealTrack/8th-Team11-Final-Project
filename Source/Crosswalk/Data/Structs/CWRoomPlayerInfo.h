@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "CWRoomPlayerInfo.generated.h"
 
+class APlayerState;
+
 USTRUCT(BlueprintType)
 struct CROSSWALK_API FCWRoomPlayerInfo
 {
@@ -28,6 +30,11 @@ public:
 	// 현재 로컬 플레이어 자신인지 나타냄
 	UPROPERTY(BlueprintReadOnly, Category = "CW|Room")
 	bool bIsLocalPlayer = false;
+
+	// 체온처럼 계속 바뀌는 값을 위젯이 직접 읽기 위한 참조
+	// 인게임 목록에서만 채움
+	UPROPERTY(BlueprintReadOnly, Category = "CW|Room")
+	TObjectPtr<APlayerState> PlayerState;
 
 #pragma endregion
 

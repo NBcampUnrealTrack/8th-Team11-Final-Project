@@ -234,6 +234,9 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		PlayerInfo.PlayerId =
 			CandidatePlayerId;
 
+		// Entry 위젯이 이 플레이어의 폰에서 체온을 직접 읽도록 참조 전달
+		PlayerInfo.PlayerState = PlayerState;
+
 		PlayerInfo.PlayerName =
 			DisplayName;
 
