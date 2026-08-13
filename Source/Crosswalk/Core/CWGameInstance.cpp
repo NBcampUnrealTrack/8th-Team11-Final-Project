@@ -4,6 +4,7 @@
 #include "CWGameInstance.h"
 
 #include "Engine/Engine.h"
+#include "Engine/NetDriver.h"
 #include "Kismet/GameplayStatics.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
@@ -39,10 +40,27 @@ void UCWGameInstance::Init()
 	Super::Init();
 
 	CacheOnlineInterfaces();
+
+	// 호스트 연결 종료와 네트워크 단절을 한 경로에서 처리
+	if (GEngine != nullptr && !NetworkFailureHandle.IsValid())
+	{
+		NetworkFailureHandle = GEngine->OnNetworkFailure().AddUObject(
+			this,
+			&UCWGameInstance::HandleNetworkFailure
+		);
+	}
 }
 
 void UCWGameInstance::Shutdown()
 {
+	// GameInstance가 제거되기 전에 전역 엔진 델리게이트 구독 해제
+	if (GEngine != nullptr && NetworkFailureHandle.IsValid())
+	{
+		GEngine->OnNetworkFailure().Remove(NetworkFailureHandle);
+	}
+
+	NetworkFailureHandle.Reset();
+
 	ClearSessionOperationTimeout();
 
 	ClearLoginCompleteDelegate();
@@ -52,6 +70,43 @@ void UCWGameInstance::Shutdown()
 	ClearDestroySessionCompleteDelegate();
 
 	Super::Shutdown();
+}
+
+void UCWGameInstance::HandleNetworkFailure(
+	UWorld* World,
+	UNetDriver* NetDriver,
+	ENetworkFailure::Type FailureType,
+	const FString& ErrorString
+)
+{
+	// PIE에서는 모든 GameInstance가 엔진의 전역 델리게이트를 구독한다.
+	// 다른 PIE 창에서 발생한 네트워크 실패는 처리하지 않는다.
+	if (!IsValid(World) || World->GetGameInstance() != this)
+	{
+		return;
+	}
+
+	// ServerConnection이 있는 인스턴스만 참가자다.
+	// 호스트는 자기 버튼 흐름에서 직접 방을 정리한다.
+	const bool bIsClient =
+		IsValid(NetDriver) && NetDriver->ServerConnection != nullptr;
+
+	if (!bIsClient)
+	{
+		return;
+	}
+
+	UE_LOG(
+		LogTemp,
+		Warning,
+		TEXT("GameInstance: network failure. Type=%d Error=%s"),
+		static_cast<int32>(FailureType),
+		*ErrorString
+	);
+
+	// UE 연결이 끊겨도 EOS 로비 멤버십은 남을 수 있다.
+	// 남은 멤버십을 정리해 서버 없는 방이 목록에 노출되는 것을 막는다.
+	DestroyRoom();
 }
 
 void UCWGameInstance::LoginWithEpic()
@@ -932,7 +987,26 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 		return;
 	}
 
-	SetStatus(FString::Printf(TEXT("JoinSession success. Travel: %s"), *ConnectString));
+	// 참가자는 방 코드를 직접 만들지 않으므로 호스트가 세션에 실어 보낸 값을 읽음
+	// 방 목록으로 입장하면 PendingJoinRoomCode가 비어 있어 이 경로가 유일
+	FString JoinedRoomCode;
+
+	if (FNamedOnlineSession* NamedSession = SessionInterface->GetNamedSession(SessionName))
+	{
+		NamedSession->SessionSettings.Get(CrosswalkSession::RoomCodeKey, JoinedRoomCode);
+	}
+
+	// 세션 설정에서 못 읽으면 방 코드로 입장한 경우의 값으로 대체
+	if (JoinedRoomCode.IsEmpty())
+	{
+		JoinedRoomCode = PendingJoinRoomCode;
+	}
+
+	CurrentRoomCode = JoinedRoomCode;
+
+	SetStatus(FString::Printf(TEXT("JoinSession success. RoomCode: %s Travel: %s"), *CurrentRoomCode, *ConnectString));
+
+	// CurrentRoomCode를 채운 뒤에 알려야 ViewModel이 빈 값을 읽지 않음
 	CompleteSessionOperation(ECWSessionOperation::JoinRoom, true, ECWSessionFailure::None);
 
 	PlayerController->ClientTravel(ConnectString, TRAVEL_Absolute);

@@ -11,6 +11,8 @@
 #include "Data/Structs/CWRoomSummary.h"
 #include "CWGameInstance.generated.h"
 
+class UNetDriver;
+
 // 세션 검색을 어떤 목적으로 실행했는지 구분
 enum class ECWSessionFindPurpose : uint8
 {
@@ -268,6 +270,14 @@ private:
 	// 세션 제거 요청이 끝났을 때 호출
 	void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
 
+	// 호스트 연결이 끊겼을 때 참가자의 EOS 로비 멤버십을 정리
+	void HandleNetworkFailure(
+		UWorld* World,
+		UNetDriver* NetDriver,
+		ENetworkFailure::Type FailureType,
+		const FString& ErrorString
+	);
+
 private:
 	// UI에 표시할 마지막 온라인 처리 상태 메시지
 	UPROPERTY()
@@ -331,6 +341,9 @@ private:
 
 	// 세션 제거 완료 델리게이트 해제를 위한 핸들
 	FDelegateHandle DestroySessionCompleteDelegateHandle;
+
+	// 네트워크 실패 델리게이트 해제에 사용하는 핸들
+	FDelegateHandle NetworkFailureHandle;
 
 	// 로그인 완료 콜백 객체
 	FOnLoginCompleteDelegate LoginCompleteDelegate;
