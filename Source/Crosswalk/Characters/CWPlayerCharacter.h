@@ -377,7 +377,7 @@ protected:
 	 * 이보다 짧게 잡아도 실제로는 그 주기로만 나간다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RagdollCorrectionInterval = 0.3f;
+	float RagdollCorrectionInterval = 0.1f;
 
 	/** 이 거리(cm)보다 오차가 작으면 보정을 건너뛴다. 매번 미세하게 당기면 떨리는 것처럼 보인다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
@@ -388,7 +388,7 @@ protected:
 	 * 실측 튜닝이 필요한 값이다 — 너무 크면 홱 당겨져 부자연스럽고, 너무 작으면 효과가 없다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RagdollCorrectionStrength = 0.6f;
+	float RagdollCorrectionStrength = 1.2f;
 
 	/**
 	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 최소 시간(초). 0이면 즉시 스냅한다.
@@ -404,11 +404,11 @@ protected:
 	 * 순간이동처럼 보이지 않게 한다. 값이 작을수록 큰 오차에서 더 오래, 더 느리게 미끄러진다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "1.0"))
-	float RecoverBlendSpeed = 400.f;
+	float RecoverBlendSpeed = 150.f;
 
 	/** 오차가 아무리 커도 이어붙이기가 이 시간을 넘기지는 않는다. 너무 길면 그동안 조작감이 이상해진다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RecoverBlendMaxDuration = 0.6f;
+	float RecoverBlendMaxDuration = 1.0f;
 
 	/** 위 이어붙이기를 갱신하는 주기(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
