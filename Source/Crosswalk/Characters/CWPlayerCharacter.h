@@ -406,9 +406,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "1.0"))
 	float RecoverBlendSpeed = 150.f;
 
-	/** 오차가 아무리 커도 이어붙이기가 이 시간을 넘기지는 않는다. 너무 길면 그동안 조작감이 이상해진다. */
+	/**
+	 * 오차가 아무리 커도 이어붙이기가 이 시간을 넘기지는 않는다.
+	 *
+	 * RagdollPoseBlendTime(래그돌 포즈 스냅샷이 기상 애니로 넘어가는 시간)보다 길면 안 된다.
+	 * 뼈대 애니메이션은 이미 정상적으로 재생 중인데 메시 전체 위치만 계속 밀려 들어가면,
+	 * 이미 서 있는 몸이 슬금슬금 미끄러지는 것처럼 겹쳐 보인다("잔상").
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RecoverBlendMaxDuration = 1.0f;
+	float RecoverBlendMaxDuration = 0.35f;
 
 	/** 위 이어붙이기를 갱신하는 주기(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
