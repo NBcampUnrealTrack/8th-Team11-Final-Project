@@ -10,6 +10,7 @@
 class UAnimMontage;
 class UCameraComponent;
 class UNiagaraSystem;
+class UCWHeadgearComponent;
 class UCWParryComponent;
 class UCWTemperatureComponent;
 class UCWToolHolderComponent;
@@ -21,6 +22,7 @@ class UInputMappingContext;
 class USoundAttenuation;
 class USoundBase;
 class USpringArmComponent;
+class UStaticMeshComponent;
 struct FInputActionValue;
 
 /**
@@ -32,6 +34,7 @@ struct FInputActionValue;
  *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
  *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
  *   - UCWTemperatureComponent : 작업으로 오른 체온에 따라 이동속도와 작업속도를 깎는다
+ *   - UCWHeadgearComponent    : H 로 머리 소켓의 헬멧을 갈아 끼운다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -93,6 +96,14 @@ protected:
 
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
+
+	/**
+	 * H. 헬멧을 다음 것으로 갈아 끼운다.
+	 *
+	 * 피격 잠금(IsHitLocked)을 확인하지 않는다. 순수 외형이라 쓰러져 있는 동안 바꿔도
+	 * 게임플레이에 영향이 없고, 오히려 래그돌 중에 헬멧이 머리를 잘 따라가는지 확인하기 좋다.
+	 */
+	void SwapHelmet();
 
 	/**
 	 * 래그돌을 모든 머신에서 같이 켠다. 서버 기준 위치를 함께 넘겨 피격 시작점이 화면마다 갈라지는 것을 줄인다.
@@ -173,6 +184,12 @@ private:
 	 * 트레이스가 빗나가면 캐릭터 위치를 그대로 낸다. 그러면 패링 컴포넌트가 정면으로 대체한다.
 	 */
 	FVector ResolveCursorWorldLocation() const;
+
+	/**
+	 * 헬멧 슬롯 하나를 만들어 머리 본에 붙이고 공통 설정을 적용한다. 생성자에서만 부른다.
+	 * @param SlotName 컴포넌트 이름. 헬멧 순서는 이 이름의 오름차순으로 정해진다.
+	 */
+	UStaticMeshComponent* CreateHelmetSlot(const TCHAR* SlotName);
 
 	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
@@ -324,6 +341,33 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
+	TObjectPtr<UCWHeadgearComponent> HeadgearComponent;
+
+	/**
+	 * 머리에 붙는 헬멧 슬롯. 생성자가 만들어 head 본에 붙이고 헬멧 태그를 달아 둔다.
+	 * BP 에서는 Static Mesh 를 꽂고 뷰포트 기즈모로 위치·크기를 맞추기만 하면 된다.
+	 *
+	 * 배열이 아니라 이름 있는 멤버로 하나씩 두는 이유
+	 *   네이티브 컴포넌트는 VisibleAnywhere 가 붙은 개별 UPROPERTY 멤버여야 BP 디테일
+	 *   패널이 바인딩할 프로퍼티를 찾는다. 배열에 담아 두면 컴포넌트 트리에는 나타나지만
+	 *   선택해도 디테일 패널이 비어서 메시를 꽂을 수 없다.
+	 *
+	 * 메시가 꽂히지 않은 슬롯은 UCWHeadgearComponent 가 순환에서 제외한다.
+	 * 더 필요하면 여기에 멤버를 늘리고 생성자에서 CreateHelmetSlot 을 한 줄 더 부르면 된다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
+	TObjectPtr<UStaticMeshComponent> HelmetSlot_00;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
+	TObjectPtr<UStaticMeshComponent> HelmetSlot_01;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
+	TObjectPtr<UStaticMeshComponent> HelmetSlot_02;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
+	TObjectPtr<UStaticMeshComponent> HelmetSlot_03;
 
 protected:
 	/**
@@ -537,7 +581,7 @@ protected:
 	float AttenuationFalloffDistance = 2500.f;
 
 protected:
-	// 아래 6개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
+	// 아래 7개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -556,6 +600,10 @@ protected:
 	// 미니게임 중 빠져나오는 키(Q). 비워두면 그 기능만 없고 나머지는 정상 동작한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> CancelWorkAction;
+
+	// 헬멧을 갈아 끼우는 키(H). 프로토타입 확인용 입력이라 기획서에 없는 키를 쓴다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> SwapHelmetAction;
 
 private:
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
