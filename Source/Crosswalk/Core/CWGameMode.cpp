@@ -291,5 +291,12 @@ void ACWGameMode::RefreshStageProgress()
 
 void ACWGameMode::HandleZoneProgress(ACWBaseWorkZone* /*Zone*/, float /*Progress*/)
 {
-	RefreshStageProgress();
+	// 바로 집계하지 않고 다음 틱으로 모은다.
+	//
+	// 이 델리게이트는 진행도가 바뀔 때마다 온다. 칸을 칠하는 존은 붓질 한 번이 곧 진행도
+	// 변화라서, 여러 명이 칠하는 동안에는 프레임마다 여러 번 들어온다. 그때마다 전체 존을
+	// 훑고 FText 를 비교하고 정렬하면 그게 그대로 서버 비용이 된다.
+	//
+	// 한 프레임 안에서 몇 번을 계산하든 마지막 값 하나만 의미가 있다.
+	ScheduleStageProgressRefresh();
 }

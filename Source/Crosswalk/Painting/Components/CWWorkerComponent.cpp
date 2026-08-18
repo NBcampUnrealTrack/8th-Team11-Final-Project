@@ -118,7 +118,12 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	//
 	// 진행이 자기 Tick 에서 도는 존은 제외한다. 그런 존은 작업 키를 누른 프레임에만 여기로 오므로
 	// 여기서 올리면 부스트할 때만 더워진다. 대신 존이 SubmitWorkHeat 로 직접 보고한다.
-	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat())
+	//
+	// HasWorkAt 을 같이 보는 이유: 존을 찾았다는 것만으로 올리면, 이미 칠한 자리에 붓을
+	// 대고 있어도 진행도는 그대로인데 체온만 오른다. 칸을 칠하는 존은 이걸로 "지금 이 붓질이
+	// 뒤집을 칸이 있는가" 를 답한다. 지점 개념이 없는 존은 기본값 true 라 그대로다.
+	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat()
+		&& FoundZone->HasWorkAt(this, WorkLocation))
 	{
 		TemperatureComponent->AddWorkHeat(EffectiveDeltaTime);
 	}
