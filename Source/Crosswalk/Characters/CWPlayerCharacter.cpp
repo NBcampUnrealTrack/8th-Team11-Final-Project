@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -23,6 +24,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
+#include "Characters/Components/CWHeadgearComponent.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Interfaces/Interface_Interactable.h"
 #include "Painting/CWTemperatureComponent.h"
@@ -67,6 +69,13 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
 	TemperatureComponent = CreateDefaultSubobject<UCWTemperatureComponent>(TEXT("TemperatureComponent"));
+	HeadgearComponent = CreateDefaultSubobject<UCWHeadgearComponent>(TEXT("HeadgearComponent"));
+
+	// 헬멧 슬롯. BP 에서는 Static Mesh 를 꽂고 기즈모로 맞추기만 하면 된다.
+	HelmetSlot_00 = CreateHelmetSlot(TEXT("HelmetSlot_00"));
+	HelmetSlot_01 = CreateHelmetSlot(TEXT("HelmetSlot_01"));
+	HelmetSlot_02 = CreateHelmetSlot(TEXT("HelmetSlot_02"));
+	HelmetSlot_03 = CreateHelmetSlot(TEXT("HelmetSlot_03"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -88,6 +97,37 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 		GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 		GetMesh()->AnimClass = PlaceholderAnim.Class;
 	}
+}
+
+UStaticMeshComponent* ACWPlayerCharacter::CreateHelmetSlot(const TCHAR* SlotName)
+{
+	UStaticMeshComponent* HelmetSlot = CreateDefaultSubobject<UStaticMeshComponent>(SlotName);
+
+	/**
+	 * 소켓이 아니라 본 이름("head")에 붙인다.
+	 *
+	 * 소켓을 먼저 만들어야 한다는 전제를 없애기 위한 선택이다. 위치 보정은 어차피 각
+	 * 슬롯의 상대 트랜스폼으로 하고, 그건 BP 뷰포트에서 기즈모로 맞추는 게 스켈레톤
+	 * 에디터에서 소켓을 옮기는 것보다 직관적이다. 나중에 소켓으로 공통 기준을 잡고
+	 * 싶어지면 이 이름만 소켓 이름으로 바꾸면 된다.
+	 */
+	HelmetSlot->SetupAttachment(GetMesh(), TEXT("head"));
+
+	// 래그돌 중 머리 물리 바디와 서로 밀어내는 것을 막는다. 헬멧은 어떤 판정에도 관여하지 않는다.
+	HelmetSlot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HelmetSlot->SetGenerateOverlapEvents(false);
+
+	// 시각 전용이라 복제하지 않는다. 어느 슬롯을 켜는지만 헤드기어 컴포넌트가 복제한다.
+	HelmetSlot->SetIsReplicated(false);
+
+	/**
+	 * 이 태그로 UCWHeadgearComponent 가 슬롯을 찾는다.
+	 * 컴포넌트의 HelmetComponentTag 기본값과 같아야 한다 — 한쪽만 바꾸면 슬롯을 못 찾아
+	 * H 를 눌러도 아무 일이 없다.
+	 */
+	HelmetSlot->ComponentTags.Add(TEXT("Helmet"));
+
+	return HelmetSlot;
 }
 
 void ACWPlayerCharacter::BeginPlay()
@@ -1022,6 +1062,9 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 	// 미니게임에서 빠져나오는 키. 이 바인딩이 빠지면 Q 를 눌러도 아무 일도 안 일어난다.
 	EnhancedInput->BindAction(CancelWorkAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::CancelWork);
+
+	// 헬멧 교체. 누르는 순간 한 번만.
+	EnhancedInput->BindAction(SwapHelmetAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::SwapHelmet);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
@@ -1037,6 +1080,7 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	EnsureInputAction(WorkAction, TEXT("BuiltIn_Work"), EInputActionValueType::Boolean);
 	EnsureInputAction(ParryAction, TEXT("BuiltIn_Parry"), EInputActionValueType::Boolean);
 	EnsureInputAction(CancelWorkAction, TEXT("BuiltIn_CancelWork"), EInputActionValueType::Boolean);
+	EnsureInputAction(SwapHelmetAction, TEXT("BuiltIn_SwapHelmet"), EInputActionValueType::Boolean);
 
 	BuildSupplementContext();
 }
@@ -1100,6 +1144,12 @@ void ACWPlayerCharacter::BuildSupplementContext()
 		// 미니게임 중에는 WASD 가 방향 전환에 묶여 캐릭터가 움직이지 않는다.
 		// 차를 피하려면 이 키로 먼저 빠져나와야 한다.
 		SupplementContext->MapKey(CancelWorkAction, EKeys::Q);
+	}
+
+	if (!AlreadyMapped.Contains(SwapHelmetAction))
+	{
+		// WASD·E·Q·Space·마우스가 이미 차 있어서 손이 닿는 자리 중 남은 키로 골랐다.
+		SupplementContext->MapKey(SwapHelmetAction, EKeys::H);
 	}
 }
 
@@ -1360,6 +1410,11 @@ void ACWPlayerCharacter::Parry()
 		*GetName(), *CursorWorldLocation.ToCompactString(), *GetActorLocation().ToCompactString());
 
 	ParryComponent->RequestParry(CursorWorldLocation);
+}
+
+void ACWPlayerCharacter::SwapHelmet()
+{
+	HeadgearComponent->CycleHelmet();
 }
 
 FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
