@@ -3,32 +3,18 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MVVMViewModelBase.h"
+#include "UI/ViewModel/CWBaseGameStateViewModel.h"
 #include "Data/Structs/CWRoomPlayerInfo.h"
 #include "CWInGamePlayerViewModel.generated.h"
 
 class ACWGameState;
 class AGameStateBase;
-class UWorld;
 
 UCLASS(BlueprintType)
 class CROSSWALK_API UCWInGamePlayerViewModel
-	: public UMVVMViewModelBase
+	: public UCWBaseGameStateViewModel
 {
 	GENERATED_BODY()
-
-#pragma region ViewModelLifecycle
-
-public:
-	// 현재 월드의 인게임 GameState를 찾아 플레이어 목록 구독 시작
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|InGamePlayer")
-	void Initialize(UObject* WorldContextObject);
-
-	// GameState와 World 이벤트 구독 정리
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|InGamePlayer")
-	void Uninitialize();
-
-#pragma endregion
 
 #pragma region PlayerData
 
@@ -62,19 +48,20 @@ private:
 
 #pragma region GameStateBinding
 
-private:
-	// 현재 월드에 생성된 인게임 GameState 구독
-	void BindGameState(ACWGameState* InGameState);
+protected:
+	// 인게임 전용 GameState일 때만 플레이어 목록을 구독
+	virtual void BindGameState(AGameStateBase* InGameState) override;
 
 	// 현재 구독 중인 인게임 GameState에서 구독 해제
-	void UnbindGameState();
+	virtual void UnbindGameState() override;
 
+	// 표시 상태를 기본값으로 되돌림
+	virtual void ResetViewModelState() override;
+
+private:
 	// 플레이어 입장·퇴장·이름 변경 처리
 	UFUNCTION()
 	void HandlePlayerListChanged();
-
-	// 인게임 GameState가 늦게 생성된 경우 다시 구독
-	void HandleGameStateSet(AGameStateBase* InGameState);
 
 #pragma endregion
 
@@ -127,18 +114,6 @@ private:
 	// 현재 구독 중인 인게임 GameState
 	UPROPERTY()
 	TWeakObjectPtr<ACWGameState> BoundGameState;
-
-	// 초기화에 사용된 현재 플레이 월드
-	UPROPERTY()
-	TWeakObjectPtr<UWorld> BoundWorld;
-
-	// Initialize에 전달된 위젯
-	// 해당 위젯의 Owning Player를 통해 로컬 플레이어를 식별
-	UPROPERTY()
-	TWeakObjectPtr<UObject> BoundContextObject;
-
-	// GameState 생성 이벤트 구독 해제용 핸들
-	FDelegateHandle GameStateSetHandle;
 
 #pragma endregion
 };

@@ -1,9 +1,7 @@
 ﻿// CWRoomViewModel.cpp
 
 #include "UI/ViewModel/CWRoomViewModel.h"
-
 #include "CoreMinimal.h"
-#include "Blueprint/UserWidget.h"
 #include "Core/CWPlayerState.h"
 #include "Core/Room/CWRoomGameMode.h"
 #include "Core/Room/CWRoomGameState.h"
@@ -12,87 +10,10 @@
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/GameStateBase.h"
 
-#pragma region ViewModelLifecycle
-
-void UCWRoomViewModel::Initialize(UObject* WorldContextObject)
-{
-	// 재초기화 시 기존 월드와 GameState 구독을 먼저 정리
-	Uninitialize();
-
-	if (!IsValid(WorldContextObject))
-	{
-		return;
-	}
-
-	// 전달받은 화면에서 현재 플레이 월드 확인
-	UWorld* World = WorldContextObject->GetWorld();
-
-	if (!IsValid(World))
-	{
-		return;
-	}
-
-	BoundWorld = World;
-	BoundContextObject = WorldContextObject;
-
-	// RoomGameState가 늦게 만들어지는 상황을 처리하기 위해 월드 이벤트 구독
-	GameStateSetHandle = World->GameStateSetEvent.AddUObject(
-		this,
-		&UCWRoomViewModel::HandleGameStateSet
-	);
-
-	// 이미 RoomGameState가 존재하면 즉시 구독하고 현재 상태까지 읽음
-	BindGameState(
-		World->GetGameState<ACWRoomGameState>()
-	);
-}
-
-void UCWRoomViewModel::Uninitialize()
-{
-	// 현재 RoomGameState의 플레이어 변경 이벤트 구독 해제
-	UnbindGameState();
-
-	// 월드의 GameState 생성 이벤트 구독 해제
-	if (UWorld* World = BoundWorld.Get())
-	{
-		if (GameStateSetHandle.IsValid())
-		{
-			World->GameStateSetEvent.Remove(
-				GameStateSetHandle
-			);
-		}
-	}
-
-	GameStateSetHandle.Reset();
-	BoundContextObject.Reset();
-	BoundWorld.Reset();
-
-	// 이전 방 데이터가 다음 화면에 남지 않도록 상태 초기화
-	SetRoomPlayers(TArray<FCWRoomPlayerInfo>());
-	SetCurrentPlayerCount(0);
-	SetReadyPlayerCount(0);
-	SetMinimumPlayersToStart(1);
-	SetCanStartGame(false);
-	SetIsHost(false);
-	SetIsLocalPlayerReady(false);
-	SetReadyCountText(FText::GetEmpty());
-	SetStartConditionText(FText::GetEmpty());
-	SetShouldShowStartCondition(false);
-}
-
-#pragma endregion
-
 #pragma region RoomRequests
 
 void UCWRoomViewModel::RequestToggleReady()
 {
-	UWorld* World = BoundWorld.Get();
-
-	if (!IsValid(World))
-	{
-		return;
-	}
-
 	// 현재 화면을 소유한 로컬 플레이어 컨트롤러 확인
 	APlayerController* LocalPlayerController =
 		GetOwningPlayerController();
@@ -118,7 +39,7 @@ void UCWRoomViewModel::RequestToggleReady()
 
 bool UCWRoomViewModel::RequestStartGame()
 {
-	UWorld* World = BoundWorld.Get();
+	UWorld* World = GetBoundWorld();
 
 	if (!IsValid(World))
 	{
@@ -138,35 +59,6 @@ bool UCWRoomViewModel::RequestStartGame()
 	return RoomGameMode->TryStartGame();
 }
 
-#pragma region RoomData
-
-APlayerController* UCWRoomViewModel::GetOwningPlayerController() const
-{
-	// 위젯이 소유한 로컬 플레이어를 우선 사용
-	// Seamless Travel 이후에는 월드의 첫 번째 컨트롤러 순서가 보장되지 않음
-	if (
-		const UUserWidget* OwningWidget =
-		Cast<UUserWidget>(BoundContextObject.Get())
-		)
-	{
-		if (
-			APlayerController* OwningPlayer =
-			OwningWidget->GetOwningPlayer()
-			)
-		{
-			return OwningPlayer;
-		}
-	}
-
-	// 위젯이 아닌 객체로 초기화된 경우를 위한 예비 경로
-	if (const UWorld* World = BoundWorld.Get())
-	{
-		return World->GetFirstPlayerController();
-	}
-
-	return nullptr;
-}
-
 #pragma endregion
 
 #pragma region RoomData
@@ -176,9 +68,7 @@ void UCWRoomViewModel::RefreshRoomState()
 	ACWRoomGameState* RoomGameState =
 		BoundGameState.Get();
 
-	UWorld* World = BoundWorld.Get();
-
-	if (!IsValid(RoomGameState) || !IsValid(World))
+	if (!IsValid(RoomGameState))
 	{
 		return;
 	}
@@ -343,26 +233,32 @@ void UCWRoomViewModel::RefreshRoomState()
 #pragma region GameStateBinding
 
 void UCWRoomViewModel::BindGameState(
-	ACWRoomGameState* InGameState
+	AGameStateBase* InGameState
 )
 {
-	if (!IsValid(InGameState))
+	ACWRoomGameState* NewGameState =
+		Cast<ACWRoomGameState>(InGameState);
+
+	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
+	if (!IsValid(NewGameState))
 	{
+		UnbindGameState();
+		ResetViewModelState();
 		return;
 	}
 
 	// 동일한 RoomGameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == InGameState)
+	if (BoundGameState.Get() == NewGameState)
 	{
 		return;
 	}
 
 	UnbindGameState();
 
-	BoundGameState = InGameState;
+	BoundGameState = NewGameState;
 
 	// 플레이어 입장·퇴장·이름·준비 상태 변경 알림 구독
-	InGameState->OnRoomPlayersChanged.AddDynamic(
+	NewGameState->OnRoomPlayersChanged.AddDynamic(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
@@ -385,23 +281,29 @@ void UCWRoomViewModel::UnbindGameState()
 	BoundGameState.Reset();
 }
 
+void UCWRoomViewModel::ResetViewModelState()
+{
+	// 이전 방 데이터가 다음 화면에 남지 않도록 상태 초기화
+	SetRoomPlayers(TArray<FCWRoomPlayerInfo>());
+	SetCurrentPlayerCount(0);
+	SetReadyPlayerCount(0);
+	SetMinimumPlayersToStart(1);
+	SetCanStartGame(false);
+	SetIsHost(false);
+	SetIsLocalPlayerReady(false);
+	SetReadyCountText(FText::GetEmpty());
+	SetStartConditionText(FText::GetEmpty());
+	SetShouldShowStartCondition(false);
+}
+
 void UCWRoomViewModel::HandleRoomPlayersChanged()
 {
-	// GameState가 발행한 최신 PlayerArray와 준비 상태를 다시 계산
+	// 준비 상태나 플레이어 목록이 바뀌면 화면 데이터를 다시 계산
 	RefreshRoomState();
 }
 
-void UCWRoomViewModel::HandleGameStateSet(
-	AGameStateBase* InGameState
-)
-{
-	// 방 전용 GameState가 만들어진 경우에만 구독
-	BindGameState(
-		Cast<ACWRoomGameState>(InGameState)
-	);
-}
-
 #pragma endregion
+
 
 #pragma region ViewModelSetters
 

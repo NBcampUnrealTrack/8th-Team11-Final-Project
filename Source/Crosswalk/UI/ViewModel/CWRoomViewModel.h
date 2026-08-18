@@ -3,32 +3,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MVVMViewModelBase.h"
+#include "UI/ViewModel/CWBaseGameStateViewModel.h"
 #include "Data/Structs/CWRoomPlayerInfo.h"
 #include "CWRoomViewModel.generated.h"
 
 class ACWRoomGameState;
 class AGameStateBase;
-class APlayerController;
-class UWorld;
 
 UCLASS(BlueprintType)
-class CROSSWALK_API UCWRoomViewModel : public UMVVMViewModelBase
+class CROSSWALK_API UCWRoomViewModel : public UCWBaseGameStateViewModel
 {
 	GENERATED_BODY()
-
-#pragma region ViewModelLifecycle
-
-public:
-	// 현재 월드의 RoomGameState를 찾아 방 데이터 구독 시작
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	void Initialize(UObject* WorldContextObject);
-
-	// RoomGameState와 World 이벤트 구독 정리
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	void Uninitialize();
-
-#pragma endregion
 
 #pragma region RoomRequests
 
@@ -117,9 +102,6 @@ public:
 	}
 
 private:
-	// 현재 Room 위젯을 소유한 로컬 PlayerController를 반환
-	APlayerController* GetOwningPlayerController() const;
-
 	// 현재 GameState의 플레이어 상태를 MVVM 프로퍼티로 변환
 	void RefreshRoomState();
 
@@ -127,19 +109,20 @@ private:
 
 #pragma region GameStateBinding
 
-private:
-	// 현재 월드에 생성된 RoomGameState 구독
-	void BindGameState(ACWRoomGameState* InGameState);
+protected:
+	// 방 전용 GameState일 때만 방 데이터를 구독
+	virtual void BindGameState(AGameStateBase* InGameState) override;
 
 	// 현재 구독 중인 RoomGameState에서 구독 해제
-	void UnbindGameState();
+	virtual void UnbindGameState() override;
 
+	// 표시 상태를 기본값으로 되돌림
+	virtual void ResetViewModelState() override;
+
+private:
 	// 방 플레이어 목록 또는 준비 상태 변경 처리
 	UFUNCTION()
 	void HandleRoomPlayersChanged();
-
-	// RoomGameState가 늦게 생성된 경우 다시 구독
-	void HandleGameStateSet(AGameStateBase* InGameState);
 
 #pragma endregion
 
@@ -276,18 +259,6 @@ private:
 	// 현재 구독 중인 RoomGameState
 	UPROPERTY()
 	TWeakObjectPtr<ACWRoomGameState> BoundGameState;
-
-	// 초기화에 사용된 현재 플레이 월드
-	UPROPERTY()
-	TWeakObjectPtr<UWorld> BoundWorld;
-
-	// Initialize에 전달된 위젯
-	// Seamless Travel 이후에도 현재 화면의 Owning Player를 찾는 데 사용
-	UPROPERTY()
-	TWeakObjectPtr<UObject> BoundContextObject;
-
-	// GameState 생성 이벤트 구독 해제용 핸들
-	FDelegateHandle GameStateSetHandle;
 
 #pragma endregion
 };
