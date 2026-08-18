@@ -63,6 +63,7 @@ private:
 	UFUNCTION()
 	void HandleZoneProgress(ACWBaseWorkZone* Zone, float Progress);
 
+protected:
 	// 인게임 종료 후 돌아갈 방 대기실 맵
 	// 대기실 맵은 Room GameMode를 사용
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Stage")
