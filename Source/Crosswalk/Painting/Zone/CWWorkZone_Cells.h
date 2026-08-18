@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
+#include "Painting/Data/CWBrushStroke.h"
 #include "CWWorkZone_Cells.generated.h"
 
 class UBoxComponent;
@@ -47,6 +48,8 @@ class CROSSWALK_API ACWWorkZone_Cells : public ACWBaseWorkZone
 public:
 	ACWWorkZone_Cells();
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 	virtual void BeginPlay() override;
@@ -55,7 +58,7 @@ public:
 
 	virtual void ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds) override;
 
-	virtual void ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly) override;
+	virtual void ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes) override;
 
 	/**
 	 * 외부에서 칸을 추가한다. 차량이 마르지 않은 페인트를 밟고 지나갈 때 쓴다.
@@ -91,6 +94,9 @@ public:
 	virtual bool CanUseTool(ECWToolType ToolType) const override;
 
 	virtual bool CanWorkNow(ECWToolType ToolType) const override;
+	virtual bool IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const override;
+
+	virtual bool HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const override;
 
 	/** 도색과 정리를 겸하는 존이라 "페인트 정리" 줄을 하나 더 낸다. */
 	virtual void GetExtraObjectives(TArray<FCWStageObjective>& OutObjectives) const override;
@@ -160,21 +166,141 @@ private:
 	void RefreshAreaBorder();
 
 	/**
-	 * 붓질 한 번을 이 기계에 적용한다. 칸 상태 → 메쉬 → 진행도까지 한 번에 처리한다.
-	 * @param bSpillOnly Area 바깥 칸만 건드린다. 검은색 롤러가 완성된 횡단보도를 지우지 못하게 막는다.
+	 * 붓질 한 번을 이 기계에 적용한다. 칸 상태 → 진행도까지 처리한다.
+	 *
+	 * 메쉬는 여기서 건드리지 않는다. 바뀐 칸만 표시해 두고 프레임 끝에 한 번에 반영한다.
+	 * (FlushCellMeshUpdates) 한 프레임에 여러 명이 칠하거나 차량 자국이 겹쳐도 렌더 상태는 한 번만 더러워진다.
+	 *
 	 * @return 실제로 바뀐 칸이 있으면 true
 	 */
-	bool ApplyBrush(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly);
+	bool ApplyStroke(const FCWBrushStroke& Stroke);
 
 	/**
 	 * 서버가 확정한 붓질을 전원에게 뿌린다.
 	 *
-	 * 칸 배열 자체는 리플리케이트하지 않는다. 수백 개 bool 을 통째로 보내는 대신
+	 * 칸 배열 자체는 실시간으로 리플리케이트하지 않는다. 수백~수만 개 bool 을 통째로 보내는 대신
 	 * "어디를 얼마만큼 칠했다" 만 보내면 각자 같은 그림에 도달한다.
-	 * 놓치면 그 자리만 영영 비므로 Reliable 이어야 한다. (바뀐 칸이 있을 때만 나간다)
+	 * 놓치면 그 자리만 영영 비므로 Reliable 이어야 한다.
+	 *
+	 * 붓질 하나마다 부르지 않고 StrokeSendInterval 만큼 모아서 배열로 보낸다.
+	 * 매 프레임 보내면 4명이 동시에 칠할 때 초당 240개의 Reliable 패킷이 커넥션마다 쌓인다.
 	 */
 	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_ApplyBrush(FVector_NetQuantize WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly);
+	void Multicast_ApplyBrushes(const TArray<FCWBrushStroke>& Strokes);
+
+	/**
+	 * 내보낼 붓질을 모아둔다. 실제 전송은 FlushOutgoingStrokes 가 한다.
+	 *
+	 * @param Worker 클라이언트에서 부를 때만 필요하다. 존은 소유자가 없어 서버 RPC 를 직접
+	 *               보낼 수 없고, 폰에 붙은 작업 컴포넌트를 거쳐야 한다. 서버면 nullptr.
+	 */
+	void QueueOutgoingStroke(UCWWorkerComponent* Worker, const FCWBrushStroke& Stroke);
+
+	/**
+	 * 체온을 반영한 실제 붓 반경.
+	 *
+	 * 이 존은 시간이 아니라 붓이 덮는 면적으로 진행해서, 넘어오는 시간을 줄여도 느려지지 않는다.
+	 * 그래서 붓 자체를 줄인다. (체온 기획서 4.2)
+	 *
+	 * 계수를 반경에 그대로 곱한다. 면적 기준으로 맞추려면 제곱근을 씌워야 하지만(계수 0.2 → 반경 45%),
+	 * 그러면 눈에 보이는 붓 크기가 거의 안 변해서 패널티가 걸린 줄을 모른다.
+	 *
+	 * ForEachCellInRadius 가 판정에 칸 크기의 절반을 더해주므로, 반경이 아무리 작아져도
+	 * 커서 아래 칸은 항상 칠해진다. 붓이 먹통이 되지는 않는다.
+	 *
+	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳"이 같은 값을 써야 해서 함수로 뺐다.
+	 */
+	float GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const;
+
+	/**
+	 * 월드 좌표를 존 로컬 좌표로 옮긴다. (Area 박스 트랜스폼의 역변환)
+	 *
+	 * 아래 템플릿이 이걸 거쳐 가는 이유: 템플릿 본문이 헤더에 있어서 UBoxComponent 를
+	 * 역참조할 수 없다. 전방 선언만 되어 있고, 헤더에 BoxComponent.h 를 끌어오면
+	 * 이 헤더를 포함하는 모든 파일이 같이 무거워진다.
+	 */
+	FVector ToLocalLocation(const FVector& WorldLocation) const;
+
+	/** 붓이 닿는 곳에 이 존의 칸이 하나라도 있는가. 칸 상태는 보지 않는다. (작업 범위 판정) */
+	bool HasAnyCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly) const;
+
+	/** 이 붓질이 뒤집을 수 있는 칸이 하나라도 있는가. 실제로 칠하지는 않는다. */
+	bool HasChangeableCellInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly) const;
+
+	/**
+	 * 붓 반경 안의 칸을 훑는다. Visitor 가 false 를 돌려주면 즉시 멈춘다.
+	 *
+	 * 붓질을 적용하는 쪽(SetCellsInRadius)과 할 일이 있는지 보는 쪽(HasChangeableCellInRadius)이
+	 * 반드시 같은 범위·같은 판정을 써야 한다. 한쪽만 고치면 "존은 잡히는데 칠이 안 되는"
+	 * 상태가 생기고, 그러면 체온만 오르고 작업은 진행되지 않는다.
+	 */
+	template <typename VisitorType>
+	void ForEachCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly, VisitorType&& Visitor) const
+	{
+		if (CellFilled.Num() == 0 || CachedCellSize.X <= KINDA_SMALL_NUMBER || CachedCellSize.Y <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		// 칸 중심만 보면 붓이 칸의 대부분을 덮고도 그 칸은 안 칠해진다.
+		// 게다가 CellPadding 이 음수라 칸 메쉬가 격자보다 크게 그려져서, 이웃 칸의 메쉬가
+		// 빈 칸을 덮어버린다. 그래서 화면은 빈틈 없이 칠해졌는데 진행도는 안 차는 상황이 생긴다.
+		//
+		// 칸 크기의 절반을 반경에 더해 "칸의 절반 이상이 덮이면 칠해진 것"으로 본다.
+		const float EffectiveRadius = Radius + FMath::Max(CachedCellSize.X, CachedCellSize.Y) * 0.5f;
+		const float RadiusSquared = FMath::Square(EffectiveRadius);
+
+		// 월드 좌표를 존 로컬로 한 번만 옮긴다.
+		//
+		// 예전에는 칸마다 GetCellWorldLocation 을 불렀다. 그 안에서 박스 크기를 다시 묻고,
+		// 나눗셈을 하고, 행렬 변환을 한 번씩 했다. 붓질 한 번에 그게 칸 개수만큼 돌았다.
+		// 로컬 좌표에서 재면 변환은 한 번이면 되고, IsFilledAt 과도 같은 기준을 쓰게 된다.
+		const FVector LocalCenter = ToLocalLocation(WorldCenter);
+		const FVector2D FirstCellCenter = GetFirstCellCenter();
+
+		// 붓이 닿을 수 있는 칸 범위만 훑는다. 격자 전체를 도는 것과 결과는 같고 비용만 다르다.
+		// (붓 반경 20cm 에 칸 10cm 면 5x5 정도다. 예전에는 매번 1600칸을 전부 돌았다)
+		const int32 MinX = FMath::Max(0,
+			FMath::CeilToInt((LocalCenter.X - EffectiveRadius - FirstCellCenter.X) / CachedCellSize.X));
+		const int32 MaxX = FMath::Min(FullGridSize.X - 1,
+			FMath::FloorToInt((LocalCenter.X + EffectiveRadius - FirstCellCenter.X) / CachedCellSize.X));
+		const int32 MinY = FMath::Max(0,
+			FMath::CeilToInt((LocalCenter.Y - EffectiveRadius - FirstCellCenter.Y) / CachedCellSize.Y));
+		const int32 MaxY = FMath::Min(FullGridSize.Y - 1,
+			FMath::FloorToInt((LocalCenter.Y + EffectiveRadius - FirstCellCenter.Y) / CachedCellSize.Y));
+
+		for (int32 CellY = MinY; CellY <= MaxY; ++CellY)
+		{
+			// 세로 거리는 이 줄 안에서 바뀌지 않는다. 안쪽 반복문 밖으로 뺀다.
+			const float DeltaY = (FirstCellCenter.Y + CellY * CachedCellSize.Y) - LocalCenter.Y;
+			const float DeltaYSquared = DeltaY * DeltaY;
+
+			for (int32 CellX = MinX; CellX <= MaxX; ++CellX)
+			{
+				const bool bCounted = IsCountedCell(CellX, CellY);
+
+				// 검은색 롤러는 삐져나간 페인트만 지운다. 완성된 횡단보도 위를 지나가도 안전하다.
+				if (bSpillOnly && bCounted)
+				{
+					continue;
+				}
+
+				// 높이는 무시하고 평면 거리로만 판정한다. (탑뷰 클릭 감각 우선)
+				const float DeltaX = (FirstCellCenter.X + CellX * CachedCellSize.X) - LocalCenter.X;
+				if (DeltaX * DeltaX + DeltaYSquared > RadiusSquared)
+				{
+					continue;
+				}
+
+				if (!Visitor(GetCellIndex(CellX, CellY), bCounted))
+				{
+					return;
+				}
+			}
+		}
+	}
+
+	void FlushOutgoingStrokes(bool bForce);
 
 	/**
 	 * 중심점 주변 반경 안의 칸들을 켜거나 끈다.
@@ -186,7 +312,21 @@ private:
 	bool IsCountedCell(int32 CellX, int32 CellY) const;
 
 	/** 칸 하나의 크기(cm). Area 를 GridSize 로 나눈 값이고, 바깥 고리도 같은 크기를 쓴다. */
-	FVector2D GetCellSize() const;
+	FVector2D GetCellSize() const { return CachedCellSize; }
+
+	/**
+	 * (0,0) 칸 중심의 컴포넌트 로컬 좌표.
+	 *
+	 * 붓질 판정 / 메쉬 배치 / 디버그 표시 / 좌표 역산이 전부 이 기준 하나를 써야 한다.
+	 * 하나라도 어긋나면 "화면은 칠해졌는데 진행도가 안 찬다" 가 된다.
+	 */
+	FVector2D GetFirstCellCenter() const;
+
+	/** 칸 중심의 컴포넌트 로컬 좌표. */
+	FVector2D GetCellLocalLocation(int32 CellX, int32 CellY) const;
+
+	/** 이 월드 지점이 어느 칸인가. 격자 밖이면 INDEX_NONE. (GetCellLocalLocation 의 역산) */
+	int32 FindCellIndexAt(const FVector& WorldLocation) const;
 
 	/**
 	 * 붓질 좌표를 네트워크로 나갈 때와 같은 정밀도로 미리 맞춘다.
@@ -196,7 +336,7 @@ private:
 	 *
 	 * 칸이 크면 무시할 차이지만 이 존의 칸은 한 변이 4cm 도 안 될 수 있다. 그러면 붓 원의
 	 * 경계에 걸친 칸들이 기계마다 다르게 뒤집힌다. 게다가 본인 기계는 이미 칠한 것으로 알아서
-	 * (ApplyBrush 가 false 를 반환) 그 붓질을 다시 보내지 않기 때문에, 서버가 놓친 칸은
+	 * (ApplyStroke 가 false 를 반환) 그 붓질을 다시 보내지 않기 때문에, 서버가 놓친 칸은
 	 * 영영 안 채워진다. 칠한 사람 기계만 조금씩 더 칠해진 상태로 굳는다.
 	 *
 	 * 그래서 로컬에 적용하기 전에 먼저 반올림한다. 모든 기계가 같은 입력을 적용하게 된다.
@@ -210,8 +350,45 @@ private:
 	 */
 	void ShowDebugCells() const;
 
-	/** 칸 상태에 맞춰 메쉬 인스턴스를 다시 만든다. */
-	void RefreshCellMeshes();
+	/**
+	 * 격자 전체를 인스턴스로 깔아 둔다. 인스턴스 인덱스 = 칸 인덱스다.
+	 *
+	 * 예전에는 붓질마다 ClearInstances 후 채워진 칸만 다시 만들었다. 그러면 칸 하나가 바뀌어도
+	 * 인스턴스 버퍼를 통째로 다시 만들어 올리게 되고, 많이 칠할수록 느려진다.
+	 * 지금은 격자가 바뀔 때만 여기를 부르고, 붓질은 바뀐 칸의 스케일만 건드린다.
+	 */
+	void RebuildAllCellInstances();
+
+	/** 칸 하나의 인스턴스 트랜스폼. 빈 칸은 스케일 0 이라 화면에서 사라진다. */
+	FTransform GetCellInstanceTransform(int32 CellX, int32 CellY, bool bFilled) const;
+
+	/** 이 칸을 다음 메쉬 갱신 대상으로 표시한다. 같은 칸이 여러 번 들어와도 한 번만 처리된다. */
+	void QueueCellMeshUpdate(int32 CellIndex);
+
+	/** 모아둔 칸 갱신을 인스턴스에 반영한다. 렌더 상태는 여기서 한 번만 더럽힌다. */
+	void FlushCellMeshUpdates();
+
+	/** 이 기계가 칸 메쉬를 만들 필요가 있는가. 데디케이티드 서버는 그리지 않으므로 필요 없다. */
+	bool ShouldBuildCellMeshes() const;
+
+	/** 늦게 들어온 플레이어에게 넘길 칸 상태가 낡았다고 표시한다. 서버에서만 유효하다. */
+	void MarkCellSnapshotDirty();
+
+	/** 낡았고 간격이 지났으면 칸 상태 스냅샷을 다시 만든다. 서버에서만 유효하다. */
+	void RebuildCellSnapshotIfDue();
+
+	/** 받은 스냅샷을 칸 배열에 적용한다. 격자가 아직 없으면 아무것도 하지 않는다. */
+	void TryApplyCellSnapshot();
+
+	UFUNCTION()
+	void OnRep_CellSnapshot();
+
+	/**
+	 * 할 일이 남아 있으면 틱을 켜고, 없으면 끈다.
+	 *
+	 * 평소에는 틱이 꺼져 있다. 존이 레벨에 수십 개 깔려도 아무도 안 칠하는 동안에는 비용이 0 이다.
+	 */
+	void RefreshTickEnabled();
 
 	/** 칸 개수를 세서 진행도를 다시 계산한다. */
 	void RefreshProgress();
@@ -284,6 +461,14 @@ protected:
 	// 그래서 붓 자체를 줄인다. 끄면 이 존만 체온에 따른 작업속도 저하를 받지 않는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	bool bScaleBrushByWorkSpeed = true;
+
+	// 캐릭터가 격자 평면에서 이 높이 안에 있어야 작업할 수 있다(cm).
+	//
+	// 이 존은 평면 거리 제약이 없다. 붓이 닿는 칸이 있으면 어디에 서 있어도 작업이 된다.
+	// 그런데 칸 판정은 높이를 무시하므로(ForEachCellInRadius) 이걸 안 보면 다리 위나
+	// 건물 안에서도 아래 도로가 칠해진다. 층이 갈리는 것만 막는 값이라 넉넉하게 잡으면 된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0"))
+	float WorkerHeightTolerance = 300.f;
 
 	// 아직 안 칠해진 점수 영역 칸을 빨간 상자로 그린다.
 	//
@@ -378,6 +563,40 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle", meta = (ClampMin = "0.0"))
 	float PaintDryDelay = 5.f;
 
+	// 모아둔 붓질을 내보내는 간격(초). 0 이면 매 프레임 보낸다.
+	//
+	// 붓질은 Reliable 로 나간다. 놓치면 그 자리만 영영 안 칠해지기 때문이다. 그런데 매 프레임
+	// 보내면 4명이 동시에 칠할 때 커넥션마다 초당 240개가 쌓인다. 0.066(초당 15회)이면
+	// 패킷 수가 1/4 로 줄고, 붓 궤적은 연속이라 점 몇 개를 묶어도 그림은 같다.
+	//
+	// 로컬 화면은 이 값과 무관하게 매 프레임 그대로 칠해진다. 늦춰지는 것은 전송뿐이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Network", meta = (ClampMin = "0.0"))
+	float StrokeSendInterval = 0.066f;
+
+	// 한 패킷에 담을 붓질 최대 개수. 넘으면 간격을 기다리지 않고 바로 내보낸다.
+	// 차량 여러 대가 동시에 자국을 남길 때 목록이 무한정 자라는 것을 막는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Network", meta = (ClampMin = "1"))
+	int32 MaxStrokesPerPacket = 16;
+
+	// 칸 상태 스냅샷을 다시 만드는 간격(초).
+	//
+	// 이 값은 "도중에 들어온 플레이어가 처음 화면을 그릴 때" 쓰는 밑그림이다. 붓질 멀티캐스트는
+	// 그때 접속해 있던 사람에게만 가기 때문에, 늦게 들어온 사람은 진행도만 70%로 보이고
+	// 화면은 백지인 상태가 된다. 스냅샷이 그 구멍을 막는다.
+	//
+	// 실시간 그림은 붓질이 이미 맞추고 있으므로 초당 한 번이면 충분하다. 칸 하나가 비트
+	// 하나라서 1600칸이면 200바이트다. 격자를 아주 크게 잡을 거면 이 값을 올려라.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Network", meta = (ClampMin = "0.0"))
+	float CellSnapshotInterval = 1.f;
+
+	// 이 기계가 마지막으로 칠한 뒤 이만큼 지나야 받은 스냅샷을 적용한다(초).
+	//
+	// 스냅샷은 서버가 만든 시점의 그림이다. 방금 내가 칠한 칸이 아직 안 들어가 있을 수
+	// 있어서, 칠하는 도중에 덮으면 그 칸이 잠깐 사라졌다 돌아오는 되감기가 보인다.
+	// 붓을 놓고 잠깐 쉬면 그때 맞춰진다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Network", meta = (ClampMin = "0.0"))
+	float SnapshotApplyIdleDelay = 1.f;
+
 private:
 	// 칸별 채움 상태. 이게 이 존의 전부다. 바깥 고리를 포함한 전체 격자 크기다.
 	TArray<bool> CellFilled;
@@ -406,4 +625,38 @@ private:
 	bool bPaintDry = false;
 
 	FTimerHandle PaintDryTimerHandle;
+
+	// Area 크기와 칸 크기. 붓질 한 번에 수백 번 쓰이는 값이라 RebuildGridLayout 에서 한 번만 잡는다.
+	// 런타임에 박스를 늘리면 이 값이 낡는다. 그때는 ResetCells 를 다시 불러야 한다.
+	FVector CachedAreaSize = FVector::OneVector;
+
+	FVector2D CachedCellSize = FVector2D(1.f, 1.f);
+
+	// 이번 프레임에 상태가 바뀐 칸. 프레임 끝에 한 번에 인스턴스로 반영한다.
+	TArray<int32> PendingCellMeshUpdates;
+
+	// 같은 칸이 한 프레임에 여러 번 뒤집혀도 목록에 한 번만 들어가게 하는 중복 방지용.
+	TBitArray<> PendingCellMeshUpdateMask;
+
+	// 아직 안 보낸 붓질.
+	TArray<FCWBrushStroke> PendingOutgoingStrokes;
+
+	// 클라이언트에서 붓질을 올릴 때 거쳐 갈 작업 컴포넌트. 서버에서는 쓰지 않는다.
+	TWeakObjectPtr<UCWWorkerComponent> PendingStrokeWorker;
+
+	float LastStrokeSendTime = -1000.f;
+
+	// 칸 상태를 비트로 눌러 담은 것. 늦게 들어온 플레이어가 밑그림으로 쓴다.
+	UPROPERTY(ReplicatedUsing = OnRep_CellSnapshot)
+	TArray<uint8> CellSnapshot;
+
+	bool bCellSnapshotDirty = false;
+
+	// 스냅샷을 이미 한 번 적용했는가. 클라이언트에서만 쓴다.
+	bool bCellSnapshotApplied = false;
+
+	float LastCellSnapshotBuildTime = -1000.f;
+
+	// 이 기계에서 마지막으로 붓질한 시각. 스냅샷을 덮어도 되는지 판단하는 데 쓴다.
+	float LastLocalStrokeTime = -1000.f;
 };

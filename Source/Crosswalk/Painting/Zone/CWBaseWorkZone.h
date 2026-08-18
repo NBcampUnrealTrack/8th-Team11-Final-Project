@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/Enums/CWToolTypes.h"
+#include "Painting/Data/CWBrushStroke.h"
 #include "Data/Structs/CWStageObjective.h"
 #include "CWBaseWorkZone.generated.h"
 
@@ -108,9 +109,14 @@ public:
 	 * 서버에 안 칠해진 구멍이 남고, 되돌릴 경로가 없어서 화면이 영영 어긋난다.
 	 * 그래서 "어디를 칠했다"를 클라이언트가 직접 올려보내고 서버는 그대로 적용만 한다.
 	 *
+	 *
+	 * 붓질을 하나씩 받지 않고 배열로 받는다. 붓질은 작업 키를 누르고 있는 동안 매 프레임
+	 * 생기는데 그때마다 RPC 를 보내면 커넥션마다 초당 수백 개가 쌓인다.
+	 * 보내는 쪽이 일정 간격으로 모아서 한 번에 올린다.
+	 *
 	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
 	 */
-	virtual void ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly) {}
+	virtual void ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes) {}
 
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")
@@ -124,6 +130,18 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	virtual bool CanWorkNow(ECWToolType ToolType) const;
+
+	/**
+	 * 이 지점에서 이 작업자가 실제로 진행시킬 일이 남아 있는가.
+	 *
+	 * 존이 겹쳐 있을 때 어느 쪽을 잡을지 가르는 데 쓴다. 박스 거리만 보면 겹친 두 존이
+	 * 똑같이 거리 0 이라 등록 순서에 따라 아무 쪽이나 잡힌다. 도로 전체를 덮는 넓은 정리 존을
+	 * 도색 존 위에 겹쳐 놓으면 그게 바로 문제가 된다. 검은색 롤러를 들고 횡단보도에 서면
+	 * 지울 것이 없는 쪽이 붓을 붙잡아서, 발밑의 페인트가 안 지워지고 체온만 오른다.
+	 *
+	 * 기본은 true 다. 지점 개념이 없는 존(게이지·미니게임)은 그대로 두면 된다.
+	 */
+	virtual bool HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const { return true; }
 
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetProgress() const { return Progress; }
@@ -165,6 +183,18 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetSquaredDistanceToPoint(const FVector& Point) const;
+
+	/**
+	 * 이 작업자가 지금 이 존에서 작업할 수 있는 위치에 있는가.
+	 *
+	 * 기본은 Area 박스까지의 거리로 본다. 게이지 존이나 테두리 미니게임처럼
+	 * "존 옆에 서서 키를 누른다" 는 작업은 이 기준이 맞다.
+	 *
+	 * 칸을 칠하는 존은 이걸 오버라이드해서 "붓이 닿는 곳에 이 존의 칸이 있는가" 로 바꾼다.
+	 * 그쪽은 "존 안에 들어와야 한다" 가 아니라 "손이 닿는 데까지 칠한다" 가 맞는 작업이고,
+	 * 격자가 Area 박스보다 넓게 뻗어 있어서(바깥 고리) 박스 거리로는 판단할 수가 없다.
+	 */
+	virtual bool IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const;
 
 	float GetWorkRange() const { return WorkRange; }
 

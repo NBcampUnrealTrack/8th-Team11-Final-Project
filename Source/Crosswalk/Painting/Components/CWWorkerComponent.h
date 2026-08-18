@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Data/Enums/CWToolTypes.h"
+#include "Painting/Data/CWBrushStroke.h"
 #include "CWWorkerComponent.generated.h"
 
 class ACWBaseWorkZone;
@@ -129,6 +130,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsLocalWorker() const;
 
+	/** 존이 "이 작업자가 작업할 수 있는 위치인가" 를 판단할 때 쓴다. */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	float GetMaxWorkDistance() const { return MaxWorkDistance; }
+
 	/**
 	 * 로컬에서 계산한 진행도를 서버에 올린다. 테두리 미니게임처럼
 	 * 진행 자체는 본인 기계에서 돌고 결과만 공유하면 되는 존이 쓴다.
@@ -136,13 +141,16 @@ public:
 	void ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
 
 	/**
-	 * 로컬에서 확정한 붓질 하나를 서버로 올린다. 칸을 칠하는 존이 매 붓질마다 부른다.
+	 * 로컬에서 확정한 붓질들을 서버로 올린다. 칸을 칠하는 존이 일정 간격으로 모아서 부른다.
 	 *
 	 * 서버가 ReceivedWorkLocation 으로 붓질을 재현하지 않고 이걸 쓰는 이유는
-	 * ACWBaseWorkZone::ReceiveBrushStroke 주석에 적어 뒀다.
-	 * 존이 "바뀐 칸이 있을 때"만 부르므로 붓이 멈춰 있으면 패킷도 나가지 않는다.
+	 * ACWBaseWorkZone::ReceiveBrushStrokes 주석에 적어 뒀다.
+	 *
+	 * 붓질 하나마다 부르지 않는 이유: 붓질은 매 프레임 생긴다. 그대로 하나씩 Reliable 로
+	 * 보내면 커넥션마다 초당 수백 개가 쌓인다. 존이 모아서 배열로 넘긴다.
+	 * 존이 "바뀐 칸이 있을 때"만 모으므로 붓이 멈춰 있으면 패킷도 나가지 않는다.
 	 */
-	void SubmitBrushStroke(ACWBaseWorkZone* Zone, const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly);
+	void SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes);
 
 private:
 	/** 작업 키를 눌렀는지 서버에 알린다. 진행도는 서버만 올릴 수 있다. */
@@ -183,10 +191,10 @@ private:
 
 	/**
 	 * 붓질 보고. 놓치면 그 자리만 영영 안 칠해지거나 안 지워지므로 Reliable 이어야 한다.
-	 * 칸 상태가 실제로 바뀔 때만 나가서, 붓을 대고 가만히 있으면 패킷이 나가지 않는다.
+	 * 존이 모아서 넘긴 배열이 그대로 올라간다. 칸 상태가 실제로 바뀐 붓질만 들어 있다.
 	 */
 	UFUNCTION(Server, Reliable)
-	void Server_SubmitBrushStroke(ACWBaseWorkZone* Zone, FVector_NetQuantize WorldLocation, float Radius, bool bFilled, bool bSpillOnly);
+	void Server_SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes);
 
 	/**
 	 * 지금 작업할 수 있는 존과 작업 지점을 찾는다.
@@ -199,6 +207,17 @@ private:
 	 */
 	ACWBaseWorkZone* FindTargetZone(FVector& OutWorkLocation) const;
 
+	/**
+	 * 커서가 가리키는 지점을 캐릭터 주변으로 끌어당긴다.
+	 *
+	 * 존을 "고르는" 거리 제한(MaxWorkDistance)만으로는 붓이 닿는 범위가 제한되지 않는다.
+	 * 존 옆에 서기만 하면 커서로 존 반대편 끝까지 칠할 수 있었다. 캐릭터를 움직여 가며
+	 * 칠하는 게 아니라 제자리에서 마우스만 휘두르면 끝나는 작업이 되어 버린다.
+	 *
+	 * 높이는 커서가 맞은 바닥 높이를 그대로 쓰고 평면 거리만 자른다.
+	 */
+	FVector ClampWorkLocationToPawn(const FVector& PawnLocation, const FVector& CursorLocation) const;
+
 	void SetTargetZone(ACWBaseWorkZone* NewZone);
 
 	bool IsLocallyControlledWorker() const;
@@ -207,7 +226,17 @@ public:
 	// 존이 캐릭터에서 이 거리보다 멀면 작업할 수 없다. (cm)
 	// 존마다 지정된 WorkRange 와 비교해서 더 짧은 쪽이 적용된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
-	float MaxWorkDistance = 300.f;
+	float MaxWorkDistance = 150.f;
+
+	// 붓이 캐릭터에서 닿을 수 있는 최대 평면 거리(cm). 커서가 이보다 멀면 여기까지만 칠해진다.
+	//
+	// MaxWorkDistance 와 역할이 다르다. 그쪽은 "어느 존에서 작업할지" 를 고르는 기준이고,
+	// 이건 "붓을 어디에 찍을지" 의 한계다. 존은 횡단보도처럼 길게 뻗어 있어서, 존을 고르는
+	// 기준만으로는 반대편 끝까지 칠하는 것을 막지 못한다.
+	//
+	// 0 이면 제한하지 않는다. (예전 동작)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0"))
+	float MaxBrushDistance = 100.f;
 
 protected:
 	// 작업 지점을 찾을 커서 트레이스 채널. 칸을 칠하는 존에서만 의미가 있다.

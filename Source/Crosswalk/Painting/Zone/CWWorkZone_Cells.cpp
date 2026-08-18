@@ -5,6 +5,8 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "TimerManager.h"
+#include "Engine/World.h"
+#include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/Components/CWWorkerComponent.h"
 #include "Traffic/CWBaseVehicle.h"
@@ -44,6 +46,16 @@ ACWWorkZone_Cells::ACWWorkZone_Cells()
 	{
 		AreaBorderMeshes->SetStaticMesh(PlaneMesh.Object);
 	}
+
+	// 칸마다 머티리얼이 읽을 값을 두 개 실어 보낸다. 0번은 칠해졌는지, 1번은 점수 영역인지.
+	//
+	// 격자는 BuildGrid 에서 한 번 전부 깔고, 이후에는 인스턴스를 추가하거나 지우지 않는다.
+	// 붓질마다 ClearInstances + AddInstances 를 하면 칸 하나가 바뀌어도 인스턴스 버퍼를
+	// 통째로 다시 만들어 올리게 되고, 많이 칠할수록 느려진다. 지금은 바뀐 칸만 건드린다.
+	//
+	// 화면에서 빈 칸을 감추는 것은 스케일 0 이 담당한다. (GetCellInstanceTransform)
+	// 커스텀 데이터를 읽는 머티리얼이 아직 없어도 그림이 깨지지 않게 하기 위해서다.
+	CellMeshes->NumCustomDataFloats = 2;
 }
 
 void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
@@ -54,7 +66,7 @@ void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
 	// 진행도는 여기서 건드리지 않는다. 에디터에서 값이 바뀌면 레벨이 더럽혀진다.
 	ApplyCellMaterial();
 	ResetCells();
-	RefreshCellMeshes();
+	RebuildAllCellInstances();
 	RefreshAreaBorder();
 }
 
@@ -115,6 +127,13 @@ void ACWWorkZone_Cells::ApplyCellMaterial()
 	}
 }
 
+void ACWWorkZone_Cells::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACWWorkZone_Cells, CellSnapshot);
+}
+
 void ACWWorkZone_Cells::BeginPlay()
 {
 	Super::BeginPlay();
@@ -123,8 +142,12 @@ void ACWWorkZone_Cells::BeginPlay()
 	BuildGrid();
 	RefreshAreaBorder();
 
-	// 남은 칸 표시는 매 프레임 다시 그려야 해서 이때만 틱을 켠다.
-	SetActorTickEnabled(bShowDebugUnfilledCells || bShowDebugSpillCells);
+	// 도중에 들어온 플레이어라면 격자를 만들기 전에 스냅샷이 먼저 도착해 있을 수 있다.
+	// 그때는 OnRep 이 아무것도 못 하고 지나갔으므로 여기서 다시 시도한다.
+	TryApplyCellSnapshot();
+
+	// 틱은 할 일이 있을 때만 돈다. 시작 시점에 켤 이유는 디버그 표시뿐이다.
+	RefreshTickEnabled();
 
 	// 페인트를 밟고 지나가는 차량 추적은 서버가 한다. 클라이언트가 칸을 늘리면 그림이 갈라진다.
 	if (!HasAuthority() || !bStainsVehicles)
@@ -283,7 +306,19 @@ void ACWWorkZone_Cells::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// 이번 프레임에 바뀐 칸을 한 번에 인스턴스에 반영한다.
+	FlushCellMeshUpdates();
+
+	// 모아둔 붓질을 내보낸다. 간격이 안 됐으면 다음 프레임으로 넘어간다.
+	FlushOutgoingStrokes(false);
+
+	// 늦게 들어올 플레이어에게 넘길 칸 상태를 갱신한다. 서버에서만 유효하다.
+	RebuildCellSnapshotIfDue();
+
 	ShowDebugCells();
+
+	// 할 일이 다 끝났으면 다음 프레임부터는 틱을 돌지 않는다.
+	RefreshTickEnabled();
 }
 
 void ACWWorkZone_Cells::ShowDebugCells() const
@@ -388,30 +423,37 @@ float ACWWorkZone_Cells::GetVehicleSearchRadius() const
 
 bool ACWWorkZone_Cells::IsFilledAt(const FVector& WorldLocation) const
 {
-	if (CellFilled.Num() == 0)
+	const int32 CellIndex = FindCellIndexAt(WorldLocation);
+
+	return CellFilled.IsValidIndex(CellIndex) && CellFilled[CellIndex];
+}
+
+FVector ACWWorkZone_Cells::ToLocalLocation(const FVector& WorldLocation) const
+{
+	return Area->GetComponentTransform().InverseTransformPosition(WorldLocation);
+}
+
+int32 ACWWorkZone_Cells::FindCellIndexAt(const FVector& WorldLocation) const
+{
+	if (CellFilled.Num() == 0 || CachedCellSize.X <= KINDA_SMALL_NUMBER || CachedCellSize.Y <= KINDA_SMALL_NUMBER)
 	{
-		return false;
+		return INDEX_NONE;
 	}
 
-	const FVector2D CellSize = GetCellSize();
-	if (CellSize.X <= KINDA_SMALL_NUMBER || CellSize.Y <= KINDA_SMALL_NUMBER)
-	{
-		return false;
-	}
+	// GetCellLocalLocation 의 역산이다. 그쪽이 바뀌면 여기도 같이 바꿔야 한다.
+	const FVector LocalLocation = ToLocalLocation(WorldLocation);
+	const FVector2D FirstCellCenter = GetFirstCellCenter();
 
-	// GetCellWorldLocation 의 역산이다. 그쪽이 바뀌면 여기도 같이 바꿔야 한다.
-	const FVector AreaSize = Area->GetUnscaledBoxExtent() * 2.f;
-	const FVector LocalLocation = Area->GetComponentTransform().InverseTransformPosition(WorldLocation);
-
-	const int32 CellX = CountedOrigin.X + FMath::FloorToInt((LocalLocation.X + AreaSize.X * 0.5f) / CellSize.X);
-	const int32 CellY = CountedOrigin.Y + FMath::FloorToInt((LocalLocation.Y + AreaSize.Y * 0.5f) / CellSize.Y);
+	// 칸 중심이 FirstCellCenter + 인덱스 * 칸크기 이므로, 반 칸을 보정하고 나누면 인덱스가 나온다.
+	const int32 CellX = FMath::FloorToInt((LocalLocation.X - FirstCellCenter.X) / CachedCellSize.X + 0.5f);
+	const int32 CellY = FMath::FloorToInt((LocalLocation.Y - FirstCellCenter.Y) / CachedCellSize.Y + 0.5f);
 
 	if (CellX < 0 || CellX >= FullGridSize.X || CellY < 0 || CellY >= FullGridSize.Y)
 	{
-		return false;
+		return INDEX_NONE;
 	}
 
-	return CellFilled[GetCellIndex(CellX, CellY)];
+	return GetCellIndex(CellX, CellY);
 }
 
 void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
@@ -431,33 +473,35 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	{
 		// 원격 플레이어의 붓질은 서버가 재현하지 않는다.
 		// 서버가 아는 커서 좌표는 초당 10번짜리 샘플이라 그걸로 다시 칠하면 클라이언트 화면과
-		// 어긋난 채로 굳는다. 그 플레이어의 붓질은 ReceiveBrushStroke 로 들어온다.
+		// 어긋난 채로 굳는다. 그 플레이어의 붓질은 ReceiveBrushStrokes 로 들어온다.
 		return;
 	}
 
-	// 체온에 따른 작업속도 저하. (체온 기획서 4.2)
+	// 반경은 아래 세 경로에 모두 같은 값이 들어가야 한다. 하나라도 다른 값을 쓰면
+	// 머신마다 칠해진 범위가 달라져 그림이 어긋난다. 그래서 함수로 뺐다.
 	//
-	// 이 존은 시간이 아니라 붓이 덮는 면적으로 진행한다. 그래서 시간을 줄이는 대신 붓을 줄인다.
-	// 뜨거우면 한 번에 칠해지는 범위가 좁아져서, 같은 넓이를 칠하는 데 더 오래 걸린다.
-	//
-	// 계수를 반경에 그대로 곱한다. 면적 기준으로 맞추려면 제곱근을 씌워야 하지만(계수 0.2 → 반경 45%),
-	// 그러면 눈에 보이는 붓 크기가 거의 안 변해서 패널티가 걸린 줄을 모른다.
-	// 반경이 실제로 줄어드는 게 보여야 "지금 비효율적으로 일하고 있다" 가 읽힌다.
-	//
-	// SetCellsInRadius 가 판정에 칸 크기의 절반을 더해주므로, 반경이 아무리 작아져도
-	// 커서 아래 칸은 항상 칠해진다. 붓이 먹통이 되지는 않는다.
-	//
-	// 반경은 아래 세 경로에 모두 같은 값이 들어가야 한다. 하나라도 원래 값을 쓰면
-	// 머신마다 칠해진 범위가 달라져 그림이 어긋난다.
-	const float EffectiveRadius = bScaleBrushByWorkSpeed
-		? BrushRadius * Worker->GetWorkSpeedFactor()
-		: BrushRadius;
+	// 붓 중심은 커서가 가리키는 지점이다. 흰색 롤러든 검은색 롤러든 같다.
+	// 캐릭터에서 얼마나 멀리까지 찍을 수 있는지는 UCWWorkerComponent::MaxBrushDistance 가
+	// 이미 잘라서 넘겨준다. 여기서 도구별로 다르게 잡으면 조작 감각만 갈린다.
+	const float EffectiveRadius = GetEffectiveBrushRadius(Worker);
+
+	FCWBrushStroke Stroke;
 
 	// 로컬 적용도 네트워크로 나갈 좌표로 한다. 이유는 QuantizeStrokeLocation 주석 참고.
-	const FVector StrokeLocation = QuantizeStrokeLocation(WorldLocation);
+	Stroke.Center = QuantizeStrokeLocation(WorldLocation);
+	Stroke.Radius = EffectiveRadius;
+	Stroke.bFilled = bNewFilled;
+	Stroke.bSpillOnly = bCleanup;
+
+	// 스냅샷이 이 붓질을 덮지 않도록 시각을 남긴다. (TryApplyCellSnapshot)
+	if (const UWorld* World = GetWorld())
+	{
+		LastLocalStrokeTime = World->GetTimeSeconds();
+	}
 
 	// 붓질을 확정하는 것은 언제나 그 플레이어의 기계다. 서버 왕복을 기다리면 붓이 손에서 밀린다.
-	if (!ApplyBrush(StrokeLocation, EffectiveRadius, bNewFilled, bCleanup))
+	// 로컬 반영은 매 프레임 그대로 하고, 네트워크로 나가는 것만 묶는다.
+	if (!ApplyStroke(Stroke))
 	{
 		// 바뀐 칸이 없으면 알릴 것도 없다. 붓을 대고 가만히 있는 동안 패킷이 나가지 않는다.
 		return;
@@ -466,16 +510,16 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	if (HasAuthority())
 	{
 		// 리슨 서버의 호스트. 같은 붓질을 전원에게 뿌려 그림을 맞춘다.
-		Multicast_ApplyBrush(StrokeLocation, EffectiveRadius, bNewFilled, bCleanup);
+		QueueOutgoingStroke(nullptr, Stroke);
 		return;
 	}
 
 	// 클라이언트. 방금 자기 화면에 확정한 붓질을 그대로 서버에 올린다.
 	// 진행도는 여기서 오르지 않는다. 서버가 올린 값이 리플리케이트되어 덮는다.
-	Worker->SubmitBrushStroke(this, StrokeLocation, EffectiveRadius, bNewFilled, bCleanup);
+	QueueOutgoingStroke(Worker, Stroke);
 }
 
-void ACWWorkZone_Cells::ReceiveBrushStroke(const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
+void ACWWorkZone_Cells::ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes)
 {
 	if (!HasAuthority() || IsLocked())
 	{
@@ -484,9 +528,12 @@ void ACWWorkZone_Cells::ReceiveBrushStroke(const FVector& WorldLocation, float R
 
 	// 서버에서 진행도가 오르고, 같은 붓질이 전원에게 나간다.
 	// 보낸 클라이언트에도 되돌아오지만 이미 칠해진 칸이라 아무 일도 일어나지 않는다.
-	if (ApplyBrush(WorldLocation, Radius, bFilled, bSpillOnly))
+	for (const FCWBrushStroke& Stroke : Strokes)
 	{
-		Multicast_ApplyBrush(WorldLocation, Radius, bFilled, bSpillOnly);
+		if (ApplyStroke(Stroke))
+		{
+			QueueOutgoingStroke(nullptr, Stroke);
+		}
 	}
 }
 
@@ -498,12 +545,17 @@ void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, b
 		return;
 	}
 
-	// 여기도 같은 이유로 먼저 반올림한다. 서버만 정확한 좌표로 찍으면 차량 자국이 기계마다 달라진다.
-	const FVector StrokeLocation = QuantizeStrokeLocation(WorldLocation);
+	FCWBrushStroke Stroke;
 
-	if (ApplyBrush(StrokeLocation, Radius, true, bSpillOnly))
+	// 여기도 같은 이유로 먼저 반올림한다. 서버만 정확한 좌표로 찍으면 차량 자국이 기계마다 달라진다.
+	Stroke.Center = QuantizeStrokeLocation(WorldLocation);
+	Stroke.Radius = Radius;
+	Stroke.bFilled = true;
+	Stroke.bSpillOnly = bSpillOnly;
+
+	if (ApplyStroke(Stroke))
 	{
-		Multicast_ApplyBrush(StrokeLocation, Radius, true, bSpillOnly);
+		QueueOutgoingStroke(nullptr, Stroke);
 	}
 }
 
@@ -540,24 +592,28 @@ bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
 	return Super::CanWorkNow(ToolType);
 }
 
-void ACWWorkZone_Cells::Multicast_ApplyBrush_Implementation(FVector_NetQuantize WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
+void ACWWorkZone_Cells::Multicast_ApplyBrushes_Implementation(const TArray<FCWBrushStroke>& Strokes)
 {
 	// 서버 자신에게도 돌아오지만 이미 칠해진 칸이라 아무 일도 일어나지 않는다.
-	ApplyBrush(WorldCenter, Radius, bNewFilled, bSpillOnly);
+	for (const FCWBrushStroke& Stroke : Strokes)
+	{
+		ApplyStroke(Stroke);
+	}
 }
 
-bool ACWWorkZone_Cells::ApplyBrush(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
+bool ACWWorkZone_Cells::ApplyStroke(const FCWBrushStroke& Stroke)
 {
 	const float PreviousProgress = GetProgress();
 	const int32 PreviousSpillCount = GetSpillCellCount();
 
-	if (!SetCellsInRadius(WorldCenter, Radius, bNewFilled, bSpillOnly))
+	if (!SetCellsInRadius(Stroke.Center, Stroke.Radius, Stroke.bFilled, Stroke.bSpillOnly))
 	{
-		// 바뀐 칸이 없으면 메쉬를 다시 만들 이유도 없다.
+		// 바뀐 칸이 없으면 더 할 일도 없다.
 		return false;
 	}
 
-	RefreshCellMeshes();
+	// 메쉬는 여기서 건드리지 않는다. SetCellsInRadius 가 바뀐 칸을 표시해 뒀고,
+	// 실제 반영은 프레임 끝에 FlushCellMeshUpdates 가 한 번에 한다.
 
 	// SetProgress 는 서버에서만 실제로 먹는다. 클라이언트에서는 조용히 무시된다.
 	RefreshProgress();
@@ -570,6 +626,12 @@ bool ACWWorkZone_Cells::ApplyBrush(const FVector& WorldCenter, float Radius, boo
 		NotifyStateChanged();
 	}
 
+	// 늦게 들어올 플레이어에게 넘길 밑그림도 낡았다.
+	MarkCellSnapshotDirty();
+
+	// 위에서 모아둔 것들(메쉬 갱신 / 전송 / 스냅샷)을 처리하려면 틱이 돌아야 한다.
+	RefreshTickEnabled();
+
 	return true;
 }
 
@@ -578,10 +640,14 @@ void ACWWorkZone_Cells::RebuildGridLayout()
 	GridSize.X = FMath::Max(GridSize.X, 1);
 	GridSize.Y = FMath::Max(GridSize.Y, 1);
 
+	// Area 크기와 칸 크기는 붓질 한 번에 수백 번 쓰인다. 매번 컴포넌트에 물어보고 나눗셈을
+	// 하는 대신 여기서 한 번만 잡아 둔다. 격자가 바뀌는 자리는 여기 하나뿐이다.
+	CachedAreaSize = Area->GetUnscaledBoxExtent() * 2.f;
+	CachedCellSize = FVector2D(CachedAreaSize.X / GridSize.X, CachedAreaSize.Y / GridSize.Y);
+
 	// 바깥 고리도 안쪽과 같은 크기의 칸을 쓴다. 칸 크기가 달라지면 경계에서 티가 난다.
-	const FVector2D CellSize = GetCellSize();
-	CountedOrigin.X = (CellSize.X > 0.f) ? FMath::CeilToInt(OverspillMargin / CellSize.X) : 0;
-	CountedOrigin.Y = (CellSize.Y > 0.f) ? FMath::CeilToInt(OverspillMargin / CellSize.Y) : 0;
+	CountedOrigin.X = (CachedCellSize.X > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellSize.X) : 0;
+	CountedOrigin.Y = (CachedCellSize.Y > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellSize.Y) : 0;
 
 	FullGridSize.X = GridSize.X + CountedOrigin.X * 2;
 	FullGridSize.Y = GridSize.Y + CountedOrigin.Y * 2;
@@ -591,9 +657,15 @@ void ACWWorkZone_Cells::ResetCells()
 {
 	RebuildGridLayout();
 
-	CellFilled.Init(false, FullGridSize.X * FullGridSize.Y);
+	const int32 CellCount = FullGridSize.X * FullGridSize.Y;
+
+	CellFilled.Init(false, CellCount);
 	FilledCellCount = 0;
 	CountedFilledCount = 0;
+
+	// 격자가 새로 만들어지면 이전 인덱스로 모아둔 갱신은 의미가 없다.
+	PendingCellMeshUpdates.Reset();
+	PendingCellMeshUpdateMask.Init(false, CellCount);
 
 	if (bStartFilled)
 	{
@@ -616,7 +688,18 @@ void ACWWorkZone_Cells::ResetCells()
 void ACWWorkZone_Cells::BuildGrid()
 {
 	ResetCells();
-	RefreshCellMeshes();
+	// 격자가 너무 잘면 칸 수가 그대로 렌더·메모리 비용이 된다. 넓은 존을 깔 때 실수하기 쉽다.
+	// 차량 자국은 타이어 폭만큼 거칠어도 되므로, 넓은 정리 존은 칸을 25~30cm 로 잡는 편이 낫다.
+	// (칸 크기 = Area 크기 / GridSize 다. 존을 넓히면 GridSize 도 같이 키워야 칸 크기가 유지된다)
+	constexpr int32 CellCountWarnThreshold = 20000;
+	if (CellFilled.Num() > CellCountWarnThreshold)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 칸이 %d개입니다. (격자 %dx%d, 칸 크기 %.1fx%.1fcm) 프레임에 영향이 올 수 있습니다. GridSize 를 줄여 칸을 키우세요."),
+			*GetName(), CellFilled.Num(), FullGridSize.X, FullGridSize.Y, CachedCellSize.X, CachedCellSize.Y);
+	}
+
+	RebuildAllCellInstances();
 
 	// 시작 진행도는 서버가 정한다. 클라이언트가 계산해서 넣으면
 	// 이미 리플리케이트되어 온 진행도(도중 참가)를 0 으로 덮어쓴다.
@@ -624,54 +707,122 @@ void ACWWorkZone_Cells::BuildGrid()
 	{
 		// 시작 진행도는 델리게이트를 쏘지 않고 조용히 넣는다.
 		InitializeProgress(CalculateProgress());
+
+		// 도중에 들어올 사람을 위해 시작 상태부터 밑그림을 만들어 둔다.
+		// (1단계 청소처럼 처음부터 칸이 차 있는 존이 있다)
+		MarkCellSnapshotDirty();
 	}
 }
 
-bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
+bool ACWWorkZone_Cells::IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const
 {
-	if (CellFilled.Num() == 0)
+	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
+	if (WorkerActor == nullptr)
 	{
 		return false;
 	}
 
-	// 칸 중심만 보면 붓이 칸의 대부분을 덮고도 그 칸은 안 칠해진다.
-	// 게다가 CellPadding 이 음수라 칸 메쉬가 격자보다 크게 그려져서, 이웃 칸의 메쉬가
-	// 빈 칸을 덮어버린다. 그래서 화면은 빈틈 없이 칠해졌는데 진행도는 안 차는 상황이 생긴다.
+	// 평면 거리는 보지 않는다. Super 를 부르지 않는 것이 이 함수의 요점이다.
 	//
-	// 칸 크기의 절반을 반경에 더해 "칸의 절반 이상이 덮이면 칠해진 것"으로 본다.
-	// 눈에 보이는 것과 실제 칸 상태를 맞추는 게 목적이다.
-	const FVector2D CellSize = GetCellSize();
-	const float EffectiveRadius = Radius + FMath::Max(CellSize.X, CellSize.Y) * 0.5f;
-	const float RadiusSquared = FMath::Square(EffectiveRadius);
-	bool bAnyChanged = false;
+	// "존 박스 안에 들어와야 작업할 수 있다" 가 아니라 "붓이 닿는 곳을 칠한다" 가 이 존의 제약이다.
+	// 박스 거리로 재면 두 가지가 어긋난다.
+	//   하나, 격자는 Area 박스보다 바깥 고리만큼 넓다. 고리에 묻은 페인트를 지우러 서면
+	//         박스에서 그만큼 떨어지는데, 그러면 존이 안 잡혀서 지울 수가 없다.
+	//   둘, 박스가 큰 존은 반대편 끝에 서 있어도 거리가 0 이다. 제약이 되지 않는다.
+	//
+	// 실제 범위 제약은 붓이 닿는 거리 하나다.
+	// 붓 중심은 이미 캐릭터 주변으로 묶여서 들어온다. (UCWWorkerComponent::MaxBrushDistance)
+	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
 
-	// 칸 수가 많지 않으므로(보통 200~600) 전체를 훑어도 충분히 빠르다.
-	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
+	// 높이만 확인한다. 칸 판정이 높이를 무시하므로 이걸 안 보면 다리 위에서도 아래가 칠해진다.
+	const FVector LocalWorker = ToLocalLocation(WorkerActor->GetActorLocation());
+	if (FMath::Abs(LocalWorker.Z) > WorkerHeightTolerance)
 	{
-		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+		return false;
+	}
+
+	// 붓이 닿는 곳에 이 존의 칸이 있으면 대상이다.
+	//
+	// 칸 상태는 보지 않는다. 이미 다 칠한 자리에 서 있어도 이 존이 작업 대상인 것은 맞다.
+	// "지금 뒤집을 칸이 있는가" 는 HasWorkAt 이 따로 본다. 둘을 합치면 다 칠한 자리를
+	// 지나갈 때마다 대상이 풀려서 HUD 표시가 깜빡인다.
+	return HasAnyCellInRadius(WorkLocation, GetEffectiveBrushRadius(Worker), bCleanup);
+}
+
+bool ACWWorkZone_Cells::HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const
+{
+	if (Worker == nullptr)
+	{
+		return true;
+	}
+
+	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
+	const bool bNewFilled = !bCleanup && (WorkMode == ECWCellWorkMode::FillCells);
+
+	// 이 붓질이 실제로 뒤집을 칸이 하나라도 있는지 본다.
+	// ApplyWork 와 똑같은 중심·반경·판정을 써야 "잡히는데 안 칠해지는" 상태가 안 생긴다.
+	return HasChangeableCellInRadius(WorldLocation, GetEffectiveBrushRadius(Worker), bNewFilled, bCleanup);
+}
+
+float ACWWorkZone_Cells::GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const
+{
+	if (!bScaleBrushByWorkSpeed || Worker == nullptr)
+	{
+		return BrushRadius;
+	}
+
+	return BrushRadius * Worker->GetWorkSpeedFactor();
+}
+
+bool ACWWorkZone_Cells::HasAnyCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly) const
+{
+	bool bFound = false;
+
+	ForEachCellInRadius(WorldCenter, Radius, bSpillOnly,
+		[&bFound](int32 /*CellIndex*/, bool /*bCounted*/)
 		{
-			const bool bCounted = IsCountedCell(CellX, CellY);
+			// 하나만 찾으면 된다.
+			bFound = true;
+			return false;
+		});
 
-			// 검은색 롤러는 삐져나간 페인트만 지운다. 완성된 횡단보도 위를 지나가도 안전하다.
-			if (bSpillOnly && bCounted)
-			{
-				continue;
-			}
+	return bFound;
+}
 
-			const int32 CellIndex = GetCellIndex(CellX, CellY);
+bool ACWWorkZone_Cells::HasChangeableCellInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly) const
+{
+	bool bFound = false;
+
+	ForEachCellInRadius(WorldCenter, Radius, bSpillOnly,
+		[this, bNewFilled, &bFound](int32 CellIndex, bool /*bCounted*/)
+		{
 			if (CellFilled[CellIndex] == bNewFilled)
 			{
-				continue;
+				return true;
 			}
 
-			// 높이는 무시하고 평면 거리로만 판정한다. (탑뷰 클릭 감각 우선)
-			const FVector CellLocation = GetCellWorldLocation(CellX, CellY);
-			if (FVector::DistSquaredXY(CellLocation, WorldCenter) > RadiusSquared)
+			// 하나만 찾으면 된다. 나머지는 볼 이유가 없다.
+			bFound = true;
+			return false;
+		});
+
+	return bFound;
+}
+
+bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
+{
+	bool bAnyChanged = false;
+
+	ForEachCellInRadius(WorldCenter, Radius, bSpillOnly,
+		[this, bNewFilled, &bAnyChanged](int32 CellIndex, bool bCounted)
+		{
+			if (CellFilled[CellIndex] == bNewFilled)
 			{
-				continue;
+				return true;
 			}
 
 			CellFilled[CellIndex] = bNewFilled;
+			QueueCellMeshUpdate(CellIndex);
 
 			const int32 Delta = bNewFilled ? 1 : -1;
 			FilledCellCount += Delta;
@@ -681,8 +832,8 @@ bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radiu
 			}
 
 			bAnyChanged = true;
-		}
-	}
+			return true;
+		});
 
 	if (bAnyChanged)
 	{
@@ -692,49 +843,127 @@ bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radiu
 	return bAnyChanged;
 }
 
-void ACWWorkZone_Cells::RefreshCellMeshes()
+bool ACWWorkZone_Cells::ShouldBuildCellMeshes() const
 {
-	const FVector AreaSize = Area->GetUnscaledBoxExtent() * 2.f;
-	const FVector2D CellSize = GetCellSize();
-	const FVector CellScale(
-		(CellSize.X / 100.f) * (1.f - CellPadding),
-		(CellSize.Y / 100.f) * (1.f - CellPadding),
-		1.f);
+	// 데디케이티드 서버는 화면을 그리지 않는다. 칸이 수만 개인 정리 존에서 특히 크게 아낀다.
+	return CellMeshes != nullptr && GetNetMode() != NM_DedicatedServer;
+}
 
-	// 격자의 (0,0) 칸 중심. 점수 영역이 Area 와 정확히 겹치도록 여백 칸 수만큼 밖에서 시작한다.
-	const FVector2D FirstCellCenter(
-		-AreaSize.X * 0.5f - (CountedOrigin.X - 0.5f) * CellSize.X,
-		-AreaSize.Y * 0.5f - (CountedOrigin.Y - 0.5f) * CellSize.Y);
+FTransform ACWWorkZone_Cells::GetCellInstanceTransform(int32 CellX, int32 CellY, bool bFilled) const
+{
+	const FVector2D CellLocation = GetCellLocalLocation(CellX, CellY);
 
-	// 칸이 몇백 개 수준이라 매번 전부 다시 만드는 게 가장 단순하고 버그가 없다.
+	// 빈 칸은 스케일 0 으로 눕혀 둔다. 인스턴스를 지우지 않고 숨기는 방법이다.
+	// 머티리얼이 커스텀 데이터 0번을 읽어 스스로 감출 수 있게 되면 이 분기는 없어도 된다.
+	const FVector CellScale = bFilled
+		? FVector(
+			(CachedCellSize.X / 100.f) * (1.f - CellPadding),
+			(CachedCellSize.Y / 100.f) * (1.f - CellPadding),
+			1.f)
+		: FVector::ZeroVector;
+
+	return FTransform(FRotator::ZeroRotator, FVector(CellLocation.X, CellLocation.Y, CellHeightOffset), CellScale);
+}
+
+void ACWWorkZone_Cells::RebuildAllCellInstances()
+{
+	if (!ShouldBuildCellMeshes())
+	{
+		return;
+	}
+
 	CellMeshes->ClearInstances();
+	PendingCellMeshUpdates.Reset();
+	PendingCellMeshUpdateMask.Init(false, CellFilled.Num());
 
+	if (CellFilled.Num() == 0)
+	{
+		return;
+	}
+
+	// 격자 전체를 한 번에 깐다. 인스턴스 인덱스 = 칸 인덱스라서 나중에 뒤져 찾을 필요가 없다.
 	TArray<FTransform> InstanceTransforms;
-	InstanceTransforms.Reserve(FilledCellCount);
+	InstanceTransforms.Reserve(CellFilled.Num());
 
 	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
 	{
 		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
 		{
-			if (!CellFilled[GetCellIndex(CellX, CellY)])
-			{
-				continue;
-			}
-
-			// 인스턴스 트랜스폼은 컴포넌트 로컬 기준이다.
-			const FVector LocalLocation(
-				FirstCellCenter.X + CellX * CellSize.X,
-				FirstCellCenter.Y + CellY * CellSize.Y,
-				CellHeightOffset);
-
-			InstanceTransforms.Add(FTransform(FRotator::ZeroRotator, LocalLocation, CellScale));
+			InstanceTransforms.Add(GetCellInstanceTransform(CellX, CellY, CellFilled[GetCellIndex(CellX, CellY)]));
 		}
 	}
 
-	if (InstanceTransforms.Num() > 0)
+	// 마지막 인자가 bUpdateNavigation 이다. 칸 메쉬는 콜리전이 없어서 내비게이션과 무관하다.
+	CellMeshes->AddInstances(InstanceTransforms, false, false, false);
+
+	// 1번 채널(점수 영역인지)은 격자가 바뀌지 않는 한 그대로라 여기서 한 번만 넣는다.
+	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
 	{
-		CellMeshes->AddInstances(InstanceTransforms, false, false);
+		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+		{
+			const int32 CellIndex = GetCellIndex(CellX, CellY);
+
+			CellMeshes->SetCustomDataValue(CellIndex, 0, CellFilled[CellIndex] ? 1.f : 0.f, false);
+			CellMeshes->SetCustomDataValue(CellIndex, 1, IsCountedCell(CellX, CellY) ? 1.f : 0.f, false);
+		}
 	}
+
+	CellMeshes->MarkRenderStateDirty();
+}
+
+void ACWWorkZone_Cells::QueueCellMeshUpdate(int32 CellIndex)
+{
+	// 같은 칸이 한 프레임에 여러 번 뒤집힐 수 있다. (여러 명이 겹쳐 칠하거나 차량 자국이 겹칠 때)
+	// 비트 하나로 중복을 걸러서 목록이 부풀지 않게 한다.
+	if (!PendingCellMeshUpdateMask.IsValidIndex(CellIndex) || PendingCellMeshUpdateMask[CellIndex])
+	{
+		return;
+	}
+
+	PendingCellMeshUpdateMask[CellIndex] = true;
+	PendingCellMeshUpdates.Add(CellIndex);
+}
+
+void ACWWorkZone_Cells::FlushCellMeshUpdates()
+{
+	if (PendingCellMeshUpdates.Num() == 0)
+	{
+		return;
+	}
+
+	if (!ShouldBuildCellMeshes())
+	{
+		// 데디케이티드 서버. 칸 상태는 이미 맞춰져 있고 그릴 것만 없다.
+		for (const int32 CellIndex : PendingCellMeshUpdates)
+		{
+			PendingCellMeshUpdateMask[CellIndex] = false;
+		}
+
+		PendingCellMeshUpdates.Reset();
+		return;
+	}
+
+	for (const int32 CellIndex : PendingCellMeshUpdates)
+	{
+		PendingCellMeshUpdateMask[CellIndex] = false;
+
+		if (!CellFilled.IsValidIndex(CellIndex))
+		{
+			continue;
+		}
+
+		const bool bFilled = CellFilled[CellIndex];
+		const int32 CellX = CellIndex % FullGridSize.X;
+		const int32 CellY = CellIndex / FullGridSize.X;
+
+		// 렌더 상태는 여기서 더럽히지 않는다. 반복문이 끝난 뒤 한 번만 더럽힌다.
+		CellMeshes->UpdateInstanceTransform(CellIndex, GetCellInstanceTransform(CellX, CellY, bFilled), false, false, true);
+		CellMeshes->SetCustomDataValue(CellIndex, 0, bFilled ? 1.f : 0.f, false);
+	}
+
+	PendingCellMeshUpdates.Reset();
+
+	CellMeshes->MarkRenderStateDirty();
 }
 
 void ACWWorkZone_Cells::RefreshProgress()
@@ -776,23 +1005,208 @@ bool ACWWorkZone_Cells::IsCountedCell(int32 CellX, int32 CellY) const
 		&& CellY >= CountedOrigin.Y && CellY < CountedOrigin.Y + GridSize.Y;
 }
 
-FVector2D ACWWorkZone_Cells::GetCellSize() const
+FVector2D ACWWorkZone_Cells::GetFirstCellCenter() const
 {
-	const FVector AreaSize = Area->GetUnscaledBoxExtent() * 2.f;
+	return FVector2D(
+		-CachedAreaSize.X * 0.5f - (CountedOrigin.X - 0.5f) * CachedCellSize.X,
+		-CachedAreaSize.Y * 0.5f - (CountedOrigin.Y - 0.5f) * CachedCellSize.Y);
+}
 
-	return FVector2D(AreaSize.X / FMath::Max(GridSize.X, 1), AreaSize.Y / FMath::Max(GridSize.Y, 1));
+FVector2D ACWWorkZone_Cells::GetCellLocalLocation(int32 CellX, int32 CellY) const
+{
+	const FVector2D FirstCellCenter = GetFirstCellCenter();
+
+	return FVector2D(
+		FirstCellCenter.X + CellX * CachedCellSize.X,
+		FirstCellCenter.Y + CellY * CachedCellSize.Y);
 }
 
 FVector ACWWorkZone_Cells::GetCellWorldLocation(int32 CellX, int32 CellY) const
 {
-	const FVector AreaSize = Area->GetUnscaledBoxExtent() * 2.f;
-	const FVector2D CellSize = GetCellSize();
+	const FVector2D CellLocation = GetCellLocalLocation(CellX, CellY);
 
-	// 칸 좌표는 바깥 고리를 포함한 전체 격자 기준이라 여백 칸 수만큼 원점을 밀어야 한다.
-	const FVector LocalLocation(
-		-AreaSize.X * 0.5f + (CellX - CountedOrigin.X + 0.5f) * CellSize.X,
-		-AreaSize.Y * 0.5f + (CellY - CountedOrigin.Y + 0.5f) * CellSize.Y,
-		0.f);
+	return Area->GetComponentTransform().TransformPosition(FVector(CellLocation.X, CellLocation.Y, 0.f));
+}
 
-	return Area->GetComponentTransform().TransformPosition(LocalLocation);
+void ACWWorkZone_Cells::QueueOutgoingStroke(UCWWorkerComponent* Worker, const FCWBrushStroke& Stroke)
+{
+	// 클라이언트가 보내는 경우에만 작업자가 필요하다. 존은 소유자가 없어서 서버 RPC 를
+	// 직접 보낼 수 없고, 폰에 붙은 작업 컴포넌트를 거쳐야 한다.
+	if (Worker != nullptr)
+	{
+		PendingStrokeWorker = Worker;
+	}
+
+	PendingOutgoingStrokes.Add(Stroke);
+
+	// 한 패킷에 담을 양을 넘으면 간격을 기다리지 않고 바로 내보낸다.
+	// 차량 여러 대가 동시에 자국을 남길 때 목록이 무한정 자라는 것을 막는다.
+	if (PendingOutgoingStrokes.Num() >= MaxStrokesPerPacket)
+	{
+		FlushOutgoingStrokes(true);
+	}
+}
+
+void ACWWorkZone_Cells::FlushOutgoingStrokes(bool bForce)
+{
+	const UWorld* World = GetWorld();
+	if (PendingOutgoingStrokes.Num() == 0 || World == nullptr)
+	{
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	if (!bForce && Now - LastStrokeSendTime < StrokeSendInterval)
+	{
+		return;
+	}
+
+	LastStrokeSendTime = Now;
+
+	if (HasAuthority())
+	{
+		Multicast_ApplyBrushes(PendingOutgoingStrokes);
+	}
+	else if (UCWWorkerComponent* Worker = PendingStrokeWorker.Get())
+	{
+		Worker->SubmitBrushStrokes(this, PendingOutgoingStrokes);
+	}
+
+	PendingOutgoingStrokes.Reset();
+}
+
+void ACWWorkZone_Cells::MarkCellSnapshotDirty()
+{
+	// 스냅샷은 서버만 만든다. 클라이언트는 받아서 적용만 한다.
+	if (HasAuthority())
+	{
+		bCellSnapshotDirty = true;
+	}
+}
+
+void ACWWorkZone_Cells::RebuildCellSnapshotIfDue()
+{
+	const UWorld* World = GetWorld();
+	if (!bCellSnapshotDirty || !HasAuthority() || World == nullptr)
+	{
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	if (Now - LastCellSnapshotBuildTime < CellSnapshotInterval)
+	{
+		return;
+	}
+
+	LastCellSnapshotBuildTime = Now;
+	bCellSnapshotDirty = false;
+
+	// 칸 하나를 비트 하나로 담는다. 1600칸이면 200바이트다.
+	// 실시간 그림은 붓질 멀티캐스트가 이미 맞추고 있다. 이 값은 "도중에 들어온 사람이
+	// 처음 화면을 그릴 때" 쓰는 밑그림이라 초당 한 번이면 충분하다.
+	const int32 CellCount = CellFilled.Num();
+	const int32 ByteCount = FMath::DivideAndRoundUp(CellCount, 8);
+
+	CellSnapshot.Reset(ByteCount);
+	CellSnapshot.AddZeroed(ByteCount);
+
+	for (int32 CellIndex = 0; CellIndex < CellCount; ++CellIndex)
+	{
+		if (CellFilled[CellIndex])
+		{
+			CellSnapshot[CellIndex / 8] |= static_cast<uint8>(1 << (CellIndex % 8));
+		}
+	}
+}
+
+void ACWWorkZone_Cells::OnRep_CellSnapshot()
+{
+	TryApplyCellSnapshot();
+}
+
+void ACWWorkZone_Cells::TryApplyCellSnapshot()
+{
+	// 스냅샷은 서버가 만든 밑그림이다. 클라이언트만 받아서 쓴다.
+	const UWorld* World = GetWorld();
+	if (HasAuthority() || World == nullptr)
+	{
+		return;
+	}
+
+	// 처음 받은 것은 무조건 적용한다.
+	//
+	// 이건 "도중에 들어온 플레이어가 이미 칠해진 그림을 못 받는" 구멍을 막기 위한 것이다.
+	// 붓질 멀티캐스트는 그때 접속해 있던 사람에게만 가기 때문에, 늦게 들어온 사람은
+	// 진행도만 70%로 보이고 화면은 백지인 상태가 된다.
+	//
+	// 그 뒤로 오는 것은 이 기계가 한동안 칠하지 않았을 때만 적용한다.
+	// 존이 릴레번시 밖으로 나갔다 돌아오면 그동안의 붓질을 못 받는데, 그때 여기서 맞춰진다.
+	// 반대로 칠하는 도중에 덮으면 방금 칠한 칸이 잠깐 사라졌다 돌아오는 되감기가 보인다.
+	if (bCellSnapshotApplied && World->TimeSince(LastLocalStrokeTime) < SnapshotApplyIdleDelay)
+	{
+		return;
+	}
+
+	// 격자가 아직 없다. BeginPlay 에서 다시 부른다.
+	const int32 CellCount = CellFilled.Num();
+	if (CellCount == 0)
+	{
+		return;
+	}
+
+	// 격자 구성이 서로 다르면 비트 위치의 의미가 달라진다. 그럴 바에는 손대지 않는 편이 낫다.
+	// (서버가 아직 스냅샷을 안 만들었을 때도 여기서 걸러진다. 다음 것을 기다린다)
+	if (CellSnapshot.Num() != FMath::DivideAndRoundUp(CellCount, 8))
+	{
+		return;
+	}
+
+	bCellSnapshotApplied = true;
+
+	FilledCellCount = 0;
+	CountedFilledCount = 0;
+
+	for (int32 CellIndex = 0; CellIndex < CellCount; ++CellIndex)
+	{
+		const bool bFilled = (CellSnapshot[CellIndex / 8] & (1 << (CellIndex % 8))) != 0;
+
+		// 달라진 칸만 메쉬 갱신 대상으로 넘긴다.
+		// 스냅샷이 올 때마다 격자를 통째로 다시 만들면, 붓질에서 없앤 비용이 여기서 되살아난다.
+		// 보통은 다른 사람이 방금 칠한 몇 칸뿐이다.
+		if (CellFilled[CellIndex] != bFilled)
+		{
+			CellFilled[CellIndex] = bFilled;
+			QueueCellMeshUpdate(CellIndex);
+		}
+
+		if (!bFilled)
+		{
+			continue;
+		}
+
+		++FilledCellCount;
+
+		if (IsCountedCell(CellIndex % FullGridSize.X, CellIndex / FullGridSize.X))
+		{
+			++CountedFilledCount;
+		}
+	}
+
+	PeakCountedFilledCount = FMath::Max(PeakCountedFilledCount, CountedFilledCount);
+
+	// 위에서 모아둔 칸 갱신을 처리하려면 틱이 돌아야 한다.
+	RefreshTickEnabled();
+}
+
+void ACWWorkZone_Cells::RefreshTickEnabled()
+{
+	// 평소에는 틱을 돌지 않는다. 할 일이 생기면 켜고, 없어지면 끈다.
+	// 존이 레벨에 수십 개 깔려도 아무도 안 칠하는 동안에는 비용이 0 이다.
+	const bool bNeedsTick = bShowDebugUnfilledCells
+		|| bShowDebugSpillCells
+		|| PendingCellMeshUpdates.Num() > 0
+		|| PendingOutgoingStrokes.Num() > 0
+		|| bCellSnapshotDirty;
+
+	SetActorTickEnabled(bNeedsTick);
 }

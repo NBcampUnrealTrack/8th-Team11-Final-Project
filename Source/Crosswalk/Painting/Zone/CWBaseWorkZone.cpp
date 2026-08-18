@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWPaintingSubsystem.h"
+#include "Painting/Components/CWWorkerComponent.h"
 #include "TimerManager.h"
 
 ACWBaseWorkZone::ACWBaseWorkZone()
@@ -29,6 +30,20 @@ ACWBaseWorkZone::ACWBaseWorkZone()
 float ACWBaseWorkZone::GetSquaredDistanceToPoint(const FVector& Point) const
 {
 	return Area->Bounds.GetBox().ComputeSquaredDistanceToPoint(Point);
+}
+
+bool ACWBaseWorkZone::IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const
+{
+	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
+	if (WorkerActor == nullptr)
+	{
+		return false;
+	}
+
+	// 캐릭터가 Area 박스 근처에 서 있어야 한다. 두 값 중 짧은 쪽이 적용된다.
+	const float AllowedRange = FMath::Min(Worker->GetMaxWorkDistance(), WorkRange);
+
+	return GetSquaredDistanceToPoint(WorkerActor->GetActorLocation()) <= FMath::Square(AllowedRange);
 }
 
 void ACWBaseWorkZone::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
