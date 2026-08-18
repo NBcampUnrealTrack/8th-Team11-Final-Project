@@ -1,18 +1,18 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "BaseVehicle.h"
+#include "CWBaseVehicle.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
-#include "TrafficLane.h"
-#include "TrafficSubsystem.h"
+#include "CWTrafficLane.h"
+#include "CWTrafficSubsystem.h"
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
 
-ABaseVehicle::ABaseVehicle()
+ACWBaseVehicle::ACWBaseVehicle()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -33,7 +33,7 @@ ABaseVehicle::ABaseVehicle()
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
-void ABaseVehicle::Tick(float DeltaSeconds)
+void ACWBaseVehicle::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
@@ -67,7 +67,7 @@ void ABaseVehicle::Tick(float DeltaSeconds)
 	UpdateTransformOnLane();
 }
 
-float ABaseVehicle::GetVehicleLength() const
+float ACWBaseVehicle::GetVehicleLength() const
 {
 	// 스케일을 적용한 크기로 잰다. 차종 BP 가 콜리전 박스를 키워 놓으면 그만큼 길어져야 한다.
 	//
@@ -77,7 +77,7 @@ float ABaseVehicle::GetVehicleLength() const
 	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X * 2.f : 0.f;
 }
 
-void ABaseVehicle::InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleSpawnParams& Params)
+void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params)
 {
 	CurrentLane = InLane;
 	DistanceAlongLane = Params.StartDistance;
@@ -93,7 +93,7 @@ void ABaseVehicle::InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleS
 	UpdateTransformOnLane();
 }
 
-bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact) const
+bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact) const
 {
 	OutTimeToImpact = 0.f;
 
@@ -129,7 +129,7 @@ bool ABaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImp
 	return true;
 }
 
-float ABaseVehicle::GetDistanceToPoint(const FVector& Point) const
+float ACWBaseVehicle::GetDistanceToPoint(const FVector& Point) const
 {
 	if (CollisionBox)
 	{
@@ -146,7 +146,7 @@ float ABaseVehicle::GetDistanceToPoint(const FVector& Point) const
 	return FVector::Dist(GetActorLocation(), Point);
 }
 
-bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext)
+bool ACWBaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext)
 {
 	// 클라에서 통과시키면 그 클라에서만 차가 멈춘다. 판정은 서버만 한다.
 	if (!HasAuthority())
@@ -158,7 +158,7 @@ bool ABaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptConte
 	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext));
 }
 
-FVector ABaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
+FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
 {
 	/**
 	 * 커서 지점을 향해 날아간다. 기준점이 플레이어가 아니라 이 차량이라는 게 핵심이다.
@@ -181,7 +181,7 @@ FVector ABaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Parry
 	return ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 }
 
-bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
+bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 {
 	if (!CanBeParried() || !Parrier)
 	{
@@ -230,7 +230,7 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 그 시간이 새로 시작된다.
 	if (ParriedDespawnDelay > 0.f)
 	{
-		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ABaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
+		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ACWBaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
 	}
 
 	OnVehicleParried.Broadcast(this, Parrier);
@@ -242,33 +242,33 @@ bool ABaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	return true;
 }
 
-void ABaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier)
+void ACWBaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier)
 {
 	// C++ 은 통보만 하고 무엇을 재생할지는 차량 BP 가 정한다.
 	OnParriedFX(LaunchDirection, LaunchSpeed, Parrier);
 }
 
-void ABaseVehicle::BeginPlay()
+void ACWBaseVehicle::BeginPlay()
 {
 	Super::BeginPlay();
 
-	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ABaseVehicle::HandleBeginOverlap);
-	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ABaseVehicle::HandleEndOverlap);
+	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ACWBaseVehicle::HandleBeginOverlap);
+	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ACWBaseVehicle::HandleEndOverlap);
 
-	if (UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this))
+	if (UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this))
 	{
 		TrafficSubsystem->RegisterVehicle(this);
 	}
 }
 
-void ABaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void ACWBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ParriedDespawnTimerHandle);
 	}
 
-	if (UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this))
+	if (UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this))
 	{
 		TrafficSubsystem->UnregisterVehicle(this);
 	}
@@ -276,13 +276,13 @@ void ABaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void ABaseVehicle::OnReachedLaneEnd()
+void ACWBaseVehicle::OnReachedLaneEnd()
 {
 	// 풀링을 붙이면 Destroy 대신 스포너에 반납하도록 자식에서 오버라이드한다.
 	Destroy();
 }
 
-float ABaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
+float ACWBaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
 {
 	const float DesiredSpeed = GetEffectiveSpeed();
 
@@ -291,13 +291,13 @@ float ABaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
 		return DesiredSpeed;
 	}
 
-	const UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this);
+	const UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this);
 	if (!TrafficSubsystem)
 	{
 		return DesiredSpeed;
 	}
 
-	const ABaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this);
+	const ACWBaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this);
 	if (!VehicleAhead)
 	{
 		return DesiredSpeed;
@@ -318,7 +318,7 @@ float ABaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
 	return FMath::Min(DesiredSpeed, AllowedTravel / DeltaSeconds);
 }
 
-void ABaseVehicle::UpdateTransformOnLane()
+void ACWBaseVehicle::UpdateTransformOnLane()
 {
 	if (!CurrentLane)
 	{
@@ -335,14 +335,14 @@ void ABaseVehicle::UpdateTransformOnLane()
 
 	// 위치와 회전만 가져간다. 스케일은 차량 BP 가 정한 값을 그대로 둔다.
 	//
-	// 스플라인이 내주는 월드 트랜스폼에는 ATrafficLane 액터의 스케일이 섞여 있다.
+	// 스플라인이 내주는 월드 트랜스폼에는 ACWTrafficLane 액터의 스케일이 섞여 있다.
 	// SetActorTransform 으로 통째로 덮으면 차선을 늘려 놓은 만큼 차량도 같이 커지는데,
 	// GetVehicleLength 가 재는 콜리전 크기와 화면에 보이는 크기가 어긋나면서
 	// 스포너의 간격 계산이 실제보다 짧아져 차가 겹쳐 스폰된다.
 	SetActorLocationAndRotation(LaneTransform.GetLocation(), LaneTransform.GetRotation());
 }
 
-void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
+void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
 	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
@@ -389,7 +389,7 @@ void ABaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent
 	OnVehicleHitActor.Broadcast(this, OtherActor, HitDirection);
 }
 
-void ABaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
+void ACWBaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/)
 {
 	// 피격 기록은 서버만 들고 있다.
@@ -401,7 +401,7 @@ void ABaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/
 	HitActors.Remove(OtherActor);
 }
 
-FVector ABaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
+FVector ACWBaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
 {
 	// 스윕으로 발생한 오버랩이 아니면 SweepResult는 비어 있다.
 	// 차량은 SetActorTransform으로 위치를 덮어쓰므로 대부분 이 경우다.

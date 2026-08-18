@@ -1,13 +1,13 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "TrafficSubsystem.h"
+#include "CWTrafficSubsystem.h"
 
 #include "Engine/World.h"
-#include "BaseVehicle.h"
-#include "TrafficLane.h"
+#include "CWBaseVehicle.h"
+#include "CWTrafficLane.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
-UTrafficSubsystem* UTrafficSubsystem::Get(const UObject* WorldContextObject)
+UCWTrafficSubsystem* UCWTrafficSubsystem::Get(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject)
 	{
@@ -15,10 +15,10 @@ UTrafficSubsystem* UTrafficSubsystem::Get(const UObject* WorldContextObject)
 	}
 
 	const UWorld* World = WorldContextObject->GetWorld();
-	return World ? World->GetSubsystem<UTrafficSubsystem>() : nullptr;
+	return World ? World->GetSubsystem<UCWTrafficSubsystem>() : nullptr;
 }
 
-void UTrafficSubsystem::RegisterVehicle(ABaseVehicle* Vehicle)
+void UCWTrafficSubsystem::RegisterVehicle(ACWBaseVehicle* Vehicle)
 {
 	if (Vehicle)
 	{
@@ -26,7 +26,7 @@ void UTrafficSubsystem::RegisterVehicle(ABaseVehicle* Vehicle)
 	}
 }
 
-void UTrafficSubsystem::UnregisterVehicle(ABaseVehicle* Vehicle)
+void UCWTrafficSubsystem::UnregisterVehicle(ACWBaseVehicle* Vehicle)
 {
 	if (Vehicle)
 	{
@@ -34,9 +34,9 @@ void UTrafficSubsystem::UnregisterVehicle(ABaseVehicle* Vehicle)
 	}
 }
 
-ABaseVehicle* UTrafficSubsystem::FindVehicleAhead(const ABaseVehicle* Vehicle) const
+ACWBaseVehicle* UCWTrafficSubsystem::FindVehicleAhead(const ACWBaseVehicle* Vehicle) const
 {
-	const ATrafficLane* Lane = Vehicle ? Vehicle->GetCurrentLane() : nullptr;
+	const ACWTrafficLane* Lane = Vehicle ? Vehicle->GetCurrentLane() : nullptr;
 	if (!Lane)
 	{
 		return nullptr;
@@ -44,12 +44,12 @@ ABaseVehicle* UTrafficSubsystem::FindVehicleAhead(const ABaseVehicle* Vehicle) c
 
 	const float MyDistance = Vehicle->GetDistanceAlongLane();
 
-	ABaseVehicle* Nearest = nullptr;
+	ACWBaseVehicle* Nearest = nullptr;
 	float NearestDistance = TNumericLimits<float>::Max();
 
-	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 	{
-		ABaseVehicle* Other = VehiclePtr.Get();
+		ACWBaseVehicle* Other = VehiclePtr.Get();
 		if (!Other || Other == Vehicle || Other->GetCurrentLane() != Lane)
 		{
 			continue;
@@ -67,7 +67,7 @@ ABaseVehicle* UTrafficSubsystem::FindVehicleAhead(const ABaseVehicle* Vehicle) c
 	return Nearest;
 }
 
-ABaseVehicle* UTrafficSubsystem::FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const
+ACWBaseVehicle* UCWTrafficSubsystem::FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const
 {
 	OutTimeToImpact = 0.f;
 
@@ -76,12 +76,12 @@ ABaseVehicle* UTrafficSubsystem::FindImminentThreat(const AActor* Target, float 
 		return nullptr;
 	}
 
-	ABaseVehicle* NearestVehicle = nullptr;
+	ACWBaseVehicle* NearestVehicle = nullptr;
 	float NearestTime = TNumericLimits<float>::Max();
 
-	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 	{
-		ABaseVehicle* Vehicle = VehiclePtr.Get();
+		ACWBaseVehicle* Vehicle = VehiclePtr.Get();
 		if (!Vehicle || !Vehicle->CanBeParried())
 		{
 			continue;
@@ -115,7 +115,7 @@ ABaseVehicle* UTrafficSubsystem::FindImminentThreat(const AActor* Target, float 
 	return NearestVehicle;
 }
 
-ABaseVehicle* UTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext)
+ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext)
 {
 	// 시도한 액터가 없으면 충돌 예측 기준점이 없어 판정 자체가 성립하지 않는다.
 	if (ParryAttemptContext.Parrier == nullptr)
@@ -123,9 +123,9 @@ ABaseVehicle* UTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContex
 		return nullptr;
 	}
 
-	ABaseVehicle* BestVehicle = nullptr;
+	ACWBaseVehicle* BestVehicle = nullptr;
 
-	if (ABaseVehicle* DesignatedVehicle = Cast<ABaseVehicle>(ParryAttemptContext.TargetVehicle))
+	if (ACWBaseVehicle* DesignatedVehicle = Cast<ACWBaseVehicle>(ParryAttemptContext.TargetVehicle))
 	{
 		// 대상을 지정해 보냈어도 필터는 똑같이 통과해야 한다. 지정 자체는 클라가 보낸 값이다.
 		float TimeToImpact = 0.f;
@@ -140,9 +140,9 @@ ABaseVehicle* UTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContex
 	{
 		float BestTimeToImpact = TNumericLimits<float>::Max();
 
-		for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+		for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 		{
-			ABaseVehicle* Vehicle = VehiclePtr.Get();
+			ACWBaseVehicle* Vehicle = VehiclePtr.Get();
 
 			float TimeToImpact = 0.f;
 			if (!Vehicle || !PassesAttemptFilter(*Vehicle, ParryAttemptContext, TimeToImpact))
@@ -177,7 +177,7 @@ ABaseVehicle* UTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContex
 	return BestVehicle;
 }
 
-bool UTrafficSubsystem::PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext, float& OutTimeToImpact) const
+bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext, float& OutTimeToImpact) const
 {
 	OutTimeToImpact = 0.f;
 
@@ -233,13 +233,13 @@ bool UTrafficSubsystem::PassesAttemptFilter(ABaseVehicle& Vehicle, const FCWParr
 	return true;
 }
 
-void UTrafficSubsystem::GetVehiclesNearPoint(const FVector& Point, float Radius, TArray<ABaseVehicle*>& OutVehicles) const
+void UCWTrafficSubsystem::GetVehiclesNearPoint(const FVector& Point, float Radius, TArray<ACWBaseVehicle*>& OutVehicles) const
 {
 	OutVehicles.Reset();
 
-	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 	{
-		ABaseVehicle* Vehicle = VehiclePtr.Get();
+		ACWBaseVehicle* Vehicle = VehiclePtr.Get();
 		if (Vehicle == nullptr)
 		{
 			continue;
@@ -252,10 +252,10 @@ void UTrafficSubsystem::GetVehiclesNearPoint(const FVector& Point, float Radius,
 	}
 }
 
-int32 UTrafficSubsystem::GetActiveVehicleCount() const
+int32 UCWTrafficSubsystem::GetActiveVehicleCount() const
 {
 	int32 Count = 0;
-	for (const TWeakObjectPtr<ABaseVehicle>& VehiclePtr : ActiveVehicles)
+	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 	{
 		if (VehiclePtr.IsValid())
 		{

@@ -7,8 +7,8 @@
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/CWWorkerComponent.h"
-#include "Traffic/BaseVehicle.h"
-#include "Traffic/TrafficSubsystem.h"
+#include "Traffic/CWBaseVehicle.h"
+#include "Traffic/CWTrafficSubsystem.h"
 
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {
@@ -152,7 +152,7 @@ void ACWWorkZone_Cells::BeginPlay()
 
 void ACWWorkZone_Cells::UpdateVehicleStains()
 {
-	UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(this);
+	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this);
 	if (TrafficSubsystem == nullptr || VehicleStainZone == nullptr)
 	{
 		return;
@@ -165,10 +165,10 @@ void ACWWorkZone_Cells::UpdateVehicleStains()
 	//    남은 시간만큼 자국을 마저 남긴다. 마르는 순간 자국이 뚝 끊기면 어색하다.
 	if (!bPaintDry)
 	{
-		TArray<ABaseVehicle*> NearbyVehicles;
+		TArray<ACWBaseVehicle*> NearbyVehicles;
 		TrafficSubsystem->GetVehiclesNearPoint(GetActorLocation(), GetVehicleSearchRadius(), NearbyVehicles);
 
-		for (ABaseVehicle* Vehicle : NearbyVehicles)
+		for (ACWBaseVehicle* Vehicle : NearbyVehicles)
 		{
 			if (Vehicle != nullptr && IsFilledAt(Vehicle->GetActorLocation()))
 			{

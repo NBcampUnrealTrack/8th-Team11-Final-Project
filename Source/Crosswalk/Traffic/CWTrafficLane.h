@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "TrafficLane.generated.h"
+#include "CWTrafficLane.generated.h"
 
 class USplineComponent;
 
@@ -14,12 +14,12 @@ class USplineComponent;
  * 왕복 2차선은 이 액터를 2개 배치해 스플라인 방향을 서로 반대로 잡는다.
  */
 UCLASS()
-class CROSSWALK_API ATrafficLane : public AActor
+class CROSSWALK_API ACWTrafficLane : public AActor
 {
 	GENERATED_BODY()
 
 public:
-	ATrafficLane();
+	ACWTrafficLane();
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
 	float GetLaneLength() const;

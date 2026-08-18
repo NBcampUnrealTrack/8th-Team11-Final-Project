@@ -3,14 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "TrafficVehicleSpawnParams.generated.h"
+#include "CWTrafficVehicleSpawnParams.generated.h"
 
 /**
  * 스포너가 차량 1대를 굴려보낼 때 넘기는 개체별 값.
  * 차종 고유 값(기본 속도, 패링 가능 여부)은 차량 BP가 들고, 여기 있는 건 개체마다 흔들리는 값만이다.
  */
 USTRUCT(BlueprintType)
-struct FTrafficVehicleSpawnParams
+struct FCWTrafficVehicleSpawnParams
 {
 	GENERATED_BODY()
 

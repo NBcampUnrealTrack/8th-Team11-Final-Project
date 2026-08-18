@@ -1,10 +1,10 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "TrafficLane.h"
+#include "CWTrafficLane.h"
 
 #include "Components/SplineComponent.h"
 
-ATrafficLane::ATrafficLane()
+ACWTrafficLane::ACWTrafficLane()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
@@ -15,12 +15,12 @@ ATrafficLane::ATrafficLane()
 	LaneSpline->SetClosedLoop(false);
 }
 
-float ATrafficLane::GetLaneLength() const
+float ACWTrafficLane::GetLaneLength() const
 {
 	return LaneSpline ? LaneSpline->GetSplineLength() : 0.f;
 }
 
-FTransform ATrafficLane::GetTransformAtDistance(float Distance) const
+FTransform ACWTrafficLane::GetTransformAtDistance(float Distance) const
 {
 	// 스플라인이 없으면 액터 위치로 대체해 스폰이 원점으로 튀는 것만 막는다.
 	if (!LaneSpline)
@@ -31,7 +31,7 @@ FTransform ATrafficLane::GetTransformAtDistance(float Distance) const
 	return LaneSpline->GetTransformAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World);
 }
 
-FVector ATrafficLane::GetDirectionAtDistance(float Distance) const
+FVector ACWTrafficLane::GetDirectionAtDistance(float Distance) const
 {
 	if (!LaneSpline)
 	{
