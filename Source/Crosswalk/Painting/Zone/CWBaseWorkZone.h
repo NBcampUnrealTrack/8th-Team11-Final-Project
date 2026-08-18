@@ -304,9 +304,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Work")
 	bool bLocked = false;
 
-	// 진행도를 화면 좌상단에 띄운다. HUD 가 생기면 끄면 된다.
+	// 진행도를 화면 좌상단에 띄운다.
+	//
+	// 기본값이 false 인 이유: 이 줄은 진행도가 바뀔 때마다 다시 만들어진다. 칸을 칠하는 존은
+	// 붓질 한 번이 곧 진행도 변화라서, 칠하는 동안에는 매 프레임 FString::Printf 가 여러 번 돈다.
+	// 프로파일링할 때 이게 켜져 있으면 다른 수치가 묻힌다. 필요할 때 인스턴스에서 켜면 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
-	bool bShowDebugProgress = true;
+	bool bShowDebugProgress = false;
 
 private:
 	// 잠금을 풀기 위해 끝나기를 기다리는 존들. 서버에서만 채운다.

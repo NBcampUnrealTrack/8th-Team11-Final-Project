@@ -296,7 +296,7 @@ protected:
 	// 격자 구성(전체 크기, 점수 영역 원점, 칸 크기)을 진행도 줄 뒤에 같이 찍는다.
 	// 서버와 클라이언트의 칸 상태가 어긋날 때, 붓질 문제인지 격자 문제인지 가르는 데 쓴다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
-	bool bShowDebugGridLayout = true;
+	bool bShowDebugGridLayout = false;
 
 	// 바깥 고리로 삐져나간 칸을 주황 상자로 그린다.
 	//
