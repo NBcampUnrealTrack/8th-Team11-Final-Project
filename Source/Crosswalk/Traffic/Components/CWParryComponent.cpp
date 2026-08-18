@@ -5,8 +5,8 @@
 
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "GameFramework/Actor.h"
-#include "Traffic/BaseVehicle.h"
-#include "Traffic/TrafficSubsystem.h"
+#include "Traffic/CWBaseVehicle.h"
+#include "Traffic/CWTrafficSubsystem.h"
 
 UCWParryComponent::UCWParryComponent()
 {
@@ -99,7 +99,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 
 	UpdateServerCooldown();
 
-	UTrafficSubsystem* TrafficSubsystem = UTrafficSubsystem::Get(OwnerActor);
+	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(OwnerActor);
 	if (TrafficSubsystem == nullptr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다."));
@@ -112,7 +112,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	// 어느 차를 칠지 고르고 판정하는 건 트래픽 쪽이다. 여기서는 시도 정보만 만들어 넘긴다.
 	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation, ClientInputTime);
 
-	ABaseVehicle* ParriedVehicle = TrafficSubsystem->TryParryWithAttempt(ParryAttemptContext);
+	ACWBaseVehicle* ParriedVehicle = TrafficSubsystem->TryParryWithAttempt(ParryAttemptContext);
 	if (ParriedVehicle == nullptr)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다."));
@@ -121,7 +121,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 
 	UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 성공. 대상=%s"), *ParriedVehicle->GetName());
 
-	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ABaseVehicle::TryParry가 끝냈다.
+	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ACWBaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.
 	Multicast_ParrySucceeded(BuildParrySyncData(ParryAttemptContext, *ParriedVehicle));
 }
@@ -161,7 +161,7 @@ void UCWParryComponent::Multicast_ParrySucceeded_Implementation(const FCWParrySy
 	OnParrySucceeded.Broadcast(ParrySyncData);
 }
 
-FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ABaseVehicle& ParriedVehicle) const
+FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle) const
 {
 	FCWParrySyncData ParrySyncData;
 	ParrySyncData.TargetVehicle = &ParriedVehicle;

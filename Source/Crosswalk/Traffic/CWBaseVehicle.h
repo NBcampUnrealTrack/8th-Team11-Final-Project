@@ -4,12 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Data/TrafficVehicleSpawnParams.h"
+#include "Data/CWTrafficVehicleSpawnParams.h"
 #include "Interfaces/Interface_ParryReceiver.h"
-#include "BaseVehicle.generated.h"
+#include "CWBaseVehicle.generated.h"
 
-class ABaseVehicle;
-class ATrafficLane;
+class ACWBaseVehicle;
+class ACWTrafficLane;
 class UBoxComponent;
 class UStaticMeshComponent;
 
@@ -18,14 +18,14 @@ class UStaticMeshComponent;
  * 넉백 물리 / 2초 다운 / 도구 드롭 같은 플레이어 상태 전이는 플레이어 파트 담당이므로
  * 트래픽 쪽은 "누가 어느 방향으로 맞았는지"만 알리고 관여하지 않는다.
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnVehicleHitActorSignature, ABaseVehicle*, Vehicle, AActor*, HitActor, FVector, ImpactDirection);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleHitActorSignature, ACWBaseVehicle*, Vehicle, AActor*, HitActor, FVector, ImpactDirection);
 
 /**
  * 패링에 성공당했을 때 발행. 판정이 서버에서만 돌기 때문에 이 델리게이트도 서버에서만 뜬다.
  * 게임플레이 반응(점수, 스택 같은 것)을 붙이는 자리다.
  * 연출을 여기에 붙이면 클라이언트에서는 아무것도 안 보이므로 OnParriedFX 를 쓴다.
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnVehicleParriedSignature, ABaseVehicle*, Vehicle, AActor*, Parrier);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnVehicleParriedSignature, ACWBaseVehicle*, Vehicle, AActor*, Parrier);
 
 /**
  * 차선 스플라인을 따라 직선 주행하는 차량의 공통 베이스.
@@ -36,12 +36,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnVehicleParriedSignature, ABaseVe
  * 앞차와는 최소 간격을 유지하므로 같은 차선에서 서로 통과하지 않는다.
  */
 UCLASS()
-class CROSSWALK_API ABaseVehicle : public AActor, public IInterface_ParryReceiver
+class CROSSWALK_API ACWBaseVehicle : public AActor, public IInterface_ParryReceiver
 {
 	GENERATED_BODY()
 
 public:
-	ABaseVehicle();
+	ACWBaseVehicle();
 
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -53,7 +53,7 @@ public:
 
 	/** 스포너가 스폰 직후 호출. 주행할 차선과 개체별 편차를 지정한다. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Vehicle")
-	void InitializeOnLane(ATrafficLane* InLane, const FTrafficVehicleSpawnParams& Params);
+	void InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params);
 
 	/**
 	 * 차종 기본 속도에 개체 배율을 적용한 실제 주행 속도(cm/s).
@@ -78,7 +78,7 @@ public:
 	FName GetVehicleType() const { return VehicleType; }
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	ATrafficLane* GetCurrentLane() const { return CurrentLane; }
+	ACWTrafficLane* GetCurrentLane() const { return CurrentLane; }
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetDistanceAlongLane() const { return DistanceAlongLane; }
@@ -229,7 +229,7 @@ protected:
 
 	/** 현재 주행 중인 차선. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
-	TObjectPtr<ATrafficLane> CurrentLane;
+	TObjectPtr<ACWTrafficLane> CurrentLane;
 
 	/** 차선 시작점에서 진행한 거리(cm). */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
@@ -256,8 +256,8 @@ private:
 	// 델리게이트는 최하단에 배치
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Traffic|Vehicle")
-	FOnVehicleHitActorSignature OnVehicleHitActor;
+	FCWOnVehicleHitActorSignature OnVehicleHitActor;
 
 	UPROPERTY(BlueprintAssignable, Category = "Traffic|Parry")
-	FOnVehicleParriedSignature OnVehicleParried;
+	FCWOnVehicleParriedSignature OnVehicleParried;
 };

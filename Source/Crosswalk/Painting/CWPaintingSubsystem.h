@@ -13,7 +13,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneRegisteredSignature, AC
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneUnregisteredSignature, ACWBaseWorkZone*, Zone);
 
 /**
- * 살아 있는 작업 존과 작업자 목록을 들고 있는 조회 창구. (UTrafficSubsystem 과 같은 구조)
+ * 살아 있는 작업 존과 작업자 목록을 들고 있는 조회 창구. (UCWTrafficSubsystem 과 같은 구조)
  *
  * 왜 필요한가
  *   TActorIterator 는 "그 클래스만 모아둔 목록" 을 도는 게 아니다. 월드의 모든 레벨 액터

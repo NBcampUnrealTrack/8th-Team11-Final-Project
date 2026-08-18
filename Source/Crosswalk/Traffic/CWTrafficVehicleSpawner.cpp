@@ -1,19 +1,19 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "TrafficVehicleSpawner.h"
+#include "CWTrafficVehicleSpawner.h"
 
 #include "Engine/World.h"
 #include "TimerManager.h"
-#include "BaseVehicle.h"
-#include "TrafficLane.h"
+#include "CWBaseVehicle.h"
+#include "CWTrafficLane.h"
 
-ATrafficVehicleSpawner::ATrafficVehicleSpawner()
+ACWTrafficVehicleSpawner::ACWTrafficVehicleSpawner()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 }
 
-void ATrafficVehicleSpawner::StartSpawning()
+void ACWTrafficVehicleSpawner::StartSpawning()
 {
 	if (!HasAuthority())
 	{
@@ -37,7 +37,7 @@ void ATrafficVehicleSpawner::StartSpawning()
 
 	if (FirstDelay > 0.f)
 	{
-		GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ATrafficVehicleSpawner::HandleSpawnTimer, FirstDelay, false);
+		GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ACWTrafficVehicleSpawner::HandleSpawnTimer, FirstDelay, false);
 	}
 	else
 	{
@@ -45,7 +45,7 @@ void ATrafficVehicleSpawner::StartSpawning()
 	}
 }
 
-void ATrafficVehicleSpawner::StopSpawning()
+void ACWTrafficVehicleSpawner::StopSpawning()
 {
 	if (UWorld* World = GetWorld())
 	{
@@ -53,15 +53,15 @@ void ATrafficVehicleSpawner::StopSpawning()
 	}
 }
 
-ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicle(float StartDistance)
+ACWBaseVehicle* ACWTrafficVehicleSpawner::SpawnVehicle(float StartDistance)
 {
 	return SpawnVehicleOfClass(PickVehicleClass(), StartDistance);
 }
 
-TSubclassOf<ABaseVehicle> ATrafficVehicleSpawner::PickVehicleClass() const
+TSubclassOf<ACWBaseVehicle> ACWTrafficVehicleSpawner::PickVehicleClass() const
 {
 	float TotalWeight = 0.f;
-	for (const FTrafficVehicleEntry& Entry : VehicleMix)
+	for (const FCWTrafficVehicleEntry& Entry : VehicleMix)
 	{
 		if (Entry.VehicleClass)
 		{
@@ -76,7 +76,7 @@ TSubclassOf<ABaseVehicle> ATrafficVehicleSpawner::PickVehicleClass() const
 	}
 
 	float Roll = FMath::FRandRange(0.f, TotalWeight);
-	for (const FTrafficVehicleEntry& Entry : VehicleMix)
+	for (const FCWTrafficVehicleEntry& Entry : VehicleMix)
 	{
 		if (!Entry.VehicleClass || Entry.Weight <= 0.f)
 		{
@@ -94,7 +94,7 @@ TSubclassOf<ABaseVehicle> ATrafficVehicleSpawner::PickVehicleClass() const
 	return VehicleMix.Last().VehicleClass;
 }
 
-void ATrafficVehicleSpawner::BeginPlay()
+void ACWTrafficVehicleSpawner::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -105,16 +105,16 @@ void ATrafficVehicleSpawner::BeginPlay()
 	}
 }
 
-void ATrafficVehicleSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void ACWTrafficVehicleSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	StopSpawning();
 
 	Super::EndPlay(EndPlayReason);
 }
 
-void ATrafficVehicleSpawner::HandleSpawnTimer()
+void ACWTrafficVehicleSpawner::HandleSpawnTimer()
 {
-	const TSubclassOf<ABaseVehicle> SpawnClass = PickVehicleClass();
+	const TSubclassOf<ACWBaseVehicle> SpawnClass = PickVehicleClass();
 
 	// 입구에 앞차가 아직 남아 있으면 이번 차례는 건너뛴다. 겹쳐 스폰하는 것보다 낫다.
 	if (SpawnClass && !IsLaneEntranceBlocked(SpawnClass))
@@ -122,10 +122,10 @@ void ATrafficVehicleSpawner::HandleSpawnTimer()
 		SpawnVehicleOfClass(SpawnClass, 0.f);
 	}
 
-	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ATrafficVehicleSpawner::HandleSpawnTimer, RollSpawnInterval(), false);
+	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ACWTrafficVehicleSpawner::HandleSpawnTimer, RollSpawnInterval(), false);
 }
 
-ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ABaseVehicle> SpawnClass, float StartDistance)
+ACWBaseVehicle* ACWTrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ACWBaseVehicle> SpawnClass, float StartDistance)
 {
 	if (!HasAuthority() || !TargetLane || !SpawnClass)
 	{
@@ -144,10 +144,10 @@ ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ABaseVehic
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	// 스폰에도 위치와 회전만 넘긴다. 트랜스폼째로 넘기면 차선 액터의 스케일이 그대로 박혀서
-	// 차량 BP 가 정한 크기가 무시된다. (자세한 이유는 ABaseVehicle::UpdateTransformOnLane 참고)
+	// 차량 BP 가 정한 크기가 무시된다. (자세한 이유는 ACWBaseVehicle::UpdateTransformOnLane 참고)
 	const FTransform LaneTransform = TargetLane->GetTransformAtDistance(StartDistance);
 
-	ABaseVehicle* Vehicle = World->SpawnActor<ABaseVehicle>(
+	ACWBaseVehicle* Vehicle = World->SpawnActor<ACWBaseVehicle>(
 		SpawnClass, LaneTransform.GetLocation(), LaneTransform.Rotator(), SpawnParams);
 	if (Vehicle)
 	{
@@ -158,9 +158,9 @@ ABaseVehicle* ATrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ABaseVehic
 	return Vehicle;
 }
 
-FTrafficVehicleSpawnParams ATrafficVehicleSpawner::RollSpawnParams(float StartDistance) const
+FCWTrafficVehicleSpawnParams ACWTrafficVehicleSpawner::RollSpawnParams(float StartDistance) const
 {
-	FTrafficVehicleSpawnParams Params;
+	FCWTrafficVehicleSpawnParams Params;
 	Params.StartDistance = StartDistance;
 	Params.SpeedMultiplier = 1.f + FMath::FRandRange(-SpeedJitter, SpeedJitter);
 	Params.LateralOffset = FMath::FRandRange(-LaneOffsetRange, LaneOffsetRange);
@@ -168,7 +168,7 @@ FTrafficVehicleSpawnParams ATrafficVehicleSpawner::RollSpawnParams(float StartDi
 	return Params;
 }
 
-void ATrafficVehicleSpawner::PrewarmLane()
+void ACWTrafficVehicleSpawner::PrewarmLane()
 {
 	if (PrewarmVehicleCount <= 0 || !TargetLane)
 	{
@@ -211,7 +211,7 @@ void ATrafficVehicleSpawner::PrewarmLane()
 	}
 }
 
-float ATrafficVehicleSpawner::RollSpawnInterval() const
+float ACWTrafficVehicleSpawner::RollSpawnInterval() const
 {
 	const float Min = FMath::Min(SpawnIntervalMin, SpawnIntervalMax);
 	const float Max = FMath::Max(SpawnIntervalMin, SpawnIntervalMax);
@@ -219,14 +219,14 @@ float ATrafficVehicleSpawner::RollSpawnInterval() const
 	return FMath::FRandRange(Min, Max);
 }
 
-bool ATrafficVehicleSpawner::HasSpawnableVehicleClass() const
+bool ACWTrafficVehicleSpawner::HasSpawnableVehicleClass() const
 {
 	if (VehicleClass)
 	{
 		return true;
 	}
 
-	for (const FTrafficVehicleEntry& Entry : VehicleMix)
+	for (const FCWTrafficVehicleEntry& Entry : VehicleMix)
 	{
 		if (Entry.VehicleClass && Entry.Weight > 0.f)
 		{
@@ -237,7 +237,7 @@ bool ATrafficVehicleSpawner::HasSpawnableVehicleClass() const
 	return false;
 }
 
-float ATrafficVehicleSpawner::GetVehicleLengthOf(TSubclassOf<ABaseVehicle> InClass) const
+float ACWTrafficVehicleSpawner::GetVehicleLengthOf(TSubclassOf<ACWBaseVehicle> InClass) const
 {
 	if (!InClass)
 	{
@@ -245,15 +245,15 @@ float ATrafficVehicleSpawner::GetVehicleLengthOf(TSubclassOf<ABaseVehicle> InCla
 	}
 
 	// CDO에서 읽으면 차종 BP의 콜리전 크기가 그대로 반영된다.
-	const ABaseVehicle* VehicleTemplate = InClass->GetDefaultObject<ABaseVehicle>();
+	const ACWBaseVehicle* VehicleTemplate = InClass->GetDefaultObject<ACWBaseVehicle>();
 
 	return VehicleTemplate ? VehicleTemplate->GetVehicleLength() : 0.f;
 }
 
-float ATrafficVehicleSpawner::GetLargestVehicleLength() const
+float ACWTrafficVehicleSpawner::GetLargestVehicleLength() const
 {
 	float Largest = 0.f;
-	for (const FTrafficVehicleEntry& Entry : VehicleMix)
+	for (const FCWTrafficVehicleEntry& Entry : VehicleMix)
 	{
 		if (Entry.Weight > 0.f)
 		{
@@ -265,16 +265,16 @@ float ATrafficVehicleSpawner::GetLargestVehicleLength() const
 	return (Largest > 0.f) ? Largest : GetVehicleLengthOf(VehicleClass);
 }
 
-float ATrafficVehicleSpawner::GetRequiredCenterGap(float LengthA, float LengthB) const
+float ACWTrafficVehicleSpawner::GetRequiredCenterGap(float LengthA, float LengthB) const
 {
 	// 중심 사이 거리이므로 각 차량의 절반씩만 차지한다.
 	return (LengthA + LengthB) * 0.5f + SpawnClearance;
 }
 
-bool ATrafficVehicleSpawner::IsLaneEntranceBlocked(TSubclassOf<ABaseVehicle> IncomingClass) const
+bool ACWTrafficVehicleSpawner::IsLaneEntranceBlocked(TSubclassOf<ACWBaseVehicle> IncomingClass) const
 {
 	// 차간 거리 유지 로직 덕에 추월이 없으므로, 가장 최근 스폰 차량이 항상 맨 뒤에 있다.
-	const ABaseVehicle* Rearmost = LastSpawnedVehicle.Get();
+	const ACWBaseVehicle* Rearmost = LastSpawnedVehicle.Get();
 	if (!Rearmost)
 	{
 		return false;
