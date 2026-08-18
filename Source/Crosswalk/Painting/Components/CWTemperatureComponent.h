@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Painting/CWTemperatureTypes.h"
+#include "Painting/Data/CWTemperatureTypes.h"
 #include "CWTemperatureComponent.generated.h"
 
 class UCWTemperatureComponent;

@@ -6,7 +6,7 @@
 #include "Engine/StaticMesh.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Painting/CWWorkerComponent.h"
+#include "Painting/Components/CWWorkerComponent.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
 

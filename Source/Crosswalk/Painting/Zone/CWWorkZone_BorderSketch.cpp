@@ -10,7 +10,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Painting/Screens/CWBorderSketchWidget.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Painting/CWWorkerComponent.h"
+#include "Painting/Components/CWWorkerComponent.h"
 
 ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 {

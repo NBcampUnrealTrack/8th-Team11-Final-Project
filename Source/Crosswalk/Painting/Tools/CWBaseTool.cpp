@@ -4,7 +4,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
-#include "Painting/Tools/CWToolHolderComponent.h"
+#include "Painting/Components/CWToolHolderComponent.h"
 #include "Net/UnrealNetwork.h"
 
 ACWBaseTool::ACWBaseTool()

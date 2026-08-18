@@ -10,7 +10,7 @@
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Painting/CWPaintingSubsystem.h"
-#include "Painting/CWWorkerComponent.h"
+#include "Painting/Components/CWWorkerComponent.h"
 
 ACWWorkZone_Dust::ACWWorkZone_Dust()
 {

@@ -27,10 +27,10 @@
 #include "Characters/Components/CWHeadgearComponent.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Interfaces/Interface_Interactable.h"
-#include "Painting/CWTemperatureComponent.h"
-#include "Painting/CWWorkerComponent.h"
+#include "Painting/Components/CWTemperatureComponent.h"
+#include "Painting/Components/CWWorkerComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
-#include "Painting/Tools/CWToolHolderComponent.h"
+#include "Painting/Components/CWToolHolderComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
