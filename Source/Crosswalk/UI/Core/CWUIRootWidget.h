@@ -46,6 +46,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
     void ClearHUDWidgets();
 
+	// HUD 레이어의 표시 여부를 변경
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+	void SetHUDLayerVisible(bool bVisible);
+
 #pragma endregion
 
 #pragma region WidgetBindings

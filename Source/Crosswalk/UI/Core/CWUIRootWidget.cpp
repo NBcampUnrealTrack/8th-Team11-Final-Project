@@ -109,4 +109,19 @@ void UCWUIRootWidget::ClearHUDWidgets()
     }
 }
 
+void UCWUIRootWidget::SetHUDLayerVisible(bool bVisible)
+{
+	if (!IsValid(Overlay_HUDLayer))
+	{
+		return;
+	}
+
+	// HUD는 클릭을 받지 않아야 아래 Screen 레이어의 버튼이 눌린다
+	Overlay_HUDLayer->SetVisibility(
+		bVisible
+		? ESlateVisibility::SelfHitTestInvisible
+		: ESlateVisibility::Collapsed
+	);
+}
+
 #pragma endregion

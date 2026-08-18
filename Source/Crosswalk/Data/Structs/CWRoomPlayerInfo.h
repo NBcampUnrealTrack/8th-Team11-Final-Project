@@ -12,6 +12,31 @@ struct CROSSWALK_API FCWRoomPlayerInfo
 {
 	GENERATED_BODY()
 
+#pragma region Comparison
+
+public:
+	// MVVM 배열 변경 검사에서 플레이어 표시 정보가 같은지 비교
+	bool operator==(
+		const FCWRoomPlayerInfo& Other
+		) const
+	{
+		return
+			PlayerId == Other.PlayerId &&
+			PlayerName.EqualTo(Other.PlayerName) &&
+			bIsReady == Other.bIsReady &&
+			bIsLocalPlayer == Other.bIsLocalPlayer;
+	}
+
+	// 플레이어 표시 정보가 다른지 비교
+	bool operator!=(
+		const FCWRoomPlayerInfo& Other
+		) const
+	{
+		return !(*this == Other);
+	}
+
+#pragma endregion
+
 #pragma region PlayerInformation
 
 public:
@@ -38,28 +63,4 @@ public:
 
 #pragma endregion
 
-#pragma region Comparison
-
-public:
-	// MVVM 배열 변경 검사에서 플레이어 표시 정보가 같은지 비교
-	bool operator==(
-		const FCWRoomPlayerInfo& Other
-		) const
-	{
-		return
-			PlayerId == Other.PlayerId &&
-			PlayerName.EqualTo(Other.PlayerName) &&
-			bIsReady == Other.bIsReady &&
-			bIsLocalPlayer == Other.bIsLocalPlayer;
-	}
-
-	// 플레이어 표시 정보가 다른지 비교
-	bool operator!=(
-		const FCWRoomPlayerInfo& Other
-		) const
-	{
-		return !(*this == Other);
-	}
-
-#pragma endregion
 };

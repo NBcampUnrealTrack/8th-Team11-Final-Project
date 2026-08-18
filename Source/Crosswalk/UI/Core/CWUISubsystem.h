@@ -91,6 +91,23 @@ private:
 
 #pragma endregion
 
+#pragma region HUD
+
+public:
+	// 현재 Root의 HUD 레이어에 Widget을 추가
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+	bool AddHUDWidget(UUserWidget* InWidget);
+
+	// 현재 Root의 HUD 레이어에서 Widget을 제거
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+	bool RemoveHUDWidget(UUserWidget* InWidget);
+
+	// 현재 Root의 HUD 레이어를 모두 정리
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+	void ClearHUDWidgets();
+
+#pragma endregion
+
 #pragma region ViewModel
 
 private:
@@ -135,21 +152,6 @@ private:
 
 #pragma endregion
 
-#pragma region HUD
 
-public:
-    // 현재 Root의 HUD 레이어에 Widget을 추가
-    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
-    bool AddHUDWidget(UUserWidget* InWidget);
-
-    // 현재 Root의 HUD 레이어에서 Widget을 제거
-    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
-    bool RemoveHUDWidget(UUserWidget* InWidget);
-
-    // 현재 Root의 HUD 레이어를 모두 정리
-    UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
-    void ClearHUDWidgets();
-
-#pragma endregion
 
 };

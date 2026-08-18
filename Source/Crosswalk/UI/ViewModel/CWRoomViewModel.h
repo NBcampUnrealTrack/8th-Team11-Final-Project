@@ -9,6 +9,7 @@
 
 class ACWRoomGameState;
 class AGameStateBase;
+class APlayerController;
 class UWorld;
 
 UCLASS(BlueprintType)
@@ -116,6 +117,9 @@ public:
 	}
 
 private:
+	// 현재 Room 위젯을 소유한 로컬 PlayerController를 반환
+	APlayerController* GetOwningPlayerController() const;
+
 	// 현재 GameState의 플레이어 상태를 MVVM 프로퍼티로 변환
 	void RefreshRoomState();
 
@@ -276,6 +280,11 @@ private:
 	// 초기화에 사용된 현재 플레이 월드
 	UPROPERTY()
 	TWeakObjectPtr<UWorld> BoundWorld;
+
+	// Initialize에 전달된 위젯
+	// Seamless Travel 이후에도 현재 화면의 Owning Player를 찾는 데 사용
+	UPROPERTY()
+	TWeakObjectPtr<UObject> BoundContextObject;
 
 	// GameState 생성 이벤트 구독 해제용 핸들
 	FDelegateHandle GameStateSetHandle;

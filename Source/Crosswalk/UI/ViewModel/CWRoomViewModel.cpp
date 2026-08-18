@@ -3,6 +3,7 @@
 #include "UI/ViewModel/CWRoomViewModel.h"
 
 #include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
 #include "Core/CWPlayerState.h"
 #include "Core/Room/CWRoomGameMode.h"
 #include "Core/Room/CWRoomGameState.h"
@@ -32,6 +33,7 @@ void UCWRoomViewModel::Initialize(UObject* WorldContextObject)
 	}
 
 	BoundWorld = World;
+	BoundContextObject = WorldContextObject;
 
 	// RoomGameState가 늦게 만들어지는 상황을 처리하기 위해 월드 이벤트 구독
 	GameStateSetHandle = World->GameStateSetEvent.AddUObject(
@@ -62,6 +64,7 @@ void UCWRoomViewModel::Uninitialize()
 	}
 
 	GameStateSetHandle.Reset();
+	BoundContextObject.Reset();
 	BoundWorld.Reset();
 
 	// 이전 방 데이터가 다음 화면에 남지 않도록 상태 초기화
@@ -92,7 +95,7 @@ void UCWRoomViewModel::RequestToggleReady()
 
 	// 현재 화면을 소유한 로컬 플레이어 컨트롤러 확인
 	APlayerController* LocalPlayerController =
-		World->GetFirstPlayerController();
+		GetOwningPlayerController();
 
 	if (!IsValid(LocalPlayerController))
 	{
@@ -135,6 +138,35 @@ bool UCWRoomViewModel::RequestStartGame()
 	return RoomGameMode->TryStartGame();
 }
 
+#pragma region RoomData
+
+APlayerController* UCWRoomViewModel::GetOwningPlayerController() const
+{
+	// 위젯이 소유한 로컬 플레이어를 우선 사용
+	// Seamless Travel 이후에는 월드의 첫 번째 컨트롤러 순서가 보장되지 않음
+	if (
+		const UUserWidget* OwningWidget =
+		Cast<UUserWidget>(BoundContextObject.Get())
+		)
+	{
+		if (
+			APlayerController* OwningPlayer =
+			OwningWidget->GetOwningPlayer()
+			)
+		{
+			return OwningPlayer;
+		}
+	}
+
+	// 위젯이 아닌 객체로 초기화된 경우를 위한 예비 경로
+	if (const UWorld* World = BoundWorld.Get())
+	{
+		return World->GetFirstPlayerController();
+	}
+
+	return nullptr;
+}
+
 #pragma endregion
 
 #pragma region RoomData
@@ -152,7 +184,7 @@ void UCWRoomViewModel::RefreshRoomState()
 	}
 
 	APlayerController* LocalPlayerController =
-		World->GetFirstPlayerController();
+		GetOwningPlayerController();
 
 	APlayerState* LocalPlayerState = nullptr;
 
