@@ -324,6 +324,19 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float CompleteThreshold = 0.98f;
 
+	// 배치 시점의 시작 진행도. 0 이면 처음부터, 1 이면 이미 끝난 상태로 시작한다.
+	//
+	// 2단계 테두리처럼 "선은 이미 그려져 있고 가이드라인으로만 쓰고 싶다" 는 경우에 1 을 준다.
+	// 존을 지워버리면 도색 단계의 경계선이 사라지므로, 존은 남기고 작업만 건너뛰는 방법이다.
+	// 완료로 잡히려면 CompleteThreshold 이상이어야 한다. (테두리 존은 1.0)
+	//
+	// 진행도 자체는 서버가 정하는 리플리케이트 값이라 BP 에서 직접 못 쓴다. 그래서 시작값만
+	// 따로 받는다. 여기 넣은 값은 서버의 BeginPlay 에서 한 번 적용되고 전원에게 전파된다.
+	//
+	// 칸(도색) 존은 예외다. 시작 진행도를 격자에서 스스로 계산해 덮으므로 이 값이 무시된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float InitialProgress = 0.f;
+
 	// 아래 3개는 서버가 정하고 전원에게 전파된다. 그래서 진행도와 완료가 팀 전체에서 하나다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, ReplicatedUsing = OnRep_Progress, Category = "Work")
 	float Progress = 0.f;

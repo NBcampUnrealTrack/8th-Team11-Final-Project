@@ -72,6 +72,18 @@ void ACWBaseWorkZone::BeginPlay()
 		return;
 	}
 
+	// 시작 진행도를 넣는다. 서버에서만 하므로 클라이언트는 리플리케이션으로 값을 받는다.
+	//
+	// 기본값이면 건드리지 않는다. 칸 존처럼 시작 진행도를 스스로 계산하는 자식이
+	// 자기 BeginPlay 에서 다시 넣는데, 0 을 굳이 먼저 덮어쓸 이유가 없다.
+	//
+	// 델리게이트를 쏘지 않는 InitializeProgress 를 쓰는 이유는 이 시점에 아직 아무도
+	// 구독하지 않았기 때문이다. 체크리스트는 GameMode 가 존 등록 뒤에 다시 세므로 정상 반영된다.
+	if (InitialProgress > 0.f)
+	{
+		InitializeProgress(InitialProgress);
+	}
+
 	// 기다릴 것이 있을 수 있으면 일단 잠가둔다.
 	//
 	// 감시 대상을 아직 모으지 않았으므로 개수 대신 설정값으로 판단한다. 앞 존이 실제로
