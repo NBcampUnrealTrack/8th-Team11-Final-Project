@@ -1,7 +1,7 @@
 #include "Painting/CWPaintingSubsystem.h"
 
 #include "Engine/World.h"
-#include "Painting/CWWorkerComponent.h"
+#include "Painting/Components/CWWorkerComponent.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
 UCWPaintingSubsystem* UCWPaintingSubsystem::Get(const UObject* WorldContextObject)

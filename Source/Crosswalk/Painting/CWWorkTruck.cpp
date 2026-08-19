@@ -6,7 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/Tools/CWBaseTool.h"
-#include "Painting/Tools/CWToolHolderComponent.h"
+#include "Painting/Components/CWToolHolderComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 ACWWorkTruck::ACWWorkTruck()

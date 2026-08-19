@@ -6,7 +6,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/PlayerState.h"
-#include "Painting/CWTemperatureComponent.h"
+#include "Painting/Components/CWTemperatureComponent.h"
 #include "Net/UnrealNetwork.h"
 
 ACWRestZone::ACWRestZone()

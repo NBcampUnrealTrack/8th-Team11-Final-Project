@@ -1,4 +1,4 @@
-#include "Painting/CWTemperatureComponent.h"
+#include "Painting/Components/CWTemperatureComponent.h"
 
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"

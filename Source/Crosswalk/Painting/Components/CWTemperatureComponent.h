@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Painting/CWTemperatureTypes.h"
+#include "Painting/Data/CWTemperatureTypes.h"
 #include "CWTemperatureComponent.generated.h"
 
 class UCWTemperatureComponent;
@@ -194,7 +194,7 @@ public:
 
 	// 체온과 계수를 화면 좌상단에 띄운다. 체온 UI 가 생기면 끄면 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Temperature|Debug")
-	bool bShowDebugTemperature = true;
+	bool bShowDebugTemperature = false;
 
 protected:
 	// 서버가 굴리고 전원이 받는다. 이 값 하나에서 UI, 머티리얼, 이동속도, 작업속도가 전부 파생된다.

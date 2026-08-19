@@ -1,4 +1,4 @@
-﻿#include "Painting/CWWorkerComponent.h"
+﻿#include "Painting/Components/CWWorkerComponent.h"
 
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
@@ -6,7 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWPaintingSubsystem.h"
-#include "Painting/CWTemperatureComponent.h"
+#include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
 UCWWorkerComponent::UCWWorkerComponent()
@@ -57,7 +57,8 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	const AActor* Owner = GetOwner();
-	if (Owner == nullptr)
+	const UWorld* World = GetWorld();
+	if (Owner == nullptr || World == nullptr)
 	{
 		return;
 	}
@@ -80,7 +81,7 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	// (게이지/미니게임 존은 이 값을 쓰지 않지만, 칸을 칠하는 존은 이게 붓 중심이 된다)
 	if (bIsLocalWorker && !bIsServer && bWorking)
 	{
-		const float Now = GetWorld()->GetTimeSeconds();
+		const float Now = World->GetTimeSeconds();
 		if (Now - LastWorkLocationSendTime >= WorkLocationSendInterval)
 		{
 			LastWorkLocationSendTime = Now;
@@ -118,9 +119,22 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	//
 	// 진행이 자기 Tick 에서 도는 존은 제외한다. 그런 존은 작업 키를 누른 프레임에만 여기로 오므로
 	// 여기서 올리면 부스트할 때만 더워진다. 대신 존이 SubmitWorkHeat 로 직접 보고한다.
-	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat())
+	//
+	// 작업이 실제로 진행된 프레임에만, 그때까지 쌓인 작업 시간을 체온으로 넘긴다.
+	//
+	// 존을 찾았다는 것만으로 올리면 이미 칠한 자리에 붓을 대고 있어도 체온만 오른다.
+	// 칸을 칠하는 존은 HasWorkAt 으로 "지금 이 붓질이 뒤집을 칸이 있는가" 를 답한다.
+	// 지점 개념이 없는 존(게이지, 먼지)은 기본값 true 라 매 프레임 그대로 넘어간다.
+	//
+	// 쌓았다가 넘기는 이유는 MaxUnheatedWorkSeconds 주석 참고. 진행이 이어지는 한 흐른 시간이
+	// 전부 반영되므로 상승량은 예전과 같고, 덧칠만 할 때만 멈춘다.
+	UnheatedWorkSeconds = FMath::Min(UnheatedWorkSeconds + EffectiveDeltaTime, MaxUnheatedWorkSeconds);
+
+	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat()
+		&& FoundZone->HasWorkAt(this, WorkLocation))
 	{
-		TemperatureComponent->AddWorkHeat(EffectiveDeltaTime);
+		TemperatureComponent->AddWorkHeat(UnheatedWorkSeconds);
+		UnheatedWorkSeconds = 0.f;
 	}
 
 	// 존이 게이지 방식이든 칸 방식이든 미니게임이든 이 한 줄로 끝난다.
@@ -313,14 +327,14 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 			if (PlayerController->GetHitResultUnderCursorByChannel(
 				UEngineTypes::ConvertToTraceType(WorkTraceChannel), false, Hit) && Hit.bBlockingHit)
 			{
-				OutWorkLocation = Hit.ImpactPoint;
+				OutWorkLocation = ClampWorkLocationToPawn(PawnLocation, Hit.ImpactPoint);
 			}
 		}
 	}
 	else if (!ReceivedWorkLocation.IsZero())
 	{
 		// 서버에서 원격 클라이언트를 처리하는 경우. 커서를 볼 수 없으므로 올라온 값을 쓴다.
-		OutWorkLocation = ReceivedWorkLocation;
+		OutWorkLocation = ClampWorkLocationToPawn(PawnLocation, ReceivedWorkLocation);
 	}
 
 	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
@@ -337,6 +351,13 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 	ACWBaseWorkZone* NearestZone = nullptr;
 	float NearestDistanceSquared = TNumericLimits<float>::Max();
 
+	// 고른 존이 "지금 이 지점에 할 일이 있는" 존인가.
+	//
+	// 이게 1순위이고 거리가 2순위다. 존이 겹쳐 있으면 박스 거리가 둘 다 0 이라 거리만으로는
+	// 갈리지 않는다. 도로 전체를 덮는 정리 존과 도색 존이 겹친 자리에서, 지울 페인트가 없는
+	// 쪽이 붓을 붙잡으면 발밑의 페인트가 안 지워지고 체온만 오른다.
+	bool bNearestHasWorkHere = false;
+
 	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
 	{
 		ACWBaseWorkZone* Zone = WeakZone.Get();
@@ -345,18 +366,61 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 			continue;
 		}
 
-		const float AllowedRange = FMath::Min(MaxWorkDistance, Zone->GetWorkRange());
+		// 작업할 수 있는 위치인지는 존이 판단한다.
+		//
+		// 존마다 기준이 다르다. 게이지 존이나 미니게임은 "존 옆에 서 있어야 한다" 가 맞지만,
+		// 칸을 칠하는 존은 "붓이 닿는 곳에 칸이 있으면 된다" 가 맞다. 후자를 박스 거리로
+		// 판단하면 격자가 박스보다 넓게 뻗은 만큼(바깥 고리) 손이 닿는데도 작업이 막힌다.
+		if (!Zone->IsWorkerInRange(this, OutWorkLocation))
+		{
+			continue;
+		}
+
 		const float DistanceSquared = Zone->GetSquaredDistanceToPoint(PawnLocation);
-		if (DistanceSquared > FMath::Square(AllowedRange) || DistanceSquared >= NearestDistanceSquared)
+
+		const bool bHasWorkHere = Zone->HasWorkAt(this, OutWorkLocation);
+
+		// 할 일이 있는 존을 이미 잡았으면 없는 존으로 바꾸지 않는다.
+		if (bNearestHasWorkHere && !bHasWorkHere)
+		{
+			continue;
+		}
+
+		// 등급이 같을 때만 거리로 가른다. 등급이 올라가면 거리를 따지지 않고 바꿔 잡는다.
+		if (bNearestHasWorkHere == bHasWorkHere && DistanceSquared >= NearestDistanceSquared)
 		{
 			continue;
 		}
 
 		NearestDistanceSquared = DistanceSquared;
 		NearestZone = Zone;
+		bNearestHasWorkHere = bHasWorkHere;
 	}
 
 	return NearestZone;
+}
+
+FVector UCWWorkerComponent::ClampWorkLocationToPawn(const FVector& PawnLocation, const FVector& CursorLocation) const
+{
+	if (MaxBrushDistance <= 0.f)
+	{
+		return CursorLocation;
+	}
+
+	// 평면 거리로만 자른다. 높이까지 같이 줄이면 붓이 도로 위가 아니라 공중에 뜬다.
+	FVector Offset = CursorLocation - PawnLocation;
+	Offset.Z = 0.f;
+
+	const float DistanceSquared = Offset.SizeSquared();
+	if (DistanceSquared <= FMath::Square(MaxBrushDistance))
+	{
+		return CursorLocation;
+	}
+
+	// 커서 방향은 살리고 거리만 줄인다. 커서를 멀리 두면 팔이 닿는 데까지만 칠해진다.
+	const FVector ClampedOffset = Offset * (MaxBrushDistance / FMath::Sqrt(DistanceSquared));
+
+	return FVector(PawnLocation.X + ClampedOffset.X, PawnLocation.Y + ClampedOffset.Y, CursorLocation.Z);
 }
 
 void UCWWorkerComponent::SetTargetZone(ACWBaseWorkZone* NewZone)
@@ -409,27 +473,27 @@ void UCWWorkerComponent::Server_ReportWorkCompleted_Implementation(ACWBaseWorkZo
 	}
 }
 
-void UCWWorkerComponent::SubmitBrushStroke(ACWBaseWorkZone* Zone, const FVector& WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
+void UCWWorkerComponent::SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes)
 {
-	if (Zone == nullptr)
+	if (Zone == nullptr || Strokes.Num() == 0)
 	{
 		return;
 	}
 
 	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
 	{
-		Zone->ReceiveBrushStroke(WorldLocation, Radius, bFilled, bSpillOnly);
+		Zone->ReceiveBrushStrokes(Strokes);
 		return;
 	}
 
-	Server_SubmitBrushStroke(Zone, WorldLocation, Radius, bFilled, bSpillOnly);
+	Server_SubmitBrushStrokes(Zone, Strokes);
 }
 
-void UCWWorkerComponent::Server_SubmitBrushStroke_Implementation(ACWBaseWorkZone* Zone, FVector_NetQuantize WorldLocation, float Radius, bool bFilled, bool bSpillOnly)
+void UCWWorkerComponent::Server_SubmitBrushStrokes_Implementation(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes)
 {
 	if (Zone != nullptr)
 	{
-		Zone->ReceiveBrushStroke(WorldLocation, Radius, bFilled, bSpillOnly);
+		Zone->ReceiveBrushStrokes(Strokes);
 	}
 }
 
