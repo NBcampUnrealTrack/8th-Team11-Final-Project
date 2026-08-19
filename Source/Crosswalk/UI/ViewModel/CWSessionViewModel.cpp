@@ -8,79 +8,79 @@
 
 void UCWSessionViewModel::Initialize(UCWGameInstance* InGameInstance)
 {
-    // 재초기화 시 델리게이트가 중복 등록되지 않도록 기존 구독 정리
-    Uninitialize();
+	// 재초기화 시 델리게이트가 중복 등록되지 않도록 기존 구독 정리
+	Uninitialize();
 
-    if (!IsValid(InGameInstance))
-    {
-        return;
-    }
+	if (!IsValid(InGameInstance))
+	{
+		return;
+	}
 
-    BoundGameInstance = InGameInstance;
+	BoundGameInstance = InGameInstance;
 
-    // 로그인 상태 변경 이벤트 구독
-    InGameInstance->OnLoginStateChanged.AddDynamic(
-        this,
-        &UCWSessionViewModel::HandleLoginStateChanged
-    );
+	// 로그인 상태 변경 이벤트 구독
+	InGameInstance->OnLoginStateChanged.AddDynamic(
+		this,
+		&UCWSessionViewModel::HandleLoginStateChanged
+	);
 
-    // 세션 작업 완료 이벤트 구독
-    InGameInstance->OnSessionOperationCompleted.AddDynamic(
-        this,
-        &UCWSessionViewModel::HandleSessionOperationCompleted
-    );
+	// 세션 작업 완료 이벤트 구독
+	InGameInstance->OnSessionOperationCompleted.AddDynamic(
+		this,
+		&UCWSessionViewModel::HandleSessionOperationCompleted
+	);
 
-    // 공개 방 목록 변경 이벤트 구독
-    InGameInstance->OnRoomListUpdated.AddDynamic(
-        this,
-        &UCWSessionViewModel::HandleRoomListUpdated
-    );
+	// 공개 방 목록 변경 이벤트 구독
+	InGameInstance->OnRoomListUpdated.AddDynamic(
+		this,
+		&UCWSessionViewModel::HandleRoomListUpdated
+	);
 
-    // ViewModel 생성 전에 이벤트가 발생한 경우를 위해 현재 값을 즉시 반영
-    SetIsLoggedIn(InGameInstance->IsLoggedIn());
-    SetLoggedInDisplayName(InGameInstance->GetLoggedInDisplayName());
-    SetLastLoginFailure(ECWLoginFailure::None);
-    SetCurrentOperation(ECWSessionOperation::None);
-    SetLastFailure(ECWSessionFailure::None);
-    SetOperationInFlight(
-        InGameInstance->IsSessionOperationInFlight()
-    );
-    SetCurrentRoomCode(InGameInstance->GetCurrentRoomCode());
-    SetRoomList(InGameInstance->GetCachedRoomList());
+	// ViewModel 생성 전에 이벤트가 발생한 경우를 위해 현재 값을 즉시 반영
+	SetIsLoggedIn(InGameInstance->IsLoggedIn());
+	SetLoggedInDisplayName(InGameInstance->GetLoggedInDisplayName());
+	SetLastLoginFailure(ECWLoginFailure::None);
+	SetCurrentOperation(ECWSessionOperation::None);
+	SetLastFailure(ECWSessionFailure::None);
+	SetOperationInFlight(
+		InGameInstance->IsSessionOperationInFlight()
+	);
+	SetCurrentRoomCode(InGameInstance->GetCurrentRoomCode());
+	SetRoomList(InGameInstance->GetCachedRoomList());
 }
 
 void UCWSessionViewModel::Uninitialize()
 {
-    // 현재 GameInstance에 등록한 동적 델리게이트 구독 해제
-    if (UCWGameInstance* GameInstance = BoundGameInstance.Get())
-    {
-        GameInstance->OnLoginStateChanged.RemoveDynamic(
-            this,
-            &UCWSessionViewModel::HandleLoginStateChanged
-        );
+	// 현재 GameInstance에 등록한 동적 델리게이트 구독 해제
+	if (UCWGameInstance* GameInstance = BoundGameInstance.Get())
+	{
+		GameInstance->OnLoginStateChanged.RemoveDynamic(
+			this,
+			&UCWSessionViewModel::HandleLoginStateChanged
+		);
 
-        GameInstance->OnSessionOperationCompleted.RemoveDynamic(
-            this,
-            &UCWSessionViewModel::HandleSessionOperationCompleted
-        );
+		GameInstance->OnSessionOperationCompleted.RemoveDynamic(
+			this,
+			&UCWSessionViewModel::HandleSessionOperationCompleted
+		);
 
-        GameInstance->OnRoomListUpdated.RemoveDynamic(
-            this,
-            &UCWSessionViewModel::HandleRoomListUpdated
-        );
-    }
+		GameInstance->OnRoomListUpdated.RemoveDynamic(
+			this,
+			&UCWSessionViewModel::HandleRoomListUpdated
+		);
+	}
 
-    BoundGameInstance.Reset();
+	BoundGameInstance.Reset();
 
-    // 이전 GameInstance의 상태가 남지 않도록 ViewModel 초기화
-    SetIsLoggedIn(false);
-    SetLoggedInDisplayName(FString());
-    SetLastLoginFailure(ECWLoginFailure::None);
-    SetCurrentOperation(ECWSessionOperation::None);
-    SetLastFailure(ECWSessionFailure::None);
-    SetOperationInFlight(false);
-    SetCurrentRoomCode(FString());
-    SetRoomList(TArray<FCWRoomSummary>());
+	// 이전 GameInstance의 상태가 남지 않도록 ViewModel 초기화
+	SetIsLoggedIn(false);
+	SetLoggedInDisplayName(FString());
+	SetLastLoginFailure(ECWLoginFailure::None);
+	SetCurrentOperation(ECWSessionOperation::None);
+	SetLastFailure(ECWSessionFailure::None);
+	SetOperationInFlight(false);
+	SetCurrentRoomCode(FString());
+	SetRoomList(TArray<FCWRoomSummary>());
 }
 
 #pragma endregion
@@ -89,54 +89,54 @@ void UCWSessionViewModel::Uninitialize()
 
 void UCWSessionViewModel::RequestLoginWithEpic()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // Epic Account Portal 로그인 요청을 GameInstance에 전달
-    GameInstance->LoginWithEpic();
+	// Epic Account Portal 로그인 요청을 GameInstance에 전달
+	GameInstance->LoginWithEpic();
 }
 
 void UCWSessionViewModel::RequestLoginWithSteam()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // Steam 인증 정보를 사용하는 로그인 요청 전달
-    GameInstance->LoginWithSteam();
+	// Steam 인증 정보를 사용하는 로그인 요청 전달
+	GameInstance->LoginWithSteam();
 }
 
 void UCWSessionViewModel::RequestLoginAsPlayer1()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // Developer Authentication Tool의 Player1 로그인 요청 전달
-    GameInstance->LoginAsPlayer1();
+	// Developer Authentication Tool의 Player1 로그인 요청 전달
+	GameInstance->LoginAsPlayer1();
 }
 
 void UCWSessionViewModel::RequestLoginAsPlayer2()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // Developer Authentication Tool의 Player2 로그인 요청 전달
-    GameInstance->LoginAsPlayer2();
+	// Developer Authentication Tool의 Player2 로그인 요청 전달
+	GameInstance->LoginAsPlayer2();
 }
 
 #pragma endregion
@@ -145,105 +145,105 @@ void UCWSessionViewModel::RequestLoginAsPlayer2()
 
 FString UCWSessionViewModel::GetMenuMapPath() const
 {
-    const UCWGameInstance* GameInstance =
-        BoundGameInstance.Get();
+	const UCWGameInstance* GameInstance =
+		BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return FString();
-    }
+	if (!IsValid(GameInstance))
+	{
+		return FString();
+	}
 
-    // 위젯이 GameInstance를 직접 참조하지 않도록 설정값을 중계
-    return GameInstance->GetMenuMapPath();
+	// 위젯이 GameInstance를 직접 참조하지 않도록 설정값을 중계
+	return GameInstance->GetMenuMapPath();
 }
 
 FText UCWSessionViewModel::GetCurrentRoomCodeText() const
 {
-    // 세션 내부 문자열을 UI 표시용 텍스트로 변환
-    return FText::FromString(CurrentRoomCode);
+	// 세션 내부 문자열을 UI 표시용 텍스트로 변환
+	return FText::FromString(CurrentRoomCode);
 }
 
 void UCWSessionViewModel::RequestCreateRoom()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // 방 생성 요청을 GameInstance에 전달
-    GameInstance->CreateRoom();
+	// 방 생성 요청을 GameInstance에 전달
+	GameInstance->CreateRoom();
 
-    // 요청이 실제로 시작됐는지 GameInstance의 상태를 다시 읽음
-    SetOperationInFlight(
-        GameInstance->IsSessionOperationInFlight()
-    );
+	// 요청이 실제로 시작됐는지 GameInstance의 상태를 다시 읽음
+	SetOperationInFlight(
+		GameInstance->IsSessionOperationInFlight()
+	);
 }
 
 void UCWSessionViewModel::RequestFindRooms()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // 공개 방 검색 요청을 GameInstance에 전달
-    GameInstance->FindRooms();
+	// 공개 방 검색 요청을 GameInstance에 전달
+	GameInstance->FindRooms();
 
-    // 동기 실패 가능성이 있으므로 실제 진행 상태를 다시 읽음
-    SetOperationInFlight(
-        GameInstance->IsSessionOperationInFlight()
-    );
+	// 동기 실패 가능성이 있으므로 실제 진행 상태를 다시 읽음
+	SetOperationInFlight(
+		GameInstance->IsSessionOperationInFlight()
+	);
 }
 
 void UCWSessionViewModel::RequestJoinRoomByCode(
-    const FString& RoomCode
+	const FString& RoomCode
 )
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // 공백만 입력된 코드는 불필요한 전체 검색 전에 차단
-    const FString NormalizedRoomCode =
-        RoomCode.TrimStartAndEnd();
+	// 공백만 입력된 코드는 불필요한 전체 검색 전에 차단
+	const FString NormalizedRoomCode =
+		RoomCode.TrimStartAndEnd();
 
-    if (NormalizedRoomCode.IsEmpty())
-    {
-        return;
-    }
+	if (NormalizedRoomCode.IsEmpty())
+	{
+		return;
+	}
 
-    // 입력한 방 코드로 세션 참가 요청 전달
-    GameInstance->JoinRoomByCode(NormalizedRoomCode);
+	// 입력한 방 코드로 세션 참가 요청 전달
+	GameInstance->JoinRoomByCode(NormalizedRoomCode);
 
-    // 요청이 실제로 시작됐는지 GameInstance의 상태를 다시 읽음
-    SetOperationInFlight(
-        GameInstance->IsSessionOperationInFlight()
-    );
+	// 요청이 실제로 시작됐는지 GameInstance의 상태를 다시 읽음
+	SetOperationInFlight(
+		GameInstance->IsSessionOperationInFlight()
+	);
 }
 
 void UCWSessionViewModel::RequestDestroyRoom()
 {
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (!IsValid(GameInstance))
-    {
-        return;
-    }
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
 
-    // 현재 생성하거나 참가 중인 세션 제거 요청 전달
-    GameInstance->DestroyRoom();
+	// 현재 생성하거나 참가 중인 세션 제거 요청 전달
+	GameInstance->DestroyRoom();
 
-    // 동기 실패 가능성이 있으므로 실제 진행 상태를 다시 읽음
-    SetOperationInFlight(
-        GameInstance->IsSessionOperationInFlight()
-    );
+	// 동기 실패 가능성이 있으므로 실제 진행 상태를 다시 읽음
+	SetOperationInFlight(
+		GameInstance->IsSessionOperationInFlight()
+	);
 }
 
 #pragma endregion
@@ -252,109 +252,109 @@ void UCWSessionViewModel::RequestDestroyRoom()
 
 void UCWSessionViewModel::ClearLastFailure()
 {
-    // 다른 화면에서 발생한 이전 세션 결과가 남지 않도록 초기화
-    SetCurrentOperation(ECWSessionOperation::None);
-    SetLastFailure(ECWSessionFailure::None);
+	// 다른 화면에서 발생한 이전 세션 결과가 남지 않도록 초기화
+	SetCurrentOperation(ECWSessionOperation::None);
+	SetLastFailure(ECWSessionFailure::None);
 }
 
 FText UCWSessionViewModel::GetLastLoginFailureText() const
 {
-    // 내부 로그인 실패 타입을 사용자가 이해할 수 있는 문구로 변환
-    switch (LastLoginFailure)
-    {
-    case ECWLoginFailure::None:
-        return FText::GetEmpty();
+	// 내부 로그인 실패 타입을 사용자가 이해할 수 있는 문구로 변환
+	switch (LastLoginFailure)
+	{
+	case ECWLoginFailure::None:
+		return FText::GetEmpty();
 
-    case ECWLoginFailure::Cancelled:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "LoginCancelled",
-            "로그인이 취소되었습니다."
-        );
+	case ECWLoginFailure::Cancelled:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"LoginCancelled",
+			"로그인이 취소되었습니다."
+		);
 
-    case ECWLoginFailure::NoConnection:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "LoginNoConnection",
-            "네트워크 연결을 확인해 주세요."
-        );
+	case ECWLoginFailure::NoConnection:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"LoginNoConnection",
+			"네트워크 연결을 확인해 주세요."
+		);
 
-    case ECWLoginFailure::ServiceUnavailable:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "LoginServiceUnavailable",
-            "로그인 서비스를 사용할 수 없습니다."
-        );
+	case ECWLoginFailure::ServiceUnavailable:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"LoginServiceUnavailable",
+			"로그인 서비스를 사용할 수 없습니다."
+		);
 
-    case ECWLoginFailure::NotConfigured:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "LoginNotConfigured",
-            "로그인 설정을 확인해 주세요."
-        );
+	case ECWLoginFailure::NotConfigured:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"LoginNotConfigured",
+			"로그인 설정을 확인해 주세요."
+		);
 
-    case ECWLoginFailure::Unknown:
-    default:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "LoginUnknownFailure",
-            "로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."
-        );
-    }
+	case ECWLoginFailure::Unknown:
+	default:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"LoginUnknownFailure",
+			"로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."
+		);
+	}
 }
 
 FText UCWSessionViewModel::GetLastFailureText() const
 {
-    // 내부 실패 타입을 사용자가 이해할 수 있는 문구로 변환
-    switch (LastFailure)
-    {
-    case ECWSessionFailure::None:
-        return FText::GetEmpty();
+	// 내부 실패 타입을 사용자가 이해할 수 있는 문구로 변환
+	switch (LastFailure)
+	{
+	case ECWSessionFailure::None:
+		return FText::GetEmpty();
 
-    case ECWSessionFailure::NotLoggedIn:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "NotLoggedIn",
-            "로그인이 필요합니다."
-        );
+	case ECWSessionFailure::NotLoggedIn:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"NotLoggedIn",
+			"로그인이 필요합니다."
+		);
 
-    case ECWSessionFailure::RoomNotFound:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "RoomNotFound",
-            "방을 찾을 수 없습니다."
-        );
+	case ECWSessionFailure::RoomNotFound:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"RoomNotFound",
+			"방을 찾을 수 없습니다."
+		);
 
-    case ECWSessionFailure::RoomFull:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "RoomFull",
-            "방의 인원이 가득 찼습니다."
-        );
+	case ECWSessionFailure::RoomFull:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"RoomFull",
+			"방의 인원이 가득 찼습니다."
+		);
 
-    case ECWSessionFailure::AlreadyInSession:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "AlreadyInSession",
-            "이미 다른 방에 참가 중입니다."
-        );
+	case ECWSessionFailure::AlreadyInSession:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"AlreadyInSession",
+			"이미 다른 방에 참가 중입니다."
+		);
 
-    case ECWSessionFailure::Timeout:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "Timeout",
-            "요청 시간이 초과되었습니다."
-        );
+	case ECWSessionFailure::Timeout:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"Timeout",
+			"요청 시간이 초과되었습니다."
+		);
 
-    case ECWSessionFailure::RoomCodeCollision:
-    case ECWSessionFailure::Unknown:
-    default:
-        return NSLOCTEXT(
-            "CWSessionUI",
-            "UnknownFailure",
-            "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."
-        );
-    }
+	case ECWSessionFailure::RoomCodeCollision:
+	case ECWSessionFailure::Unknown:
+	default:
+		return NSLOCTEXT(
+			"CWSessionUI",
+			"UnknownFailure",
+			"요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."
+		);
+	}
 }
 
 #pragma endregion
@@ -362,71 +362,71 @@ FText UCWSessionViewModel::GetLastFailureText() const
 #pragma region GameInstanceBinding
 
 void UCWSessionViewModel::HandleLoginStateChanged(
-    bool bSuccess,
-    const FString& DisplayName,
-    ECWLoginFailure Failure
+	bool bSuccess,
+	const FString& DisplayName,
+	ECWLoginFailure Failure
 )
 {
-    // GameInstance가 전달한 최신 로그인 상태 저장
-    SetIsLoggedIn(bSuccess);
-    SetLoggedInDisplayName(DisplayName);
-    SetLastLoginFailure(Failure);
+	// GameInstance가 전달한 최신 로그인 상태 저장
+	SetIsLoggedIn(bSuccess);
+	SetLoggedInDisplayName(DisplayName);
+	SetLastLoginFailure(Failure);
 
-    // 상태값 변경 여부와 관계없이 로그인 요청 완료를 화면에 전달
-    OnLoginCompleted.Broadcast(bSuccess);
+	// 상태값 변경 여부와 관계없이 로그인 요청 완료를 화면에 전달
+	OnLoginCompleted.Broadcast(bSuccess);
 }
 
 void UCWSessionViewModel::HandleSessionOperationCompleted(
-    ECWSessionOperation Operation,
-    bool bSuccess,
-    ECWSessionFailure Failure
+	ECWSessionOperation Operation,
+	bool bSuccess,
+	ECWSessionFailure Failure
 )
 {
-    // 완료된 작업 종류와 실패 원인 저장
-    SetCurrentOperation(Operation);
-    SetLastFailure(Failure);
+	// 완료된 작업 종류와 실패 원인 저장
+	SetCurrentOperation(Operation);
+	SetLastFailure(Failure);
 
-    UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
-    if (IsValid(GameInstance))
-    {
-        // 작업 완료 후 실제 진행 상태와 방 코드를 다시 읽음
-        SetOperationInFlight(
-            GameInstance->IsSessionOperationInFlight()
-        );
+	if (IsValid(GameInstance))
+	{
+		// 작업 완료 후 실제 진행 상태와 방 코드를 다시 읽음
+		SetOperationInFlight(
+			GameInstance->IsSessionOperationInFlight()
+		);
 
-        if (
-            bSuccess &&
-            (
-                Operation == ECWSessionOperation::CreateRoom ||
-                Operation == ECWSessionOperation::JoinRoom ||
-                Operation == ECWSessionOperation::DestroyRoom
-                )
-            )
-        {
-            SetCurrentRoomCode(
-                GameInstance->GetCurrentRoomCode()
-            );
-        }
-    }
-    else
-    {
-        SetOperationInFlight(false);
-    }
+		if (
+			bSuccess &&
+			(
+				Operation == ECWSessionOperation::CreateRoom ||
+				Operation == ECWSessionOperation::JoinRoom ||
+				Operation == ECWSessionOperation::DestroyRoom
+				)
+			)
+		{
+			SetCurrentRoomCode(
+				GameInstance->GetCurrentRoomCode()
+			);
+		}
+	}
+	else
+	{
+		SetOperationInFlight(false);
+	}
 
-    // 상태 갱신이 모두 끝난 뒤 세션 작업 완료를 화면에 전달
-    OnSessionOperationCompleted.Broadcast(
-        Operation,
-        bSuccess
-    );
+	// 상태 갱신이 모두 끝난 뒤 세션 작업 완료를 화면에 전달
+	OnSessionOperationCompleted.Broadcast(
+		Operation,
+		bSuccess
+	);
 }
 
 void UCWSessionViewModel::HandleRoomListUpdated(
-    const TArray<FCWRoomSummary>& Rooms
+	const TArray<FCWRoomSummary>& Rooms
 )
 {
-    // GameInstance가 검색한 최신 공개 방 목록 저장
-    SetRoomList(Rooms);
+	// GameInstance가 검색한 최신 공개 방 목록 저장
+	SetRoomList(Rooms);
 }
 
 #pragma endregion
@@ -435,101 +435,101 @@ void UCWSessionViewModel::HandleRoomListUpdated(
 
 void UCWSessionViewModel::SetIsLoggedIn(bool bInIsLoggedIn)
 {
-    UE_MVVM_SET_PROPERTY_VALUE(
-        bIsLoggedIn,
-        bInIsLoggedIn
-    );
+	UE_MVVM_SET_PROPERTY_VALUE(
+		bIsLoggedIn,
+		bInIsLoggedIn
+	);
 }
 
 void UCWSessionViewModel::SetLoggedInDisplayName(
-    const FString& InDisplayName
+	const FString& InDisplayName
 )
 {
-    UE_MVVM_SET_PROPERTY_VALUE(
-        LoggedInDisplayName,
-        InDisplayName
-    );
+	UE_MVVM_SET_PROPERTY_VALUE(
+		LoggedInDisplayName,
+		InDisplayName
+	);
 }
 
 void UCWSessionViewModel::SetLastLoginFailure(
-    ECWLoginFailure InFailure
+	ECWLoginFailure InFailure
 )
 {
-    // 실패 원인이 변경되면 파생된 사용자 문구도 함께 갱신
-    if (
-        UE_MVVM_SET_PROPERTY_VALUE(
-            LastLoginFailure,
-            InFailure
-        )
-        )
-    {
-        UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
-            GetLastLoginFailureText
-        );
-    }
+	// 실패 원인이 변경되면 파생된 사용자 문구도 함께 갱신
+	if (
+		UE_MVVM_SET_PROPERTY_VALUE(
+			LastLoginFailure,
+			InFailure
+		)
+		)
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetLastLoginFailureText
+		);
+	}
 }
 
 void UCWSessionViewModel::SetCurrentOperation(
-    ECWSessionOperation InOperation
+	ECWSessionOperation InOperation
 )
 {
-    UE_MVVM_SET_PROPERTY_VALUE(
-        CurrentOperation,
-        InOperation
-    );
+	UE_MVVM_SET_PROPERTY_VALUE(
+		CurrentOperation,
+		InOperation
+	);
 }
 
 void UCWSessionViewModel::SetLastFailure(
-    ECWSessionFailure InFailure
+	ECWSessionFailure InFailure
 )
 {
-    // 실패 원인이 변경되면 파생된 사용자 문구도 함께 갱신
-    if (
-        UE_MVVM_SET_PROPERTY_VALUE(
-            LastFailure,
-            InFailure
-        )
-        )
-    {
-        UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
-            GetLastFailureText
-        );
-    }
+	// 실패 원인이 변경되면 파생된 사용자 문구도 함께 갱신
+	if (
+		UE_MVVM_SET_PROPERTY_VALUE(
+			LastFailure,
+			InFailure
+		)
+		)
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetLastFailureText
+		);
+	}
 }
 
 void UCWSessionViewModel::SetOperationInFlight(bool bInFlight)
 {
-    UE_MVVM_SET_PROPERTY_VALUE(
-        bIsOperationInFlight,
-        bInFlight
-    );
+	UE_MVVM_SET_PROPERTY_VALUE(
+		bIsOperationInFlight,
+		bInFlight
+	);
 }
 
 void UCWSessionViewModel::SetCurrentRoomCode(
-    const FString& InRoomCode
+	const FString& InRoomCode
 )
 {
-    // 방 코드가 실제로 변경된 경우 문자열과 파생 텍스트 모두 갱신
-    if (UE_MVVM_SET_PROPERTY_VALUE(
-        CurrentRoomCode,
-        InRoomCode
-    ))
-    {
-        UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
-            GetCurrentRoomCodeText
-        );
-    }
+	// 방 코드가 실제로 변경된 경우 문자열과 파생 텍스트 모두 갱신
+	if (UE_MVVM_SET_PROPERTY_VALUE(
+		CurrentRoomCode,
+		InRoomCode
+	))
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetCurrentRoomCodeText
+		);
+	}
 }
 
 void UCWSessionViewModel::SetRoomList(
-    const TArray<FCWRoomSummary>& InRooms
+	const TArray<FCWRoomSummary>& InRooms
 )
 {
-    // FCWRoomSummary에 operator==가 없어 배열 값 비교 매크로를 사용하지 않음
-    RoomList = InRooms;
+	// FCWRoomSummary에 operator==가 없어 배열 값 비교 매크로를 사용하지 않음
+	RoomList = InRooms;
 
-    // 검색 결과는 수신할 때마다 MVVM Binding에 변경 사실 전달
-    UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(RoomList);
+	// 검색 결과는 수신할 때마다 MVVM Binding에 변경 사실 전달
+	UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(RoomList);
 }
 
 #pragma endregion
