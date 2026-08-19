@@ -47,7 +47,8 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다.
 	if (bParried)
 	{
-		AddActorWorldOffset(GetActorForwardVector() * GetEffectiveSpeed() * DeltaSeconds);
+		CurrentVelocity = GetActorForwardVector() * GetEffectiveSpeed();
+		AddActorWorldOffset(CurrentVelocity * DeltaSeconds);
 		return;
 	}
 
@@ -56,7 +57,8 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		return;
 	}
 
-	DistanceAlongLane += ResolveStepSpeed(DeltaSeconds) * DeltaSeconds;
+	const float StepSpeed = ResolveStepSpeed(DeltaSeconds);
+	DistanceAlongLane += StepSpeed * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
@@ -64,7 +66,7 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		return;
 	}
 
-	UpdateTransformOnLane();
+	UpdateTransformOnLane(StepSpeed);
 }
 
 float ACWBaseVehicle::GetVehicleLength() const
@@ -318,7 +320,7 @@ float ACWBaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
 	return FMath::Min(DesiredSpeed, AllowedTravel / DeltaSeconds);
 }
 
-void ACWBaseVehicle::UpdateTransformOnLane()
+void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
 {
 	if (!CurrentLane)
 	{
@@ -332,6 +334,9 @@ void ACWBaseVehicle::UpdateTransformOnLane()
 	{
 		LaneTransform.AddToTranslation(LaneTransform.GetRotation().GetRightVector() * LaneLateralOffset);
 	}
+
+	// 리플리케이션이 실어 보낼 속도. 앞차에 막혀 StepSpeed가 0이면 정지 상태로 잡힌다.
+	CurrentVelocity = LaneTransform.GetRotation().GetForwardVector() * StepSpeed;
 
 	// 위치와 회전만 가져간다. 스케일은 차량 BP 가 정한 값을 그대로 둔다.
 	//

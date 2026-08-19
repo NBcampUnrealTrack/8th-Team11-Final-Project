@@ -46,6 +46,15 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 
 	/**
+	 * 스플라인 추종은 SetActorLocationAndRotation 으로 매 틱 위치를 덮어써서
+	 * 물리/무브먼트 컴포넌트 어느 쪽도 속도를 채워주지 않는다.
+	 * 이대로면 리플리케이션이 실어 보내는 속도가 항상 0이라, 클라이언트 SimulatedProxy 보간이
+	 * 다음 서버 업데이트까지 사이를 추정할 근거가 없어 위치가 끊겨 보인다.
+	 * GatherCurrentMovement 가 이 값을 읽어가므로, 여기서 실제 이동 속도를 채워 넣는다.
+	 */
+	virtual FVector GetVelocity() const override { return CurrentVelocity; }
+
+	/**
 	 * 서버 권한 패링 판정. 대상 선별은 트래픽 서브시스템이 끝낸 뒤 이 차량에게만 들어온다.
 	 * 반경·각도는 선별 단계에서 걸러지므로, 여기서는 차량이 단일 관리하는 윈도우만 다시 본다.
 	 */
@@ -137,8 +146,11 @@ private:
 	 */
 	float ResolveStepSpeed(float DeltaSeconds) const;
 
-	/** 현재 진행 거리와 좌우 오프셋을 실제 트랜스폼에 반영한다. */
-	void UpdateTransformOnLane();
+	/**
+	 * 현재 진행 거리와 좌우 오프셋을 실제 트랜스폼에 반영한다.
+	 * StepSpeed는 이번 프레임에 실제로 이동한 속도(cm/s). 리플리케이션용 속도 계산에 쓰인다.
+	 */
+	void UpdateTransformOnLane(float StepSpeed = 0.f);
 
 	/** 오버랩 정보에서 피격 지점을 뽑는다. 스윕이 아니면 최근접점으로 대체한다. */
 	FVector ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const;
@@ -248,6 +260,9 @@ protected:
 	bool bParried = false;
 
 private:
+	/** GetVelocity() 오버라이드가 돌려주는 값. 리플리케이션 보간용이며 게임플레이 로직에는 쓰지 않는다. */
+	FVector CurrentVelocity = FVector::ZeroVector;
+
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
 	TSet<TWeakObjectPtr<AActor>> HitActors;
 
