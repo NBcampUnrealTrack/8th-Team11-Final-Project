@@ -252,6 +252,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.02"))
 	float WorkHeatSendInterval = 0.2f;
 
+	// 진행이 확인되기를 기다리며 쌓아둘 수 있는 작업 시간의 상한(초).
+	//
+	// 칸을 칠하는 존은 진행이 칸 단위다. 붓을 꾸준히 움직여도 새 칸이 붓에 들어오는 것은
+	// 몇 프레임에 한 번이고, 천천히 칠할수록 그 간격이 길어진다. 그래서 프레임마다
+	// "지금 뒤집을 칸이 있나" 로 바로 가르면 실제로 일하는 중인데 체온이 안 오른다.
+	//
+	// 대신 흐른 시간을 쌓아 두었다가 진행이 확인되는 순간 한 번에 넘긴다. 진행이 이어지는
+	// 한 흐른 시간이 결국 전부 반영되므로 상승량은 예전과 같고, 기획서 3.3 의 균형점도 그대로다.
+	// 이 값은 최대 체온을 바꾸지 않는다. 덧칠만 하고 있으면 여기서 잘려 더 쌓이지 않는다.
+	//
+	// 너무 작으면 천천히 칠할 때 체온이 덜 오르고, 너무 크면 한참 덧칠하다 한 칸 칠했을 때
+	// 그만큼이 한 번에 들어온다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0"))
+	float MaxUnheatedWorkSeconds = 0.5f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Work")
 	ECWToolType HeldTool = ECWToolType::None;
 
@@ -277,6 +292,9 @@ private:
 	float PendingWorkHeat = 0.f;
 
 	float LastWorkHeatSendTime = -1000.f;
+
+	// 아직 체온으로 넘기지 못한 작업 시간. 진행이 확인되면 한 번에 넘기고 0 으로 돌린다.
+	float UnheatedWorkSeconds = 0.f;
 
 	// 같은 캐릭터의 체온 컴포넌트. BeginPlay 에서 한 번 찾아 둔다. 없어도 동작한다.
 	UPROPERTY(Transient)
