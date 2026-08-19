@@ -1,79 +1,13 @@
 ﻿// CWInGamePlayerViewModel.cpp
 
 #include "UI/ViewModel/CWInGamePlayerViewModel.h"
-
 #include "CoreMinimal.h"
 #include "Core/CWGameState.h"
 #include "Engine/World.h"
-#include "Blueprint/UserWidget.h"
 #include "TimerManager.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
-
-#pragma region ViewModelLifecycle
-
-void UCWInGamePlayerViewModel::Initialize(
-	UObject* WorldContextObject
-)
-{
-	// 재초기화 시 이전 월드와 GameState 구독을 먼저 정리
-	Uninitialize();
-
-	if (!IsValid(WorldContextObject))
-	{
-		return;
-	}
-
-	UWorld* World = WorldContextObject->GetWorld();
-
-	if (!IsValid(World))
-	{
-		return;
-	}
-
-	BoundContextObject = WorldContextObject;
-	BoundWorld = World;
-
-	// 인게임 GameState가 ViewModel보다 늦게 생성되는 상황 처리
-	GameStateSetHandle = World->GameStateSetEvent.AddUObject(
-		this,
-		&UCWInGamePlayerViewModel::HandleGameStateSet
-	);
-
-	// GameState가 이미 생성돼 있으면 즉시 구독하고 현재 목록 반영
-	BindGameState(
-		World->GetGameState<ACWGameState>()
-	);
-}
-
-void UCWInGamePlayerViewModel::Uninitialize()
-{
-	// 현재 GameState의 플레이어 목록 이벤트 구독 해제
-	UnbindGameState();
-
-	// 월드의 GameState 생성 이벤트 구독 해제
-	if (UWorld* World = BoundWorld.Get())
-	{
-		if (GameStateSetHandle.IsValid())
-		{
-			World->GameStateSetEvent.Remove(
-				GameStateSetHandle
-			);
-		}
-	}
-
-	GameStateSetHandle.Reset();
-	BoundContextObject.Reset();
-	BoundWorld.Reset();
-
-	// 이전 맵의 플레이어 데이터가 다음 화면에 남지 않도록 초기화
-	SetIsHost(false);
-	SetLocalPlayerName(FText::GetEmpty());
-	SetRemotePlayers(TArray<FCWRoomPlayerInfo>());
-}
-
-#pragma endregion
 
 #pragma region PlayerData
 
@@ -82,24 +16,18 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 	ACWGameState* GameState =
 		BoundGameState.Get();
 
-	UWorld* World =
-		BoundWorld.Get();
+	UWorld* World = GetBoundWorld();
 
 	if (!IsValid(GameState) || !IsValid(World))
 	{
 		return;
 	}
 
-	// ViewModel을 소유한 위젯의 Owning Player로 로컬 플레이어를 식별
-	// Listen Server에는 여러 PlayerController가 있으므로
-	// GetFirstPlayerController()를 사용하면 원격 컨트롤러를 고를 수 있음
-	const UUserWidget* OwningWidget =
-		Cast<UUserWidget>(BoundContextObject.Get());
-
+	// 위젯의 Owning Player로 로컬 플레이어를 식별한다.
+	// Listen Server에는 여러 PlayerController가 있어
+	// 월드에서 찾으면 원격 컨트롤러를 고를 수 있다
 	APlayerController* LocalPlayerController =
-		IsValid(OwningWidget)
-		? OwningWidget->GetOwningPlayer()
-		: nullptr;
+		GetOwningPlayerController();
 
 	// Owning Player 연결이 아직 끝나지 않았다면 다음 Tick에 재시도
 	if (!IsValid(LocalPlayerController))
@@ -276,26 +204,32 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 #pragma region GameStateBinding
 
 void UCWInGamePlayerViewModel::BindGameState(
-	ACWGameState* InGameState
+	AGameStateBase* InGameState
 )
 {
-	if (!IsValid(InGameState))
+	ACWGameState* NewGameState =
+		Cast<ACWGameState>(InGameState);
+
+	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
+	if (!IsValid(NewGameState))
 	{
+		UnbindGameState();
+		ResetViewModelState();
 		return;
 	}
 
 	// 같은 GameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == InGameState)
+	if (BoundGameState.Get() == NewGameState)
 	{
 		return;
 	}
 
 	UnbindGameState();
 
-	BoundGameState = InGameState;
+	BoundGameState = NewGameState;
 
 	// 플레이어 입장·퇴장·이름 변경 이벤트 구독
-	InGameState->OnPlayerListChanged.AddDynamic(
+	NewGameState->OnPlayerListChanged.AddDynamic(
 		this,
 		&UCWInGamePlayerViewModel::HandlePlayerListChanged
 	);
@@ -320,20 +254,18 @@ void UCWInGamePlayerViewModel::UnbindGameState()
 	BoundGameState.Reset();
 }
 
+void UCWInGamePlayerViewModel::ResetViewModelState()
+{
+	// 이전 맵의 플레이어 데이터가 다음 화면에 남지 않도록 초기화
+	SetIsHost(false);
+	SetLocalPlayerName(FText::GetEmpty());
+	SetRemotePlayers(TArray<FCWRoomPlayerInfo>());
+}
+
 void UCWInGamePlayerViewModel::HandlePlayerListChanged()
 {
 	// GameState가 가진 최신 PlayerArray를 다시 분리하고 정렬
 	RefreshPlayers();
-}
-
-void UCWInGamePlayerViewModel::HandleGameStateSet(
-	AGameStateBase* InGameState
-)
-{
-	// 인게임 전용 GameState가 만들어진 경우에만 구독
-	BindGameState(
-		Cast<ACWGameState>(InGameState)
-	);
 }
 
 #pragma endregion
