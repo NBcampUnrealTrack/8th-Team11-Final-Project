@@ -15,79 +15,84 @@ class UUserWidget;
 UCLASS()
 class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 #pragma region Initialize
 
 public:
-    // 서브시스템 생성 시 전역 Session ViewModel을 등록
-    virtual void Initialize(
-        FSubsystemCollectionBase& Collection
-    ) override;
+	// 서브시스템 생성 시 전역 Session ViewModel을 등록
+	virtual void Initialize(
+		FSubsystemCollectionBase& Collection
+	) override;
 
-    // 서브시스템 종료 시 등록한 Session ViewModel을 정리
-    virtual void Deinitialize() override;
+	// 서브시스템 종료 시 등록한 Session ViewModel을 정리
+	virtual void Deinitialize() override;
 
-    // UI 클래스 설정을 저장하고 Root를 준비
-    UFUNCTION(BlueprintCallable, Category = "CW|UI")
-    void InitializeUI(
-        TSubclassOf<UCWUIRootWidget> InRootClass,
-        const TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>>& InPageClasses
-    );
+	// UI 클래스 설정을 저장하고 Root를 준비
+	UFUNCTION(BlueprintCallable, Category = "CW|UI")
+	void InitializeUI(
+		TSubclassOf<UCWUIRootWidget> InRootClass,
+		const TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>>& InPageClasses
+	);
 
 #pragma endregion
 
 #pragma region Page
 
 public:
-    // 요청한 페이지로 화면을 전환
-    UFUNCTION(BlueprintCallable, Category = "CW|UI")
-    bool OpenPage(ECWUIPage TargetPage);
-    
-    // 현재 표시 중인 페이지를 반환
-    UFUNCTION(BlueprintPure, Category = "CW|UI")
-    ECWUIPage GetCurrentPage() const;
+	// 요청한 페이지로 화면을 전환
+	UFUNCTION(BlueprintCallable, Category = "CW|UI")
+	bool OpenPage(ECWUIPage TargetPage);
+
+	// 열린 페이지를 제거하고 지정한 입력 모드로 복귀
+	// 인게임에서 연 설정 화면을 닫을 때 사용
+	UFUNCTION(BlueprintCallable, Category = "CW|UI")
+	bool ClosePage(ECWUIInputMode ReturnInputMode = ECWUIInputMode::GameAndUI);
+
+	// 현재 표시 중인 페이지를 반환
+	UFUNCTION(BlueprintPure, Category = "CW|UI")
+	ECWUIPage GetCurrentPage() const;
 
 private:
-    // 현재 페이지를 닫고 참조를 정리
-    UFUNCTION(BlueprintCallable, Category = "CW|UI")
-    void CloseCurrentPage();
-    
-    // 화면의 페이지 전환 요청을 처리
-    UFUNCTION()
-    void HandleRequestOpenPage(ECWUIPage TargetPage);
+	// 현재 페이지를 닫고 참조를 정리
+	UFUNCTION(BlueprintCallable, Category = "CW|UI")
+	void CloseCurrentPage();
+
+	// 화면의 페이지 전환 요청을 처리
+	UFUNCTION()
+	void HandleRequestOpenPage(ECWUIPage TargetPage);
 
 #pragma endregion
 
 #pragma region Root
 
 private:
-    // 현재 World에서 사용할 Root를 확인하거나 생성
-    bool EnsureUIRoot();
+	// 현재 World에서 사용할 Root를 확인하거나 생성
+	bool EnsureUIRoot();
 
 #pragma endregion
 
 #pragma region Transition
 
 private:
-    // 화면 전환 상태와 입력 차단을 시작
-    void BeginTransition();
+	// 화면 전환 상태와 입력 차단을 시작
+	void BeginTransition();
 
-    // 화면 전환 상태와 입력 차단을 종료
-    void EndTransition();
+	// 화면 전환 상태와 입력 차단을 종료
+	void EndTransition();
 
 #pragma endregion
 
 #pragma region Input
 
 public:
-    // 로컬 PlayerController에 지정한 입력 모드를 적용
-    UFUNCTION(BlueprintCallable, Category = "CW|UI|Input")
-    void ApplyInputMode(ECWUIInputMode InInputMode);
+	// 로컬 PlayerController에 지정한 입력 모드를 적용
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Input")
+	void ApplyInputMode(ECWUIInputMode InInputMode);
 
 private:
-    // 페이지 종류에 대응하는 입력 모드를 선택
-    void ApplyInputModeForPage(ECWUIPage Page);
+	// 페이지 종류에 대응하는 입력 모드를 선택
+	void ApplyInputModeForPage(ECWUIPage Page);
 
 #pragma endregion
 
@@ -106,49 +111,53 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
 	void ClearHUDWidgets();
 
+	// 현재 Root의 HUD 레이어 표시 여부를 변경
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
+	void SetHUDVisible(bool bVisible);
+
 #pragma endregion
 
 #pragma region ViewModel
 
 private:
-    // Global Viewmodel Collection에 등록하거나 조회한 Session ViewModel
-    UPROPERTY(Transient)
-    TWeakObjectPtr<UCWSessionViewModel> SessionViewModel;
+	// Global Viewmodel Collection에 등록하거나 조회한 Session ViewModel
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCWSessionViewModel> SessionViewModel;
 
-    // 이 서브시스템이 전역 Session ViewModel을 직접 등록했는지 구분
-    bool bOwnsSessionViewModelRegistration = false;
+	// 이 서브시스템이 전역 Session ViewModel을 직접 등록했는지 구분
+	bool bOwnsSessionViewModelRegistration = false;
 
 #pragma endregion
 
 #pragma region UIConfiguration
 
 private:
-    // 현재 사용할 Root Widget 클래스
-    UPROPERTY()
-    TSubclassOf<UCWUIRootWidget> UIRootClass;
+	// 현재 사용할 Root Widget 클래스
+	UPROPERTY()
+	TSubclassOf<UCWUIRootWidget> UIRootClass;
 
-    // 페이지별로 생성할 화면 클래스
-    UPROPERTY()
-    TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>> PageClasses;
+	// 페이지별로 생성할 화면 클래스
+	UPROPERTY()
+	TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>> PageClasses;
 
 #pragma endregion
 
 #pragma region RuntimeState
 
 private:
-    // 현재 World에 표시 중인 Root
-    UPROPERTY(Transient)
-    TWeakObjectPtr<UCWUIRootWidget> UIRoot;
+	// 현재 World에 표시 중인 Root
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCWUIRootWidget> UIRoot;
 
-    // 현재 Screen Layer에 표시 중인 화면
-    UPROPERTY(Transient)
-    TWeakObjectPtr<UCWUIScreenWidget> CurrentScreen;
+	// 현재 Screen Layer에 표시 중인 화면
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCWUIScreenWidget> CurrentScreen;
 
-    // 현재 표시 중인 페이지
-    ECWUIPage CurrentPage = ECWUIPage::None;
+	// 현재 표시 중인 페이지
+	ECWUIPage CurrentPage = ECWUIPage::None;
 
-    // 화면 전환 진행 여부
-    bool bIsTransitioning = false;
+	// 화면 전환 진행 여부
+	bool bIsTransitioning = false;
 
 #pragma endregion
 
