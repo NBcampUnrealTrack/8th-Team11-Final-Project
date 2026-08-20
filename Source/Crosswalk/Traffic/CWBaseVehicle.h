@@ -183,13 +183,15 @@ private:
 	void UpdateTransformOnLane(float StepSpeed = 0.f);
 
 	/**
-	 * 패링당한 사실이 클라이언트에 도착했을 때. 차선 추종을 끊고 튕겨나간 지점으로 자세를 맞춘다.
+	 * 튕겨나간 지점과 방향이 클라이언트에 도착했을 때. 차선 추종을 끊고 그 자세로 맞춘다.
 	 *
 	 * 회전은 복제되지 않으므로 여기서 ParriedLaunchDirection 을 보고 직접 세워야 한다.
 	 * 그냥 두면 클라이언트에서는 차가 차선 방향 그대로 옆으로 미끄러지는 것처럼 보인다.
+	 *
+	 * bParried 가 아니라 ParryLaunchSerial 에 달아야 한다. 이유는 그 프로퍼티 주석에 적어 뒀다.
 	 */
 	UFUNCTION()
-	void OnRep_Parried();
+	void OnRep_ParryLaunch();
 
 	/** 오버랩 정보에서 피격 지점을 뽑는다. 스윕이 아니면 최근접점으로 대체한다. */
 	FVector ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const;
@@ -304,8 +306,30 @@ protected:
 	float LaneLateralOffset = 0.f;
 
 	/** 패링당해 튕겨나가는 중인 상태. 차선을 벗어나 직진한다. */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_Parried, Category = "Traffic|Parry")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Parry")
 	bool bParried = false;
+
+	/**
+	 * 패링당할 때마다 1 올라가는 번호. 클라이언트가 새 발사를 반영하게 만드는 신호다.
+	 *
+	 * 왜 필요한가
+	 *   같은 차량이 두 번 패링당하면 bParried 는 이미 true 라서 값이 바뀌지 않는다.
+	 *   서버는 바뀐 프로퍼티만 보내므로 아예 전송되지 않고, 따라서 RepNotify 도 뜨지 않는다.
+	 *   (REPNOTIFY_Always 를 붙여도 안 된다. 그건 "전송된 값이 로컬 값과 같을 때도 알림을
+	 *    띄운다" 는 뜻이라, 전송 자체가 없는 이 경우와는 무관하다)
+	 *
+	 *   장소와 방향은 바뀌니까 전송되기는 하는데, 알림이 없으면 클라이언트는 새 값을
+	 *   들고만 있고 아무것도 하지 않는다. 회전은 복제되지 않으므로 클라이언트의 차량은
+	 *   이전 방향 그대로 계속 날아가고, 서버와 위치가 영구히 갈린다.
+	 *   그러면 다른 플레이어 화면에서 차가 엉뚱한 곳으로 가거나 사라진 것처럼 보인다.
+	 *
+	 *   이 번호는 매번 반드시 달라지므로 전송과 알림이 항상 보장된다.
+	 *   uint8 이라 256 번마다 돌지만, 직전 값과 다르다는 성질은 그대로다.
+	 *
+	 * InitializeOnLane 에서 되돌리지 않는다. 계속 올라가기만 해야 우연히 같은 값이 되지 않는다.
+	 */
+	UPROPERTY(VisibleInstanceOnly, ReplicatedUsing = OnRep_ParryLaunch, Category = "Traffic|Parry")
+	uint8 ParryLaunchSerial = 0;
 
 	// FVector_NetQuantize 계열은 BlueprintType 이 아니라 BlueprintReadOnly 를 붙일 수 없다.
 	// 복제용 내부 값이라 BP 에 열 이유도 없다.
