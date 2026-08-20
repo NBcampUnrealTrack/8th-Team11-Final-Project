@@ -34,6 +34,28 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnVehicleParriedSignature, ACWBa
  * 차량은 플레이어를 추적하지 않는다 - 거동이 예측 가능해야 회피/패링 학습이 성립한다.
  * 개체별 편차(속도 배율, 좌우 오프셋)는 스포너가 굴려서 넘긴다.
  * 앞차와는 최소 간격을 유지하므로 같은 차선에서 서로 통과하지 않는다.
+ *
+ * 네트워크 — 트랜스폼을 복제하지 않고 차선 위 진행 거리만 복제한다.
+ *
+ *   트랜스폼 복제(SetReplicateMovement)를 쓰면 클라이언트가 매 업데이트마다 순간이동한다.
+ *   무브먼트 컴포넌트가 없는 순수 AActor 는 AActor::PostNetReceiveLocationAndRotation 이
+ *   받은 위치를 그대로 SetActorLocationAndRotation 하는 것이 전부이고, 그 경로에 보간이 없다.
+ *   속도를 같이 실어 보내도 AActor::PostNetReceiveVelocity 는 물리 예측이 켜져 있을 때만
+ *   동작해서 그냥 버려진다. 업데이트 빈도를 올리는 것 말고는 손댈 구석이 없다.
+ *
+ *   그래서 위치가 아니라 "차선 위 어디까지 갔는가"(DistanceAlongLane)를 복제한다.
+ *   차선 스플라인은 레벨에 배치된 액터라 클라이언트도 똑같이 갖고 있으므로,
+ *   진행 거리만 있으면 위치와 회전을 각자 계산할 수 있다.
+ *
+ *   업데이트 사이는 클라이언트가 스스로 메운다. 주행 속도를 결정하는 값(Speed 는 차종 BP,
+ *   SpeedMultiplier 는 복제, 앞차 간격은 서브시스템의 차량 목록)이 양쪽에 모두 있어서
+ *   같은 Tick 코드를 그대로 돌릴 수 있다. 서버 값이 도착하면 그 값으로 맞추는데, 추정 속도가
+ *   서버와 같으므로 보정량이 거의 0 이다. 차가 앞차에 막혀 서는 구간에서만 조금 어긋난다.
+ *
+ *   덤으로 대역폭도 줄어든다. 위치+회전 대신 float 하나이고, 업데이트 빈도도 낮출 수 있다.
+ *
+ *   패링당해 차선을 벗어난 구간은 진행 거리로 표현할 수 없어서, 튕겨나간 지점과 방향을
+ *   따로 복제하고 클라이언트가 그 지점에서 직진을 시작한다. (bParried / ParriedLaunch*)
  */
 UCLASS()
 class CROSSWALK_API ACWBaseVehicle : public AActor, public IInterface_ParryReceiver
@@ -43,14 +65,20 @@ class CROSSWALK_API ACWBaseVehicle : public AActor, public IInterface_ParryRecei
 public:
 	ACWBaseVehicle();
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	/** 주행은 서버·클라이언트가 같은 코드로 각자 돈다. 진행도 확정과 소멸만 서버 전용이다. */
 	virtual void Tick(float DeltaSeconds) override;
 
 	/**
-	 * 스플라인 추종은 SetActorLocationAndRotation 으로 매 틱 위치를 덮어써서
-	 * 물리/무브먼트 컴포넌트 어느 쪽도 속도를 채워주지 않는다.
-	 * 이대로면 리플리케이션이 실어 보내는 속도가 항상 0이라, 클라이언트 SimulatedProxy 보간이
-	 * 다음 서버 업데이트까지 사이를 추정할 근거가 없어 위치가 끊겨 보인다.
-	 * GatherCurrentMovement 가 이 값을 읽어가므로, 여기서 실제 이동 속도를 채워 넣는다.
+	 * 실제 이동 속도(cm/s). 서버·클라이언트 양쪽의 Tick 이 각자 채운다.
+	 *
+	 * 스플라인 추종은 SetActorLocationAndRotation 으로 위치를 덮어써서 물리도 무브먼트
+	 * 컴포넌트도 속도를 채워주지 않는다. 그대로 두면 애니메이션·나이아가라·사운드처럼
+	 * GetVelocity 를 읽는 쪽이 전부 0 을 받는다.
+	 *
+	 * 리플리케이션과는 무관하다. 트랜스폼을 복제하지 않으므로 GatherCurrentMovement 가
+	 * 이 값을 읽어가지 않는다.
 	 */
 	virtual FVector GetVelocity() const override { return CurrentVelocity; }
 
@@ -148,9 +176,18 @@ private:
 
 	/**
 	 * 현재 진행 거리와 좌우 오프셋을 실제 트랜스폼에 반영한다.
-	 * StepSpeed는 이번 프레임에 실제로 이동한 속도(cm/s). 리플리케이션용 속도 계산에 쓰인다.
+	 * StepSpeed는 이번 프레임에 실제로 이동한 속도(cm/s). GetVelocity 가 돌려줄 값에 쓰인다.
 	 */
 	void UpdateTransformOnLane(float StepSpeed = 0.f);
+
+	/**
+	 * 패링당한 사실이 클라이언트에 도착했을 때. 차선 추종을 끊고 튕겨나간 지점으로 자세를 맞춘다.
+	 *
+	 * 회전은 복제되지 않으므로 여기서 ParriedLaunchDirection 을 보고 직접 세워야 한다.
+	 * 그냥 두면 클라이언트에서는 차가 차선 방향 그대로 옆으로 미끄러지는 것처럼 보인다.
+	 */
+	UFUNCTION()
+	void OnRep_Parried();
 
 	/** 오버랩 정보에서 피격 지점을 뽑는다. 스윕이 아니면 최근접점으로 대체한다. */
 	FVector ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const;
@@ -165,8 +202,9 @@ private:
 	/**
 	 * 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
 	 *
-	 * 차량은 이동만 복제되므로, 클라이언트 입장에서는 차가 갑자기 방향을 트는 것으로만 보인다.
-	 * "패링당했다"는 사건 자체는 이 RPC 로만 전달된다.
+	 * 차량이 실제로 튕겨나가는 것은 bParried / ParriedLaunch* 복제가 담당한다.
+	 * 상태를 이 RPC 로 넘기지 않는 이유: 패링 순간에 관련성 밖이었다가 뒤늦게 들어온
+	 * 클라이언트는 이 RPC 를 못 받는다. 그때도 복제 프로퍼티는 현재 값이 그대로 도착한다.
 	 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayParriedFX(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier);
@@ -239,28 +277,47 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParriedSpeedMultiplier = 1.f;
 
-	/** 현재 주행 중인 차선. */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	/**
+	 * 현재 주행 중인 차선.
+	 *
+	 * 레벨에 배치된 액터라 클라이언트에도 같은 이름으로 존재한다. 그래서 차선 자체를
+	 * 복제하지 않아도 이 참조는 해석된다. 클라이언트가 위치를 계산하려면 반드시 필요하다.
+	 */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
 	TObjectPtr<ACWTrafficLane> CurrentLane;
 
-	/** 차선 시작점에서 진행한 거리(cm). */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	/**
+	 * 차선 시작점에서 진행한 거리(cm). 이 값 하나가 차량의 위치와 회전을 전부 결정한다.
+	 * 클라이언트는 업데이트 사이를 자기 Tick 으로 메우고, 값이 도착하면 그 값으로 맞춘다.
+	 */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
 	float DistanceAlongLane = 0.f;
 
-	/** 스포너가 굴린 개체별 속도 배율. */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	/** 스포너가 굴린 개체별 속도 배율. 클라이언트도 같은 속도로 추정해야 하므로 복제한다. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
 	float SpeedMultiplier = 1.f;
 
-	/** 스포너가 굴린 차선 중심선 대비 좌우 오프셋(cm). */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	/** 스포너가 굴린 차선 중심선 대비 좌우 오프셋(cm). 위치 계산에 들어가므로 복제한다. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
 	float LaneLateralOffset = 0.f;
 
 	/** 패링당해 튕겨나가는 중인 상태. 차선을 벗어나 직진한다. */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Traffic|Parry")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_Parried, Category = "Traffic|Parry")
 	bool bParried = false;
 
+	// FVector_NetQuantize 계열은 BlueprintType 이 아니라 BlueprintReadOnly 를 붙일 수 없다.
+	// 복제용 내부 값이라 BP 에 열 이유도 없다.
+
+	/** 패링당한 순간의 위치. 클라이언트가 같은 지점에서 직진을 시작하게 한다. */
+	UPROPERTY(VisibleInstanceOnly, Replicated, Category = "Traffic|Parry")
+	FVector_NetQuantize ParriedLaunchLocation = FVector::ZeroVector;
+
+	/** 패링당해 날아가는 방향. 회전이 복제되지 않으므로 클라이언트가 이 값으로 자세를 잡는다. */
+	UPROPERTY(VisibleInstanceOnly, Replicated, Category = "Traffic|Parry")
+	FVector_NetQuantizeNormal ParriedLaunchDirection = FVector::ZeroVector;
+
 private:
-	/** GetVelocity() 오버라이드가 돌려주는 값. 리플리케이션 보간용이며 게임플레이 로직에는 쓰지 않는다. */
+	/** GetVelocity() 가 돌려주는 값. 서버·클라이언트가 각자 자기 Tick 에서 채운다. */
 	FVector CurrentVelocity = FVector::ZeroVector;
 
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
