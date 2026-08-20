@@ -43,6 +43,15 @@ protected:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_ParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
+	/**
+	 * 서버가 쿨타임을 쓰지 않았음을 소유 클라이언트에 알린다. 로컬 예측을 되돌리는 신호다.
+	 *
+	 * 유실되면 쓰지도 않은 쿨타임을 그대로 기다리게 되므로 Reliable 이어야 한다.
+	 * 소유 연결에만 가므로 다른 사람의 쿨타임에는 영향이 없다.
+	 */
+	UFUNCTION(Client, Reliable)
+	void Client_ParryRejected();
+
 private:
 	// 서버에서 쿨타임을 확인하고 주변 위협 차량에 패링 판정을 시도
 	void HandleServerParryRequest(const FVector& CursorWorldLocation, float ClientInputTime);
@@ -72,9 +81,38 @@ private:
 	// 서버 판정 쿨타임 시간을 갱신
 	void UpdateServerCooldown();
 
+	/**
+	 * 서버가 이 시도를 쿨타임 없이 흘려보냈음을 알린다. 서버에서만 부른다.
+	 *
+	 * 여기서 되돌리는 것은 클라이언트의 로컬 예측뿐이다. 서버 쿨타임은 애초에
+	 * 소모가 확정된 뒤에만 갱신하므로 되돌릴 것이 없다.
+	 */
+	void RejectParry();
+
+	// 쿨타임을 아직 쓰지 않은 상태로 되돌린다. 소유 클라이언트에서만 의미가 있다.
+	void ResetLocalCooldown();
+
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
 	float ParryCooldown = 1.f;
+
+	/**
+	 * 조건을 통과한 차량이 없어 판정이 실패했을 때 쿨타임을 되돌려줄지.
+	 *
+	 * 켜면 헛친 것은 공짜가 되고, 끄면 헛치는 것 자체가 1초의 대가를 치른다.
+	 * 어느 쪽이 맞는지는 게임 감각의 문제라 플레이로 정하면 된다.
+	 *
+	 * 기본값은 켬이다. 랙 보정을 넣었어도 상한(MaxViewRewindSeconds)을 넘게 늦으면 여전히
+	 * 실패하는데, 그건 그 사람의 실수가 아니라 회선 때문이라 대가를 물리기 어렵다.
+	 *
+	 * 끄면 패링 키를 연타하는 것을 막는 효과가 있다. 켠 상태에서 그 문제가 보이면
+	 * 이 값을 끄기 전에 윈도우나 쿨타임 쪽을 먼저 보는 게 낫다.
+	 *
+	 * 서버 쿨타임에 걸린 요청은 이 값과 무관하게 절대 환불하지 않는다.
+	 * 되돌려주면 곧바로 다시 보내고 다시 걸리기를 반복한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry")
+	bool bRefundCooldownOnMiss = true;
 
 	/**
 	 * 패링이 닿는 거리(cm). 차체 표면 기준으로 잰다. 0 이면 거리 제한 없음.
