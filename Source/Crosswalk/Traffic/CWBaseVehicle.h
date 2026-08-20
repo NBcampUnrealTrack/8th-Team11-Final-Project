@@ -14,23 +14,6 @@ class UBoxComponent;
 class UStaticMeshComponent;
 
 /**
- * 차량이 플레이어를 들이받았을 때 발행. 서버에서만 뜬다.
- * 넉백 물리 / 2초 다운 / 도구 드롭 같은 플레이어 상태 전이는 플레이어 파트 담당이므로
- * 트래픽 쪽은 "누가 어느 방향으로 맞았는지"만 알리고 관여하지 않는다.
- *
- * 피격 처리 본선은 IInterface_VehicleHitReceiver 다. 이 델리게이트는 인터페이스를
- * 구현하지 않는 관찰자(집계, 통계)를 위해 남겨 둔 자리이고, C++ 구독자는 없다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleHitActorSignature, ACWBaseVehicle*, Vehicle, AActor*, HitActor, FVector, ImpactDirection);
-
-/**
- * 패링에 성공당했을 때 발행. 판정이 서버에서만 돌기 때문에 이 델리게이트도 서버에서만 뜬다.
- * 게임플레이 반응(점수, 스택 같은 것)을 붙이는 자리다. C++ 구독자는 아직 없다.
- * 연출을 여기에 붙이면 클라이언트에서는 아무것도 안 보이므로 OnParriedFX 를 쓴다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnVehicleParriedSignature, ACWBaseVehicle*, Vehicle, AActor*, Parrier);
-
-/**
  * 차선 스플라인을 따라 직선 주행하는 차량의 공통 베이스.
  * 승용차 / 오토바이 / 트럭 등 차종은 이 클래스를 상속한 BP로 만든다.
  *
@@ -378,12 +361,4 @@ private:
 	TSet<TWeakObjectPtr<AActor>> HitActors;
 
 	FTimerHandle ParriedDespawnTimerHandle;
-
-	// 델리게이트는 최하단에 배치
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Vehicle")
-	FCWOnVehicleHitActorSignature OnVehicleHitActor;
-
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Parry")
-	FCWOnVehicleParriedSignature OnVehicleParried;
 };

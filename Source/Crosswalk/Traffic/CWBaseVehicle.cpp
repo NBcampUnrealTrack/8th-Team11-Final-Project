@@ -5,7 +5,6 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
-#include "GameFramework/Pawn.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
@@ -302,9 +301,7 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 	const float DespawnDelay = FMath::Max(ParriedDespawnDelay, KINDA_SMALL_NUMBER);
 	GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ACWBaseVehicle::OnReachedLaneEnd, DespawnDelay, false);
 
-	OnVehicleParried.Broadcast(this, Parrier);
-
-	// 연출은 따로 뿌린다. 위 델리게이트는 서버에서만 떠서 클라이언트에 아무것도 안 보인다.
+	// 여기까지는 서버에서만 돈다. 연출은 이 RPC 로 모든 머신에 따로 뿌린다.
 	Multicast_PlayParriedFX(ParriedLaunchDirection, GetEffectiveSpeed(), Parrier);
 
 	return true;
@@ -461,10 +458,9 @@ void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedCompone
 		return;
 	}
 
-	// 피격 인터페이스를 구현했으면 대상으로 본다. 아직 구현 전인 플레이어도 검증할 수 있도록
-	// 프로토타입 단계에서는 폰도 함께 받아준다.
-	const bool bImplementsReceiver = OtherActor->Implements<UInterface_VehicleHitReceiver>();
-	if (!bImplementsReceiver && !OtherActor->IsA<APawn>())
+	// 피격 인터페이스를 구현한 액터만 대상으로 본다.
+	// ACWPlayerCharacter 가 이 인터페이스를 구현하므로 폰을 따로 받아줄 이유가 없다.
+	if (!OtherActor->Implements<UInterface_VehicleHitReceiver>())
 	{
 		return;
 	}
@@ -477,27 +473,18 @@ void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedCompone
 	}
 	HitActors.Add(OtherActor);
 
-	const FVector HitDirection = GetActorForwardVector();
+	FCWVehicleHitContext HitContext;
+	HitContext.HitLocation = ResolveHitLocation(OtherActor, bFromSweep, SweepResult);
+	HitContext.HitDirection = GetActorForwardVector();
+	// 실제로 내고 있는 속도를 넘긴다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우
+	// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
+	HitContext.VehicleSpeed = GetCurrentSpeed();
+	HitContext.VehicleType = VehicleType;
+	HitContext.bCanParry = bCanBeParried;
+	HitContext.bFlattenOnHit = bFlattenOnHit;
 
-	if (bImplementsReceiver)
-	{
-		FCWVehicleHitContext HitContext;
-		HitContext.HitLocation = ResolveHitLocation(OtherActor, bFromSweep, SweepResult);
-		HitContext.HitDirection = HitDirection;
-		// 실제로 내고 있는 속도를 넘긴다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우
-		// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
-		HitContext.VehicleSpeed = GetCurrentSpeed();
-		HitContext.VehicleType = VehicleType;
-		HitContext.bCanParry = bCanBeParried;
-		HitContext.bFlattenOnHit = bFlattenOnHit;
-
-		// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.
-		IInterface_VehicleHitReceiver::Execute_ReceiveVehicleHit(OtherActor, HitContext);
-	}
-
-	// 인터페이스를 구현하지 않는 관찰자(연출·사운드·집계)를 위해 남겨둔다.
-	// 서버에서만 발화하므로 클라 연출에는 쓸 수 없다.
-	OnVehicleHitActor.Broadcast(this, OtherActor, HitDirection);
+	// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.
+	IInterface_VehicleHitReceiver::Execute_ReceiveVehicleHit(OtherActor, HitContext);
 }
 
 void ACWBaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
