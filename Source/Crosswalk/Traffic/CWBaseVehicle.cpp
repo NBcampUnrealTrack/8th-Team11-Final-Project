@@ -78,7 +78,7 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 
 	// 클라이언트도 같은 계산을 돈다. 속도를 정하는 값이 양쪽에 모두 있어서 결과가 같고,
 	// 서버 값이 도착하면 DistanceAlongLane 이 그 값으로 덮이면서 어긋난 만큼만 맞춰진다.
-	const float StepSpeed = ResolveStepSpeed(DeltaSeconds);
+	const float StepSpeed = ResolveStepSpeed();
 	DistanceAlongLane += StepSpeed * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
@@ -338,14 +338,9 @@ void ACWBaseVehicle::OnReachedLaneEnd()
 	Destroy();
 }
 
-float ACWBaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
+float ACWBaseVehicle::ResolveStepSpeed() const
 {
 	const float DesiredSpeed = GetEffectiveSpeed();
-
-	if (DeltaSeconds <= KINDA_SMALL_NUMBER)
-	{
-		return DesiredSpeed;
-	}
 
 	const UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this);
 	if (!TrafficSubsystem)
@@ -362,16 +357,39 @@ float ACWBaseVehicle::ResolveStepSpeed(float DeltaSeconds) const
 	// 두 차의 앞뒤 범퍼 사이 빈 거리. 여기서 FollowingGap을 더 빼 여유를 남긴다.
 	const float BumperToBumper = VehicleAhead->GetDistanceAlongLane() - DistanceAlongLane
 		- (GetVehicleLength() * 0.5f) - (VehicleAhead->GetVehicleLength() * 0.5f);
-	const float AllowedTravel = BumperToBumper - FollowingGap;
+	const float Headway = BumperToBumper - FollowingGap;
 
-	if (AllowedTravel <= 0.f)
+	if (Headway <= 0.f)
 	{
 		// 이미 최소 간격 안까지 붙었으면 멈춰 세운다. 통과보다 정지가 덜 어색하다.
 		return 0.f;
 	}
 
-	// 이번 프레임에 허용 거리 이상 전진하지 못하게 속도를 깎는다.
-	return FMath::Min(DesiredSpeed, AllowedTravel / DeltaSeconds);
+	// 최소 간격이 없으면 줄일 구간도 없다. 붙기 직전까지 제 속도로 간다.
+	if (FollowingGap <= KINDA_SMALL_NUMBER)
+	{
+		return DesiredSpeed;
+	}
+
+	/**
+	 * 여유 거리에 비례해 속도를 줄인다. FollowingGap 만큼 여유가 있으면 제 속도이고,
+	 * 여유가 0 에 가까워질수록 0 으로 수렴한다.
+	 *
+	 * "이번 프레임에 갈 수 있는 거리 / DeltaSeconds" 로 깎으면 안 된다. 뒤차가 앞차를
+	 * 따라붙어 이 계산에 걸리는 순간부터 속도가 프레임 시간에 묶이기 때문이다.
+	 * 앞차를 따라가는 상태에서는 여유가 대략 (앞차 속도 x 지난 프레임 시간) 으로 유지되므로,
+	 * 이번 속도가 앞차 속도 x (지난 프레임 시간 / 이번 프레임 시간) 이 된다.
+	 * 프레임 간격이 몇 % 흔들리면 속도도 그만큼 흔들려서 차가 미세하게 주춤거린다.
+	 *
+	 * 서버와 클라이언트가 같은 코드를 각자 돌리는 구조라 문제가 하나 더 있다.
+	 * 프레임 시간이 기계마다 다르므로 같은 상황에서 속도가 갈리고, 그만큼 클라이언트가
+	 * 서버 값을 받을 때마다 보정된다. 거리만 보고 정하면 양쪽 결과가 같아진다.
+	 *
+	 * 여유가 0 에 가까울수록 속도도 0 에 가까워지므로 한 프레임에 앞차를 통과하지 못한다.
+	 * (앞차가 멈춰 있을 때 여유가 음수로 넘어가려면 프레임 시간이 FollowingGap / 속도,
+	 *  기본값 기준 0.2초를 넘어야 한다. 그 경우도 다음 프레임에 위에서 0 으로 걸린다)
+	 */
+	return DesiredSpeed * FMath::Min(Headway / FollowingGap, 1.f);
 }
 
 void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
