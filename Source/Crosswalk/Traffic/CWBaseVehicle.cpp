@@ -54,6 +54,7 @@ void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 	DOREPLIFETIME(ACWBaseVehicle, LaneLateralOffset);
 
 	DOREPLIFETIME(ACWBaseVehicle, bParried);
+	DOREPLIFETIME(ACWBaseVehicle, ParryLaunchSerial);
 	DOREPLIFETIME(ACWBaseVehicle, ParriedLaunchLocation);
 	DOREPLIFETIME(ACWBaseVehicle, ParriedLaunchDirection);
 }
@@ -244,6 +245,10 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	ParriedLaunchLocation = GetActorLocation();
 	ParriedLaunchDirection = GetActorForwardVector().GetSafeNormal2D();
 
+	// 두 번째 패링부터는 bParried 가 이미 true 라서 값이 바뀌지 않아 알림이 뜨지 않는다.
+	// 이 번호가 매번 달라지면서 클라이언트가 새 발사를 반영하게 만든다.
+	++ParryLaunchSerial;
+
 	bParried = true;
 
 	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
@@ -285,8 +290,9 @@ void ACWBaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeN
 	OnParriedFX(LaunchDirection, LaunchSpeed, Parrier);
 }
 
-void ACWBaseVehicle::OnRep_Parried()
+void ACWBaseVehicle::OnRep_ParryLaunch()
 {
+	// 풀링으로 재사용된 차량은 번호가 남아 있을 수 있다. 실제로 튕겨나간 상태만 반영한다.
 	if (!bParried)
 	{
 		return;
