@@ -82,8 +82,20 @@ void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize C
 void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocation, float ClientInputTime)
 {
 	AActor* OwnerActor = GetOwner();
-	if (OwnerActor == nullptr || !OwnerActor->HasAuthority() || !CanUseServerCooldown())
+	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
 	{
+		return;
+	}
+
+	/**
+	 * 서버 쿨타임에 걸린 것은 환불하지 않는다.
+	 *
+	 * 되돌려주면 클라이언트가 곧바로 다시 보내고 다시 걸리는 것을 반복해서 요청만 계속 오간다.
+	 * 그리고 이 경우는 실제로 쿨타임이 남아 있는 것이 맞아서, 되돌려줄 것 자체가 없다.
+	 */
+	if (!CanUseServerCooldown())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Parry] 서버 쿨타임에 막힘."));
 		return;
 	}
 
@@ -94,17 +106,18 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	{
 		if (HitReactionComponent->IsHitLocked())
 		{
-			UE_LOG(LogTemp, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다."));
+			// 타이밍을 놓친 것이 아니라 서버 상태 때문에 못 받은 것이므로 쿨타임을 되돌려준다.
+			UE_LOG(LogTemp, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다. 쿨타임을 되돌려줍니다."));
+			RejectParry();
 			return;
 		}
 	}
 
-	UpdateServerCooldown();
-
 	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(OwnerActor);
 	if (TrafficSubsystem == nullptr)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다."));
+		UE_LOG(LogTemp, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다. 쿨타임을 되돌려줍니다."));
+		RejectParry();
 		return;
 	}
 
@@ -117,9 +130,28 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		ParryAttemptContext.ViewRewindSeconds * 1000.f);
 
 	ACWBaseVehicle* ParriedVehicle = TrafficSubsystem->TryParryWithAttempt(ParryAttemptContext);
+
+	/**
+	 * 쿨타임은 소모가 확정된 뒤에 갱신한다.
+	 *
+	 * 실패를 환불하는 설정에서 미리 갱신해 두면, 환불받은 클라이언트가 곧바로 다시 보내도
+	 * 서버 쿨타임에 걸려 거절되고 그때는 환불도 되지 않는다. 그러면 환불 자체가 무의미해진다.
+	 */
+	if (ParriedVehicle != nullptr || !bRefundCooldownOnMiss)
+	{
+		UpdateServerCooldown();
+	}
+
 	if (ParriedVehicle == nullptr)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다."));
+		UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다.%s"),
+			bRefundCooldownOnMiss ? TEXT(" 쿨타임을 되돌려줍니다.") : TEXT(""));
+
+		if (bRefundCooldownOnMiss)
+		{
+			RejectParry();
+		}
+
 		return;
 	}
 
@@ -247,6 +279,25 @@ bool UCWParryComponent::CanUseServerCooldown() const
 	}
 
 	return World->GetTimeSeconds() - LastServerParryRequestTime >= ParryCooldown;
+}
+
+void UCWParryComponent::RejectParry()
+{
+	// 호스트가 조종하는 캐릭터면 이 Client RPC 가 그 자리에서 바로 실행된다.
+	// 원격 클라이언트면 소유 연결로만 나간다.
+	Client_ParryRejected();
+}
+
+void UCWParryComponent::Client_ParryRejected_Implementation()
+{
+	ResetLocalCooldown();
+}
+
+void UCWParryComponent::ResetLocalCooldown()
+{
+	// 초기값과 같은 의미다. 월드 시간은 항상 이보다 크므로 곧바로 사용 가능 상태가 된다.
+	// GetCooldownReadyRatio 도 이 값을 보므로 UI 가 함께 되돌아간다.
+	LastLocalParryRequestTime = -999.f;
 }
 
 void UCWParryComponent::UpdateLocalCooldown()
