@@ -188,6 +188,10 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	}
 
 	// 손이 닿는 거리. 차체 표면 기준이라 차 길이가 길어도 판정이 불리해지지 않는다.
+	//
+	// 이 거리는 랙 보정을 하지 않고 서버의 지금 위치로 잰다. 기본값이 0(제한 없음)이라
+	// 판정에 참여하지 않고, 되돌릴 거리도 윈도우 판정보다 훨씬 작다. 반경을 실제로
+	// 쓰기로 하면 여기도 되돌린 위치로 재야 한다.
 	const float SurfaceDistance = Vehicle.GetDistanceToPoint(ParryAttemptContext.AttemptLocation);
 	if (ParryAttemptContext.ParryRadius > 0.f && SurfaceDistance > ParryAttemptContext.ParryRadius)
 	{
@@ -213,8 +217,9 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	}
 
 	// 충돌 직전 윈도우 안이어야 한다. 윈도우 값은 차량이 단일 관리한다.
+	// 시도한 사람이 화면에서 본 시점으로 되돌려 판정한다. (ViewRewindSeconds)
 	float TimeToImpact = 0.f;
-	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact))
+	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact, ParryAttemptContext.ViewRewindSeconds))
 	{
 		// 진행 경로 밖이거나 이미 지나친 차량이다. 도로 위에 서 있지 않으면 여기서 전부 걸린다.
 		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
@@ -223,8 +228,8 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 
 	if (TimeToImpact > Vehicle.GetParryWindow())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 타이밍 이름 (충돌까지 %.2f초 > 윈도우 %.2f초)"),
-			*Vehicle.GetName(), TimeToImpact, Vehicle.GetParryWindow());
+		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 타이밍 이릅 (충돌까지 %.2f초 > 윈도우 %.2f초, 보정 %.0fms)"),
+			*Vehicle.GetName(), TimeToImpact, Vehicle.GetParryWindow(), ParryAttemptContext.ViewRewindSeconds * 1000.f);
 		return false;
 	}
 
