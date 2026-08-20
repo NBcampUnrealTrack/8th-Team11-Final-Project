@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
+#include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficSubsystem.h"
 #include "Data/Structs/CWVehicleHitContext.h"
@@ -14,12 +15,20 @@
 
 ACWBaseVehicle::ACWBaseVehicle()
 {
+	// 클라이언트도 업데이트 사이를 스스로 메우므로 양쪽에서 돈다.
 	PrimaryActorTick.bCanEverTick = true;
 
-	// 스폰/주행/판정은 서버 권위로 둔다.
-	// 클라 표시는 일단 무브먼트 리플리케이션에 맡기고, 최종 복제 방식은 복제·판정 파트와 합의한다.
+	// 스폰과 판정은 서버 권위다.
 	bReplicates = true;
-	SetReplicateMovement(true);
+
+	// 트랜스폼은 복제하지 않는다. 클라이언트는 DistanceAlongLane 으로 위치를 직접 계산한다.
+	// (이유는 클래스 주석의 네트워크 항목 참고)
+	SetReplicateMovement(false);
+
+	// 진행 거리는 클라이언트가 추정으로 메우므로 자주 보낼 이유가 없다.
+	// 20 이면 업데이트 사이가 50ms 다. 기본 속도 750cm/s 기준 추정 구간이 37cm 라
+	// 추정이 어긋나도 보정량이 눈에 띄지 않는다.
+	SetNetUpdateFrequency(20.f);
 
 	CollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("CollisionBox"));
 	SetRootComponent(CollisionBox);
@@ -33,18 +42,28 @@ ACWBaseVehicle::ACWBaseVehicle()
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
+void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	// 차선과 개체별 편차는 스폰 직후 한 번 정해지고 끝이라, 초기 번치 이후로는 오가지 않는다.
+	// 주기적으로 실제 흐르는 것은 DistanceAlongLane 하나뿐이다.
+	DOREPLIFETIME(ACWBaseVehicle, CurrentLane);
+	DOREPLIFETIME(ACWBaseVehicle, DistanceAlongLane);
+	DOREPLIFETIME(ACWBaseVehicle, SpeedMultiplier);
+	DOREPLIFETIME(ACWBaseVehicle, LaneLateralOffset);
+
+	DOREPLIFETIME(ACWBaseVehicle, bParried);
+	DOREPLIFETIME(ACWBaseVehicle, ParriedLaunchLocation);
+	DOREPLIFETIME(ACWBaseVehicle, ParriedLaunchDirection);
+}
+
 void ACWBaseVehicle::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 주행은 서버만 계산한다.
-	if (!HasAuthority())
-	{
-		return;
-	}
-
 	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
-	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다.
+	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다. (서버 전용)
 	if (bParried)
 	{
 		CurrentVelocity = GetActorForwardVector() * GetEffectiveSpeed();
@@ -57,13 +76,22 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		return;
 	}
 
+	// 클라이언트도 같은 계산을 돈다. 속도를 정하는 값이 양쪽에 모두 있어서 결과가 같고,
+	// 서버 값이 도착하면 DistanceAlongLane 이 그 값으로 덮이면서 어긋난 만큼만 맞춰진다.
 	const float StepSpeed = ResolveStepSpeed(DeltaSeconds);
 	DistanceAlongLane += StepSpeed * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
-		OnReachedLaneEnd();
-		return;
+		if (HasAuthority())
+		{
+			OnReachedLaneEnd();
+			return;
+		}
+
+		// 클라이언트는 차선 끝에서 멈춰 서서 서버의 소멸 통보를 기다린다.
+		// 추정이 서버보다 앞서 있을 수 있으므로 스플라인 밖으로 넘기지 않는다.
+		DistanceAlongLane = CurrentLane->GetLaneLength();
 	}
 
 	UpdateTransformOnLane(StepSpeed);
@@ -84,7 +112,10 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	CurrentLane = InLane;
 	DistanceAlongLane = Params.StartDistance;
 	LaneLateralOffset = Params.LateralOffset;
+
 	bParried = false;
+	ParriedLaunchLocation = FVector::ZeroVector;
+	ParriedLaunchDirection = FVector::ZeroVector;
 
 	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
@@ -208,6 +239,11 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	const FVector LaunchForward = LaunchDirection.GetSafeNormal2D();
 	SetActorRotation((LaunchForward.IsNearlyZero() ? -GetActorForwardVector().GetSafeNormal2D() : LaunchForward).Rotation());
 
+	// 클라이언트가 같은 지점·같은 자세에서 직진을 시작할 수 있도록 남긴다.
+	// 회전이 끝난 뒤의 정면이라 차가 실제로 가는 쪽과 항상 일치한다.
+	ParriedLaunchLocation = GetActorLocation();
+	ParriedLaunchDirection = GetActorForwardVector().GetSafeNormal2D();
+
 	bParried = true;
 
 	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
@@ -238,8 +274,7 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 	OnVehicleParried.Broadcast(this, Parrier);
 
 	// 연출은 따로 뿌린다. 위 델리게이트는 서버에서만 떠서 클라이언트에 아무것도 안 보인다.
-	// 방향은 회전이 끝난 뒤의 정면이라, 차가 실제로 가는 쪽과 항상 일치한다.
-	Multicast_PlayParriedFX(GetActorForwardVector().GetSafeNormal2D(), GetEffectiveSpeed(), Parrier);
+	Multicast_PlayParriedFX(ParriedLaunchDirection, GetEffectiveSpeed(), Parrier);
 
 	return true;
 }
@@ -248,6 +283,25 @@ void ACWBaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeN
 {
 	// C++ 은 통보만 하고 무엇을 재생할지는 차량 BP 가 정한다.
 	OnParriedFX(LaunchDirection, LaunchSpeed, Parrier);
+}
+
+void ACWBaseVehicle::OnRep_Parried()
+{
+	if (!bParried)
+	{
+		return;
+	}
+
+	// 서버도 차선을 끊고 그 값이 복제되지만, 도착 순서에 기대지 않도록 여기서도 끊는다.
+	// 이걸 놓치면 이 차량이 다른 차량의 앞차 판정에 남아 뒤차들이 클라이언트에서만 멈춘다.
+	CurrentLane = nullptr;
+
+	// 회전은 복제되지 않으므로 직접 세운다. 위치도 서버가 튕겨낸 지점으로 맞춰,
+	// 마지막 진행 거리 업데이트와 패링 사이의 어긋남을 여기서 없앤다.
+	if (!ParriedLaunchDirection.IsNearlyZero())
+	{
+		SetActorLocationAndRotation(ParriedLaunchLocation, ParriedLaunchDirection.Rotation());
+	}
 }
 
 void ACWBaseVehicle::BeginPlay()
