@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #pragma once
 
@@ -33,13 +33,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic")
 	ACWBaseVehicle* FindVehicleAhead(const ACWBaseVehicle* Vehicle) const;
-
-	/**
-	 * Target을 Window(초) 안에 칠 차량 중 가장 임박한 것을 찾는다.
-	 * Window에 0 이하를 넘기면 각 차량의 자체 패링 윈도우를 기준으로 판정한다.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	ACWBaseVehicle* FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const;
 
 	/**
 	 * 패링 입력 한 번을 처리한다. 성공 시 패링당한 차량을 반환.

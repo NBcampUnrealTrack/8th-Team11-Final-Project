@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #include "CWTrafficSubsystem.h"
 
@@ -65,54 +65,6 @@ ACWBaseVehicle* UCWTrafficSubsystem::FindVehicleAhead(const ACWBaseVehicle* Vehi
 	}
 
 	return Nearest;
-}
-
-ACWBaseVehicle* UCWTrafficSubsystem::FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const
-{
-	OutTimeToImpact = 0.f;
-
-	if (!Target)
-	{
-		return nullptr;
-	}
-
-	ACWBaseVehicle* NearestVehicle = nullptr;
-	float NearestTime = TNumericLimits<float>::Max();
-
-	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
-	{
-		ACWBaseVehicle* Vehicle = VehiclePtr.Get();
-		if (!Vehicle || !Vehicle->CanBeParried())
-		{
-			continue;
-		}
-
-		float TimeToImpact = 0.f;
-		if (!Vehicle->PredictTimeToImpact(Target, TimeToImpact))
-		{
-			continue;
-		}
-
-		// Window를 넘기지 않으면 차량별 기획 값을 쓴다.
-		const float EffectiveWindow = (Window > 0.f) ? Window : Vehicle->GetParryWindow();
-		if (TimeToImpact > EffectiveWindow)
-		{
-			continue;
-		}
-
-		if (TimeToImpact < NearestTime)
-		{
-			NearestTime = TimeToImpact;
-			NearestVehicle = Vehicle;
-		}
-	}
-
-	if (NearestVehicle)
-	{
-		OutTimeToImpact = NearestTime;
-	}
-
-	return NearestVehicle;
 }
 
 ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptContext& ParryAttemptContext)

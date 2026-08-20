@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #pragma once
 
