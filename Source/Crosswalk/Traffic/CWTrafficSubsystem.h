@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #pragma once
 
@@ -37,6 +37,12 @@ public:
 	/**
 	 * Target을 Window(초) 안에 칠 차량 중 가장 임박한 것을 찾는다.
 	 * Window에 0 이하를 넘기면 각 차량의 자체 패링 윈도우를 기준으로 판정한다.
+	 *
+	 * 조회 전용이라 랙 보정을 하지 않는다. 서버 판정에는 TryParryWithAttempt 를 쓴다.
+	 *
+	 * 2026-08-20 기준 C++ 호출부가 없다. 지우지 않고 두는 이유는, "지금 나를 칠 차가 있는가"
+	 * 를 묻는 것이 위협 표시기 같은 HUD 가 트래픽에 물어볼 유일한 형태이기 때문이다.
+	 * UI 파트가 붙일 자리로 열어 둔다. 정말 안 쓰기로 하면 그때 지우면 된다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
 	ACWBaseVehicle* FindImminentThreat(const AActor* Target, float Window, float& OutTimeToImpact) const;

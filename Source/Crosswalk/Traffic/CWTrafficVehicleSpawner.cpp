@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #include "CWTrafficVehicleSpawner.h"
 
@@ -276,6 +276,18 @@ bool ACWTrafficVehicleSpawner::IsLaneEntranceBlocked(TSubclassOf<ACWBaseVehicle>
 	// 차간 거리 유지 로직 덕에 추월이 없으므로, 가장 최근 스폰 차량이 항상 맨 뒤에 있다.
 	const ACWBaseVehicle* Rearmost = LastSpawnedVehicle.Get();
 	if (!Rearmost)
+	{
+		return false;
+	}
+
+	/**
+	 * 차선을 벗어난 차량은 입구를 막지 않는다.
+	 *
+	 * 패링당한 차량은 차선에서 빠지면서 날아가는데, 진행 거리는 쳐낸 순간의 값에 멈춰 있다.
+	 * 그 값만 보면 입구 근처에서 쳐낸 차가 소멸할 때까지 스폰이 계속 건너뛰어진다.
+	 * 실제로는 차가 이미 날아가 버려서 입구가 비어 있다.
+	 */
+	if (Rearmost->GetCurrentLane() != TargetLane)
 	{
 		return false;
 	}

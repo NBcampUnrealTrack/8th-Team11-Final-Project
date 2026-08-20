@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #include "CWBaseVehicle.h"
 
@@ -292,12 +292,15 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 		HitActors.Add(Parrier);
 	}
 
-	// 튕겨나간 뒤 ParriedDespawnDelay 동안 이동하고 사라진다.
-	// 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 그 시간이 새로 시작된다.
-	if (ParriedDespawnDelay > 0.f)
-	{
-		GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ACWBaseVehicle::OnReachedLaneEnd, ParriedDespawnDelay, false);
-	}
+	/**
+	 * 튕겨나간 뒤 ParriedDespawnDelay 동안 이동하고 사라진다.
+	 * 다시 패링당하면 SetTimer 가 기존 타이머를 덮어써 그 시간이 새로 시작된다.
+	 *
+	 * 값이 0 이하로 들어와도 타이머는 반드시 건다. 조건부로 걸면 그 경우 소멸 경로가
+	 * 사라져서 차량이 맵 밖까지 영원히 날아간다. "즉시 소멸" 이 필요하면 0 이 그 뜻이 된다.
+	 */
+	const float DespawnDelay = FMath::Max(ParriedDespawnDelay, KINDA_SMALL_NUMBER);
+	GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ACWBaseVehicle::OnReachedLaneEnd, DespawnDelay, false);
 
 	OnVehicleParried.Broadcast(this, Parrier);
 

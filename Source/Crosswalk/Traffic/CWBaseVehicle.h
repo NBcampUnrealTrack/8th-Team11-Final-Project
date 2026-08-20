@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 
 #pragma once
 
@@ -14,15 +14,18 @@ class UBoxComponent;
 class UStaticMeshComponent;
 
 /**
- * 차량이 플레이어를 들이받았을 때 발행.
+ * 차량이 플레이어를 들이받았을 때 발행. 서버에서만 뜬다.
  * 넉백 물리 / 2초 다운 / 도구 드롭 같은 플레이어 상태 전이는 플레이어 파트 담당이므로
  * 트래픽 쪽은 "누가 어느 방향으로 맞았는지"만 알리고 관여하지 않는다.
+ *
+ * 피격 처리 본선은 IInterface_VehicleHitReceiver 다. 이 델리게이트는 인터페이스를
+ * 구현하지 않는 관찰자(집계, 통계)를 위해 남겨 둔 자리이고, C++ 구독자는 없다.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleHitActorSignature, ACWBaseVehicle*, Vehicle, AActor*, HitActor, FVector, ImpactDirection);
 
 /**
  * 패링에 성공당했을 때 발행. 판정이 서버에서만 돌기 때문에 이 델리게이트도 서버에서만 뜬다.
- * 게임플레이 반응(점수, 스택 같은 것)을 붙이는 자리다.
+ * 게임플레이 반응(점수, 스택 같은 것)을 붙이는 자리다. C++ 구독자는 아직 없다.
  * 연출을 여기에 붙이면 클라이언트에서는 아무것도 안 보이므로 OnParriedFX 를 쓴다.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnVehicleParriedSignature, ACWBaseVehicle*, Vehicle, AActor*, Parrier);
@@ -292,8 +295,11 @@ protected:
 	/**
 	 * 패링당해 튕겨나간 뒤 사라지기까지의 시간(초). 2초는 임시값이라 팀 합의로 확정한다.
 	 * 무한정 날아가면 맵 밖까지 나가고, 뒤차가 볼 앞차 목록에서도 계속 남는다.
+	 *
+	 * 0 은 "즉시 소멸" 이 아니라 "소멸 없음" 이 되기 쉬운 값이라 하한을 둔다.
+	 * 코드에서 0 이 들어와도 소멸 타이머는 반드시 걸린다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.1"))
 	float ParriedDespawnDelay = 2.f;
 
 	/**
