@@ -53,6 +53,13 @@ private:
 	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
 	FCWParrySyncData BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle) const;
 
+	/**
+	 * 이 사람의 화면이 서버보다 얼마나 뒤처져 있는가(초). 판정 시 차량을 되돌릴 양이다.
+	 *
+	 * 서버에서만 의미가 있고, 호스트가 조종하는 캐릭터는 0 이다.
+	 */
+	float ResolveViewRewindSeconds() const;
+
 	// 로컬 입력 남발을 막기 위한 클라이언트 측 쿨타임 검사
 	bool CanUseLocalCooldown() const;
 
@@ -87,6 +94,23 @@ private:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float ParryAngle = 360.f;
+
+	/**
+	 * 랙 보정으로 차량을 되돌릴 수 있는 상한(초). 0 이면 보정을 아예 끈다.
+	 *
+	 * 보정을 하지 않으면 핑이 있는 사람은 윈도우(0.3초)의 뒷부분을 통째로 잃는다.
+	 * 서버가 그 사람이 본 것보다 왕복 시간만큼 뒤의 상황으로 판정하기 때문에,
+	 * 화면에서 "지금이다" 싶은 마지막 순간에 누르면 서버에서는 이미 지나친 차가 된다.
+	 *
+	 * 그렇다고 무제한으로 되돌리면 다른 사람 화면에서 한참 전에 지나간 차가 갑자기
+	 * 튕겨나가는 것으로 보인다. 되돌린 만큼은 남들이 보기에 과거를 고치는 것이기 때문이다.
+	 *
+	 * 0.2 인 이유: 기본 속도 750cm/s 로 150cm, 차 길이(440cm)의 3분의 1 정도다.
+	 * 그 정도면 쳐낸 사람과 차가 아직 겹쳐 보이는 범위라 남들 화면에서도 납득이 된다.
+	 * 랜 환경 핑은 대부분 이 밑이라 실제로는 거의 잘리지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxViewRewindSeconds = 0.2f;
 
 	float LastLocalParryRequestTime = -999.f;
 

@@ -123,16 +123,23 @@ public:
 	/**
 	 * Target이 이 차량의 진행 경로 위에 있을 때 충돌까지 남은 시간(초)을 낸다.
 	 * 경로 밖이거나 이미 지나쳤으면 false.
+	 *
+	 * @param ViewRewindSeconds 차량을 몇 초 되돌린 상태로 볼 것인가. (랙 보정)
+	 *                          0 이면 서버의 지금 상황을 그대로 본다.
+	 *                          되돌린 시점에는 차가 이만큼 더 뒤에 있었으므로 남은 시간도 그만큼 길다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
-	bool PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact) const;
+	bool PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds = 0.f) const;
 
 	/**
 	 * 패링 시도. 성공하면 차량이 LaunchDirection 으로 튕겨나가고 true.
 	 * 입력 처리와 쿨타임(1초)은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
+	 *
+	 * @param ViewRewindSeconds 랙 보정량. 선별 단계와 같은 값을 넘겨야 한다.
+	 *                          다른 값을 넘기면 선별은 통과했는데 여기서 떨어지는 일이 생긴다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	bool TryParry(AActor* Parrier, const FVector& LaunchDirection);
+	bool TryParry(AActor* Parrier, const FVector& LaunchDirection, float ViewRewindSeconds = 0.f);
 
 	/**
 	 * 패링 가능 차종인지. 트럭·긴급차량은 자식 BP에서 bCanBeParried를 끈다.

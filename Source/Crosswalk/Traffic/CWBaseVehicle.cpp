@@ -127,7 +127,7 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	UpdateTransformOnLane();
 }
 
-bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact) const
+bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds) const
 {
 	OutTimeToImpact = 0.f;
 
@@ -141,9 +141,22 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	const FVector Forward = GetActorForwardVector();
 	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
 
-	// 진행 방향 성분이 0 이하면 이미 지나친 대상이다.
 	const float ForwardDistance = FVector::DotProduct(ToTarget, Forward);
-	if (ForwardDistance <= 0.f)
+
+	/**
+	 * 랙 보정. 차량 위치를 되돌리는 대신 진행 방향 거리에 되돌릴 만큼을 더한다.
+	 *
+	 * 차량은 진행 방향으로 등속 직진하므로, ViewRewindSeconds 전의 위치는 지금 위치에서
+	 * 정확히 (속도 x 그 시간) 만큼 뒤다. 그래서 진행 방향 성분만 늘려주면 되고,
+	 * 좌우로 벗어난 양은 이동이 진행 방향으로만 일어나므로 바뀌지 않는다.
+	 *
+	 * 위치를 실제로 되돌려 스플라인에서 다시 뽑는 방법도 있지만, 되돌리는 구간이
+	 * 100ms 안팎(기본 속도로 75cm)이라 곡률의 영향이 좌우 허용 폭보다 훨씬 작다.
+	 */
+	const float RewoundForwardDistance = ForwardDistance + (EffectiveSpeed * FMath::Max(0.f, ViewRewindSeconds));
+
+	// 되돌린 시점에도 이미 지나쳐 있었으면 그때도 칠 수 없는 차였다.
+	if (RewoundForwardDistance <= 0.f)
 	{
 		return false;
 	}
@@ -158,7 +171,7 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	// 차량 앞면 기준으로 재서, 이미 박스 안에 들어온 대상은 0초로 취급한다.
 	// 크기 기준은 GetVehicleLength 와 맞춘다. (스케일 적용 후)
 	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
-	OutTimeToImpact = FMath::Max(0.f, (ForwardDistance - FrontOffset) / EffectiveSpeed);
+	OutTimeToImpact = FMath::Max(0.f, (RewoundForwardDistance - FrontOffset) / EffectiveSpeed);
 
 	return true;
 }
@@ -189,7 +202,9 @@ bool ACWBaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptCon
 	}
 
 	// 튕겨나갈 방향은 플레이어가 찍은 커서 지점 쪽이다.
-	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext));
+	// 랙 보정량은 선별 단계가 쓴 값을 그대로 넘겨야 판정이 갈리지 않는다.
+	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext),
+		ParryAttemptContext.ViewRewindSeconds);
 }
 
 FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
@@ -215,7 +230,7 @@ FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Par
 	return ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 }
 
-bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
+bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, float ViewRewindSeconds)
 {
 	if (!CanBeParried() || !Parrier)
 	{
@@ -230,7 +245,7 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection)
 
 	// 방향을 틀기 전에 판정해야 한다. 예측이 지금 진행 방향을 기준으로 하기 때문이다.
 	float TimeToImpact = 0.f;
-	if (!PredictTimeToImpact(Parrier, TimeToImpact) || TimeToImpact > ParryWindow)
+	if (!PredictTimeToImpact(Parrier, TimeToImpact, ViewRewindSeconds) || TimeToImpact > ParryWindow)
 	{
 		return false;
 	}

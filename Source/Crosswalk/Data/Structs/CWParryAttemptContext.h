@@ -76,4 +76,17 @@ public:
     // 클라이언트 월드 시간이라 서버 시간과 직접 비교할 수 없다. 기록·디버깅용이다
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
     float ClientInputTime = 0.f;
+
+    /**
+     * 이 시도를 판정할 때 차량을 몇 초 되돌려 볼 것인가. (랙 보정)
+     *
+     * 시도한 사람이 화면에서 본 상황은 서버의 지금 상황보다 과거다. 차량 위치가 서버에서
+     * 클라이언트로 오는 데 걸린 시간만큼 뒤처져 있고, 거기에 입력이 서버로 오는 시간이 더 붙는다.
+     * 서버가 자기 지금 상황으로 판정하면 그 차이만큼 판정이 어긋난다.
+     *
+     * 그래서 판정 전에 차량을 이만큼 되돌린다. 값은 UCWParryComponent 가 채운다.
+     * 호스트는 0 이다. 자기가 보는 것이 곧 서버 상황이라 되돌릴 것이 없다.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crosswalk|Parry")
+    float ViewRewindSeconds = 0.f;
 };
