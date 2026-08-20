@@ -93,11 +93,26 @@ public:
 	void InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params);
 
 	/**
-	 * 차종 기본 속도에 개체 배율을 적용한 실제 주행 속도(cm/s).
-	 * 튕겨나가는 중이면 패링 배율까지 곱한다. 충돌 예측도 이 값을 쓰므로 한곳에서 낸다.
+	 * 이 차량이 내려고 하는 속도(cm/s). 차종 기본 속도에 개체 배율을 적용한 값이다.
+	 * 튕겨나가는 중이면 패링 배율까지 곱한다.
+	 *
+	 * 앞차에 막혀 느려지거나 서 있는 것은 반영하지 않는다. 지금 실제로 내고 있는 속도는
+	 * GetCurrentSpeed 를 쓴다. 튕겨나간 뒤에는 앞차를 보지 않으므로 두 값이 같아진다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier * (bParried ? ParriedSpeedMultiplier : 1.f); }
+
+	/**
+	 * 지금 실제로 내고 있는 속도(cm/s). 앞차에 막혀 느려졌으면 그만큼 낮고, 서 있으면 0 이다.
+	 *
+	 * "이 차가 실제로 나를 칠 것인가" 를 묻는 자리는 이 값을 봐야 한다.
+	 * 희망 속도로 판정하면 앞차에 막혀 멈춰 선 차량까지 임박한 위협으로 잡혀서,
+	 * 서 있는 차를 패링할 수 있게 된다.
+	 *
+	 * 매 Tick 이 채우는 값이라 서버·클라이언트 양쪽에서 쓸 수 있고 추가 계산이 없다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetCurrentSpeed() const { return CurrentVelocity.Size(); }
 
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")

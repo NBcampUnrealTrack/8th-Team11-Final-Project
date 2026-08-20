@@ -131,9 +131,17 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 {
 	OutTimeToImpact = 0.f;
 
-	// 튕겨나가는 중인 차량도 예측 대상이다. 날아오는 차를 다시 패링할 수 있어야 한다.
-	const float EffectiveSpeed = GetEffectiveSpeed();
-	if (!Target || EffectiveSpeed <= KINDA_SMALL_NUMBER)
+	/**
+	 * 희망 속도가 아니라 지금 실제로 내고 있는 속도로 판정한다.
+	 *
+	 * 앞차에 막혀 서 있는 차량도 희망 속도로 재면 곧 나를 칠 것처럼 계산되어,
+	 * 도로에 정지해 있는 차를 패링할 수 있게 된다. 실제 속도로 재면 0 이라 여기서 걸린다.
+	 *
+	 * 튕겨나가는 중인 차량도 예측 대상이다. 날아오는 차를 다시 패링할 수 있어야 한다.
+	 * 그 구간은 앞차를 보지 않으므로 실제 속도와 희망 속도가 같다.
+	 */
+	const float CurrentSpeed = GetCurrentSpeed();
+	if (!Target || CurrentSpeed <= KINDA_SMALL_NUMBER)
 	{
 		return false;
 	}
@@ -153,7 +161,7 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	 * 위치를 실제로 되돌려 스플라인에서 다시 뽑는 방법도 있지만, 되돌리는 구간이
 	 * 100ms 안팎(기본 속도로 75cm)이라 곡률의 영향이 좌우 허용 폭보다 훨씬 작다.
 	 */
-	const float RewoundForwardDistance = ForwardDistance + (EffectiveSpeed * FMath::Max(0.f, ViewRewindSeconds));
+	const float RewoundForwardDistance = ForwardDistance + (CurrentSpeed * FMath::Max(0.f, ViewRewindSeconds));
 
 	// 되돌린 시점에도 이미 지나쳐 있었으면 그때도 칠 수 없는 차였다.
 	if (RewoundForwardDistance <= 0.f)
@@ -171,7 +179,7 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	// 차량 앞면 기준으로 재서, 이미 박스 안에 들어온 대상은 0초로 취급한다.
 	// 크기 기준은 GetVehicleLength 와 맞춘다. (스케일 적용 후)
 	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
-	OutTimeToImpact = FMath::Max(0.f, (RewoundForwardDistance - FrontOffset) / EffectiveSpeed);
+	OutTimeToImpact = FMath::Max(0.f, (RewoundForwardDistance - FrontOffset) / CurrentSpeed);
 
 	return true;
 }
@@ -473,7 +481,9 @@ void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedCompone
 		FCWVehicleHitContext HitContext;
 		HitContext.HitLocation = ResolveHitLocation(OtherActor, bFromSweep, SweepResult);
 		HitContext.HitDirection = HitDirection;
-		HitContext.VehicleSpeed = GetEffectiveSpeed();
+		// 실제로 내고 있는 속도를 넘긴다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우
+		// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
+		HitContext.VehicleSpeed = GetCurrentSpeed();
 		HitContext.VehicleType = VehicleType;
 		HitContext.bCanParry = bCanBeParried;
 		HitContext.bFlattenOnHit = bFlattenOnHit;
