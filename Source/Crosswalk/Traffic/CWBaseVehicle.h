@@ -128,6 +128,8 @@ public:
 	 * @param ViewRewindSeconds 차량을 몇 초 되돌린 상태로 볼 것인가. (랙 보정)
 	 *                          0 이면 서버의 지금 상황을 그대로 본다.
 	 *                          되돌린 시점에는 차가 이만큼 더 뒤에 있었으므로 남은 시간도 그만큼 길다.
+	 *                          이 값을 그대로 쓰지는 않는다. 등속 직진 가정이 성립하는
+	 *                          구간까지만 되돌린다. (ResolveEffectiveRewindSeconds)
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	bool PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds = 0.f) const;
@@ -212,13 +214,27 @@ private:
 	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
 
 	/**
+	 * 실제로 되돌릴 시간(초). 넘어온 보정량을 등속 직진 가정이 성립하는 구간으로 깎는다.
+	 *
+	 * PredictTimeToImpact 의 랙 보정은 "이 차는 지금 진행 방향으로 등속 직진해왔다"를
+	 * 가정한다. 패링당한 차량은 그 순간 방향이 꺾이므로, 그 가정은 발사 시점 이후로만 참이다.
+	 *
+	 * 선별 단계와 TryParry 가 같은 값으로 판정해야 하므로 두 호출자 대신 여기서 깎는다.
+	 */
+	float ResolveEffectiveRewindSeconds(float ViewRewindSeconds) const;
+
+	/**
 	 * 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
 	 *
 	 * 차량이 실제로 튕겨나가는 것은 bParried / ParriedLaunch* 복제가 담당한다.
 	 * 상태를 이 RPC 로 넘기지 않는 이유: 패링 순간에 관련성 밖이었다가 뒤늦게 들어온
 	 * 클라이언트는 이 RPC 를 못 받는다. 그때도 복제 프로퍼티는 현재 값이 그대로 도착한다.
+	 *
+	 * 그 분리가 성립하므로 Unreliable 이다. 유실이 게임플레이를 갈라놓지 않는데 Reliable 로
+	 * 두면 유실분이 재전송 큐에 쌓여 신뢰 채널을 먹는다. 놓친 클라이언트는 이번 연출 한 번을
+	 * 못 보는 것이 전부이고, 차량이 어디로 날아가는지는 복제 프로퍼티가 그대로 맞춘다.
 	 */
-	UFUNCTION(NetMulticast, Reliable)
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayParriedFX(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier);
 
 	UFUNCTION()
@@ -356,6 +372,16 @@ protected:
 private:
 	/** GetVelocity() 가 돌려주는 값. 서버·클라이언트가 각자 자기 Tick 에서 채운다. */
 	FVector CurrentVelocity = FVector::ZeroVector;
+
+	/**
+	 * 패링당해 발사된 시각(월드 시간, 초). 음수면 아직 발사된 적이 없다는 뜻이다.
+	 * 랙 보정을 발사 이전 시간까지 되돌리지 않도록 ResolveEffectiveRewindSeconds 가 본다.
+	 *
+	 * 복제하지 않는다. 월드 시간은 머신마다 기준이 달라서 값을 그대로 보내면 의미가 없고,
+	 * 패링 판정은 서버에서만 돌아서 보낼 이유도 없다. 클라이언트는 보정량 0 으로 들어오므로
+	 * (UCWParryComponent::ResolveViewRewindSeconds) 깎을 것 자체가 없다.
+	 */
+	float ParryLaunchWorldTime = -1.f;
 
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
 	TSet<TWeakObjectPtr<AActor>> HitActors;
