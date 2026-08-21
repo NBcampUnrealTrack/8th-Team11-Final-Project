@@ -15,7 +15,8 @@ struct CROSSWALK_API FCWRoomPlayerInfo
 #pragma region Comparison
 
 public:
-	// MVVM 배열 변경 검사에서 플레이어 표시 정보가 같은지 비교
+	// MVVM 배열 변경 검사에서 플레이어 표시 정보와 참조 대상이 같은지 비교
+	// Seamless Travel로 같은 PlayerId의 PlayerState 객체가 교체되는 경우를 잡음
 	bool operator==(
 		const FCWRoomPlayerInfo& Other
 		) const
@@ -24,7 +25,8 @@ public:
 			PlayerId == Other.PlayerId &&
 			PlayerName.EqualTo(Other.PlayerName) &&
 			bIsReady == Other.bIsReady &&
-			bIsLocalPlayer == Other.bIsLocalPlayer;
+			bIsLocalPlayer == Other.bIsLocalPlayer &&
+			PlayerState == Other.PlayerState;
 	}
 
 	// 플레이어 표시 정보가 다른지 비교
