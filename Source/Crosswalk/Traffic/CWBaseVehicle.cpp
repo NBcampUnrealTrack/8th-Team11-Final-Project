@@ -117,6 +117,9 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	ParriedLaunchLocation = FVector::ZeroVector;
 	ParriedLaunchDirection = FVector::ZeroVector;
 
+	// 풀링으로 재사용된 차량이 지난 주행의 발사 시각으로 보정량을 깎으면 안 된다.
+	ParryLaunchWorldTime = -1.f;
+
 	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
 
@@ -159,8 +162,12 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	 *
 	 * 위치를 실제로 되돌려 스플라인에서 다시 뽑는 방법도 있지만, 되돌리는 구간이
 	 * 100ms 안팎(기본 속도로 75cm)이라 곡률의 영향이 좌우 허용 폭보다 훨씬 작다.
+	 *
+	 * 넘어온 보정량을 그대로 쓰지 않는다. 위의 등속 직진 가정이 성립하는 구간까지만
+	 * 되돌린다. 패링당한 차량은 그 순간 방향이 꺾여서 그 앞 구간에는 가정이 깨진다.
 	 */
-	const float RewoundForwardDistance = ForwardDistance + (CurrentSpeed * FMath::Max(0.f, ViewRewindSeconds));
+	const float RewindSeconds = ResolveEffectiveRewindSeconds(ViewRewindSeconds);
+	const float RewoundForwardDistance = ForwardDistance + (CurrentSpeed * RewindSeconds);
 
 	// 되돌린 시점에도 이미 지나쳐 있었으면 그때도 칠 수 없는 차였다.
 	if (RewoundForwardDistance <= 0.f)
@@ -237,6 +244,53 @@ FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Par
 	return ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 }
 
+float ACWBaseVehicle::ResolveEffectiveRewindSeconds(float ViewRewindSeconds) const
+{
+	const float RequestedSeconds = FMath::Max(0.f, ViewRewindSeconds);
+
+	// 발사된 적이 없으면 차선 위를 계속 달려온 차량이다. 되돌릴 시간에 제한이 없다.
+	if (!bParried || ParryLaunchWorldTime < 0.f)
+	{
+		return RequestedSeconds;
+	}
+
+	// 시간을 읽을 수 없으면 깎을 근거도 없다. 넘어온 값을 그대로 쓴다.
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return RequestedSeconds;
+	}
+
+	/**
+	 * 발사 이후 흐른 시간까지만 되돌린다.
+	 *
+	 * 방금 패링당한 차량은 SetActorRotation 으로 방향이 꺾인 직후다. 그 차를 발사 이전
+	 * 시점까지 되돌리면 새 방향의 반대쪽으로 되돌리는데, 그때 차는 거기 없었다.
+	 * 차선 위에서 다른 방향으로 달리고 있었다. 날아오는 차를 다시 쳐내는 것은
+	 * 스펙이므로(CanBeParried 주석) 이 구간은 반드시 발생한다.
+	 *
+	 * 어긋나는 양은 (속도 x 깎아낸 시간)이다. 기본값이면 최대 750 x 0.2 = 150cm 로,
+	 * 윈도우가 커버하는 거리(750 x 0.3 = 225cm)의 3분의 2다. 그리고 양쪽으로 다 틀린다.
+	 * 날아오는 차는 남은 시간이 부풀어 윈도우 밖으로 밀려나 안 쳐지고, 이미 지나쳐 간 차는
+	 * 음수 거리가 양수로 뒤집혀서 등 뒤에 있는데도 쳐진다.
+	 *
+	 * 깎은 만큼은 보정을 포기하는 것이 맞다. 발사 이전 궤적을 들고 있지 않아 그 구간을
+	 * 제대로 되돌릴 방법이 없고, 차가 있던 적 없는 위치로 되돌리는 것보다 서버의 지금
+	 * 상황으로 판정하는 편이 낫다. 발사 후 보정량 상한을 넘기면 이 제한은 저절로 풀린다.
+	 */
+	const float SecondsSinceLaunch = FMath::Max(0.f, World->GetTimeSeconds() - ParryLaunchWorldTime);
+	if (RequestedSeconds <= SecondsSinceLaunch)
+	{
+		return RequestedSeconds;
+	}
+
+	// 실제로 깎이는 구간은 발사 후 0.2초 안쪽뿐이라 로그가 쌓이지 않는다.
+	UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 발사 직후라 랙 보정을 %.0fms -> %.0fms 로 깎습니다."),
+		*GetName(), RequestedSeconds * 1000.f, SecondsSinceLaunch * 1000.f);
+
+	return SecondsSinceLaunch;
+}
+
 bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, float ViewRewindSeconds)
 {
 	if (!CanBeParried() || !Parrier)
@@ -272,6 +326,10 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 	++ParryLaunchSerial;
 
 	bParried = true;
+
+	// 방향이 꺾인 시각. 랙 보정이 이 시점보다 앞까지 되돌리지 않도록 남긴다.
+	// 여기서부터 등속 직진이 시작되므로, 그 이전 구간은 되돌릴 근거가 없다.
+	ParryLaunchWorldTime = GetWorld()->GetTimeSeconds();
 
 	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
 	CurrentLane = nullptr;

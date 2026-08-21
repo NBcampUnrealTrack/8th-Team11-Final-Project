@@ -39,8 +39,15 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation, float ClientInputTime);
 
-	// 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달
-	UFUNCTION(NetMulticast, Reliable)
+	/**
+	 * 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달
+	 *
+	 * 연출 전용이라 Unreliable 이다. 차량이 실제로 튕겨나가는 것은 ACWBaseVehicle 의
+	 * 복제 프로퍼티(bParried / ParriedLaunch*)가 담당하므로, 이게 유실돼도
+	 * 이번 연출 한 번이 재생되지 않을 뿐 게임플레이는 갈리지 않는다.
+	 * Reliable 로 두면 그 유실분이 재전송 큐에 쌓여 신뢰 채널만 먹는다.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_ParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
 	/**
