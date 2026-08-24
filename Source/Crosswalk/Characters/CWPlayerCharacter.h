@@ -12,6 +12,7 @@ class UCameraComponent;
 class UNiagaraSystem;
 class UCWHeadgearComponent;
 class UCWParryComponent;
+class UCWSupplyCarrierComponent;
 class UCWTemperatureComponent;
 class UCWToolHolderComponent;
 class UCWVehicleHitReactionComponent;
@@ -35,6 +36,7 @@ struct FInputActionValue;
  *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
  *   - UCWTemperatureComponent : 작업으로 오른 체온에 따라 이동속도와 작업속도를 깎는다
  *   - UCWHeadgearComponent    : H 로 머리 소켓의 헬멧을 갈아 끼운다
+ *   - UCWSupplyCarrierComponent : F/G/R 로 페인트 통을 꺼내고 반납하고 도구에 붓는다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -93,6 +95,15 @@ protected:
 
 	/** 취소 키(Q). 미니게임을 빠져나와 다시 움직일 수 있게 한다. */
 	void CancelWork();
+
+	/** F. 보급 박스에서 페인트 통을 꺼낸다. (기획서 6-1) */
+	void PickUpCan();
+
+	/** G. 페인트 통을 박스에 반납한다. (기획서 6-2) */
+	void DropCan();
+
+	/** R. 가장 가까운 도구에 페인트를 붓는다. (기획서 6-3) */
+	void ChargePaint();
 
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
 	void Parry();
@@ -344,6 +355,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
 	TObjectPtr<UCWHeadgearComponent> HeadgearComponent;
+
+	// 페인트 통 운반. (기획서 6-1 ~ 6-3, 6-6)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
+	TObjectPtr<UCWSupplyCarrierComponent> SupplyCarrierComponent;
 
 	/**
 	 * 머리에 붙는 헬멧 슬롯. 생성자가 만들어 head 본에 붙이고 헬멧 태그를 달아 둔다.
@@ -604,6 +619,18 @@ protected:
 	// 헬멧을 갈아 끼우는 키(H). 프로토타입 확인용 입력이라 기획서에 없는 키를 쓴다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> SwapHelmetAction;
+
+	// 보급 박스에서 페인트 통을 꺼내는 키(F). (기획서 6-1)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> PickUpCanAction;
+
+	// 페인트 통을 박스에 반납하는 키(G). (기획서 6-2)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> DropCanAction;
+
+	// 근처 도구에 페인트를 붓는 키(R). (기획서 6-3)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ChargePaintAction;
 
 private:
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.

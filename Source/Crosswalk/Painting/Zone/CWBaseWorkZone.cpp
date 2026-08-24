@@ -32,6 +32,19 @@ float ACWBaseWorkZone::GetSquaredDistanceToPoint(const FVector& Point) const
 	return Area->Bounds.GetBox().ComputeSquaredDistanceToPoint(Point);
 }
 
+bool ACWBaseWorkZone::ContainsAreaPoint(const FVector& WorldLocation) const
+{
+	if (Area == nullptr)
+	{
+		return false;
+	}
+
+	const FVector LocalPoint = Area->GetComponentTransform().InverseTransformPosition(WorldLocation);
+	const FVector Extent = Area->GetUnscaledBoxExtent();
+
+	return FMath::Abs(LocalPoint.X) <= Extent.X && FMath::Abs(LocalPoint.Y) <= Extent.Y;
+}
+
 bool ACWBaseWorkZone::IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const
 {
 	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
@@ -258,14 +271,30 @@ void ACWBaseWorkZone::SetProgress(float NewProgress)
 	}
 }
 
-void ACWBaseWorkZone::ReceiveReportedProgress(float NewProgress)
+void ACWBaseWorkZone::ReceiveReportedProgress(UCWWorkerComponent* Worker, float NewProgress)
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
 
+	// 실제로 오른 만큼만 페인트를 뺀다. 이미 지나온 진행도가 다시 올라와도 소모는 0 이다.
+	// (되돌아가지 않게 Max 를 취하므로, 늦게 도착한 패킷은 진행도도 페인트도 건드리지 않는다)
+	const float Before = Progress;
+
 	SetProgress(FMath::Max(Progress, NewProgress));
+
+	ConsumePaintForProgress(Worker, Progress - Before);
+}
+
+void ACWBaseWorkZone::ConsumePaintForProgress(UCWWorkerComponent* Worker, float ProgressDelta) const
+{
+	if (Worker == nullptr || ProgressDelta <= 0.f || PaintCostFull <= 0.f)
+	{
+		return;
+	}
+
+	Worker->ConsumePaint(ProgressDelta * PaintCostFull);
 }
 
 void ACWBaseWorkZone::HandleProgressChanged()

@@ -26,6 +26,13 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	// 이 존은 라인 테두리 도구 전용이다. 기본값으로 넣어 두면 배치할 때 빼먹을 일이 없다.
 	AcceptedTools.Add(ECWToolType::Liner);
 
+	// 그려둔 가이드라인 위에는 페인트가 묻지 않는다.
+	//
+	// 이 존이 내는 선은 3단계 도색의 기준선이라 계속 보여야 한다. 오염 레이어가 이 자리에도
+	// 칸을 두면 롤러가 지나갈 때마다 선 위가 덮여서, 어디까지 칠해야 하는지가 안 보인다.
+	// 레벨에서 끄고 싶으면 인스턴스에서 내리면 된다.
+	bBlocksPaintSpill = true;
+
 	BorderMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BorderMeshes"));
 	BorderMeshes->SetupAttachment(Area);
 	BorderMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -123,7 +130,23 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 		// 뒤에서 부르면 그 프레임에 null 포인터를 건드린다.
 		ActiveWorker->SubmitWorkHeat(EffectiveSeconds);
 
+		// AdvanceLine 이 미니게임을 끝내면서 ActiveWorker 와 DrawnLength 를 건드릴 수 있다.
+		// 아래에서 쓸 값은 미리 붙잡아 둔다.
+		UCWWorkerComponent* const DrawingWorker = ActiveWorker;
+		const float LengthBefore = DrawnLength;
+
 		AdvanceLine(DrawSpeed * EffectiveSeconds);
+
+		// 그린 만큼 페인트를 쓴다. (기획서 5-3)
+		//
+		// 서버에서는 여기서 빼지 않는다. 올라온 진행도 보고를 받아 ReceiveReportedProgress 가
+		// 이미 같은 양을 빼기 때문이다. 리슨 서버 호스트는 두 경로를 모두 타므로
+		// 여기서도 빼면 혼자만 두 배로 소모한다.
+		const float TotalLength = GetTotalLength();
+		if (!HasAuthority() && TotalLength > 0.f)
+		{
+			ConsumePaintForProgress(DrawingWorker, (DrawnLength - LengthBefore) / TotalLength);
+		}
 	}
 
 	ReportProgressIfDue(false);

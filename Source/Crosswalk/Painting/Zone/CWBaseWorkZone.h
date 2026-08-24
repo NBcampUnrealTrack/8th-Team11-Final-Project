@@ -99,7 +99,7 @@ public:
 	 * 되돌아가지 않게 최대값만 취한다. 패킷이 순서 없이 도착해도 진행도가 튀지 않는다.
 	 * 프로토타입이라 값 자체는 검증하지 않는다. 협동 PvE 이고 서로 속일 이유가 없다.
 	 */
-	void ReceiveReportedProgress(float NewProgress);
+	void ReceiveReportedProgress(UCWWorkerComponent* Worker, float NewProgress);
 
 	/**
 	 * 소유 클라이언트가 자기 기계에서 확정한 붓질 하나를 서버가 받는다.
@@ -116,7 +116,7 @@ public:
 	 *
 	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
 	 */
-	virtual void ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes) {}
+	virtual void ReceiveBrushStrokes(UCWWorkerComponent* Worker, const TArray<FCWBrushStroke>& Strokes) {}
 
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")
@@ -198,6 +198,25 @@ public:
 
 	float GetWorkRange() const { return WorkRange; }
 
+	/**
+	 * 이 지점이 이 존의 영역(Area 박스) 안인가.
+	 *
+	 * 높이는 보지 않는다. 오염 레이어의 칸 판정 자체가 평면이라, 여기서 높이를 보면
+	 * 박스 높이를 어중간하게 잡았을 때 마스킹만 조용히 빗나간다.
+	 */
+	bool ContainsAreaPoint(const FVector& WorldLocation) const;
+
+	/**
+	 * 이 존의 영역에는 페인트 오염이 생기지 않아야 하는가. (오염 레이어가 칸을 빼는 기준)
+	 *
+	 * 두 종류가 이걸 켠다.
+	 *   도색 스트라이프 : 오염이 쌓이면 도색과 정리가 같은 칸을 두고 다툰다
+	 *   테두리 가이드라인 : 그려둔 선 위에 페인트가 덮여 선이 안 보이게 된다
+	 *
+	 * 칸 존은 모드로 자동 판단하고, 그 외 존은 bBlocksPaintSpill 로 켠다.
+	 */
+	virtual bool BlocksPaintSpill() const { return bBlocksPaintSpill; }
+
 protected:
 	/**
 	 * 진행도를 설정한다. 완료 판정까지 여기서 같이 한다.
@@ -231,6 +250,14 @@ protected:
 	 * 갱신되지 않는다. 그런 변화를 만든 쪽이 이걸 직접 불러야 한다.
 	 */
 	void NotifyStateChanged();
+
+	/**
+	 * 진행한 만큼 작업자의 도구에서 페인트를 뺀다. (기획서 5-3)
+	 *
+	 * @param ProgressDelta 이번에 실제로 오른 진행도(0~1). 요청한 값이 아니라 정말 오른 값을 넘겨야 한다.
+	 *                      완료된 존에 계속 키를 누르고 있으면 진행은 0 인데 페인트만 빠진다.
+	 */
+	void ConsumePaintForProgress(UCWWorkerComponent* Worker, float ProgressDelta) const;
 
 private:
 	/**
@@ -315,6 +342,36 @@ protected:
 	// 박스 표면 기준이라 150 정도면 "존 옆에 붙어 서 있다" 는 감각과 맞는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	float WorkRange = 150.f;
+
+	/**
+	 * 이 존을 처음부터 끝까지 완주하는 데 드는 페인트 총량. (기획서 5-3)
+	 *
+	 * 존 크기나 진행 방식이 달라도 밸런싱 창구는 이 값 하나다. 구역별 배율을 따로 두지 않는다.
+	 *   - 게이지·미니게임 존 : 진행도 1% 당 PaintCostFull/100 을 쓴다
+	 *   - 칸 존             : 칸 1개당 PaintCostFull/점수영역 칸 수 를 쓴다
+	 *
+	 * 기본값 100 은 도구 최대 잔량(ACWBaseTool::MaxPaintAmount)과 같은 값이다.
+	 * 그래서 안쪽만 정확히 칠하면 가득 찬 도구 하나로 존 하나가 딱 끝나고,
+	 * 삐져나간 만큼만 모자라진다. 한쪽만 바꾸면 그 관계가 깨진다.
+	 *
+	 * 큰 존을 비싸게 만들고 싶으면 이 값만 올린다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Paint", meta = (ClampMin = "0.0"))
+	float PaintCostFull = 100.f;
+
+	/**
+	 * 이 존의 Area 안에는 페인트 오염이 생기지 않게 막는다.
+	 *
+	 * 오염 레이어가 시작할 때 이 영역과 겹치는 칸을 격자에서 빼버린다. 그 자리에는
+	 * 애초에 켤 칸이 없으므로 칠해질 수도, 차량 자국이 남을 수도 없다.
+	 *
+	 * 테두리 가이드라인 존이 이걸 켠다. 선 위에 페인트가 덮이면 가이드라인이 안 보인다.
+	 * 도색 스트라이프는 켤 필요가 없다. 칸 존이 모드를 보고 알아서 판단한다.
+	 *
+	 * 주의: Area 가 넓은 존에 켜면 그만큼 낙서할 수 없는 영역이 된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Paint")
+	bool bBlocksPaintSpill = false;
 
 	// 진행도가 이 값을 넘으면 완료 처리하고, 그 뒤로는 작업 입력을 받지 않는다.
 	//

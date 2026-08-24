@@ -30,6 +30,7 @@
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
+#include "Painting/Components/CWSupplyCarrierComponent.h"
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -70,6 +71,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
 	TemperatureComponent = CreateDefaultSubobject<UCWTemperatureComponent>(TEXT("TemperatureComponent"));
 	HeadgearComponent = CreateDefaultSubobject<UCWHeadgearComponent>(TEXT("HeadgearComponent"));
+	SupplyCarrierComponent = CreateDefaultSubobject<UCWSupplyCarrierComponent>(TEXT("SupplyCarrierComponent"));
 
 	// 헬멧 슬롯. BP 에서는 Static Mesh 를 꽂고 기즈모로 맞추기만 하면 된다.
 	HelmetSlot_00 = CreateHelmetSlot(TEXT("HelmetSlot_00"));
@@ -173,6 +175,12 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 	}
 
 	HitReactionComponent->HandleVehicleHit(HitContext);
+
+	// 들고 있던 페인트 통이 전부 터진다. (기획서 6-4)
+	//
+	// 넉백을 먹이기 전에, 지금 위치를 그대로 넘긴다. 오염은 착지 지점이 아니라 피격 지점에 생겨야 한다.
+	// 굴러간 끝에 생기면 오염 위치가 매번 달라지고, 차도 한복판을 정리하러 들어가는 위험이 사라진다.
+	SupplyCarrierComponent->BreakCansAndSpill(GetActorLocation());
 
 	// 차가 밀고 나가던 방향으로 날린다. 세기는 차량 속도에 비례시킨다.
 	const FVector LaunchDirection = HitContext.HitDirection.GetSafeNormal2D();
@@ -1065,6 +1073,13 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 	// 헬멧 교체. 누르는 순간 한 번만.
 	EnhancedInput->BindAction(SwapHelmetAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::SwapHelmet);
+
+	// 보급 입력 3종. (기획서 6-1 ~ 6-3)
+	// 도구 집기(E)와 별도 키인 이유: 도구와 통은 동시에 들 수 없어서(6-6), 같은 키로 묶으면
+	// 박스 앞에 도구가 떨어져 있을 때 무엇이 집히는지 플레이어가 예측할 수 없다.
+	EnhancedInput->BindAction(PickUpCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::PickUpCan);
+	EnhancedInput->BindAction(DropCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::DropCan);
+	EnhancedInput->BindAction(ChargePaintAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ChargePaint);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
@@ -1081,6 +1096,9 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	EnsureInputAction(ParryAction, TEXT("BuiltIn_Parry"), EInputActionValueType::Boolean);
 	EnsureInputAction(CancelWorkAction, TEXT("BuiltIn_CancelWork"), EInputActionValueType::Boolean);
 	EnsureInputAction(SwapHelmetAction, TEXT("BuiltIn_SwapHelmet"), EInputActionValueType::Boolean);
+	EnsureInputAction(PickUpCanAction, TEXT("BuiltIn_PickUpCan"), EInputActionValueType::Boolean);
+	EnsureInputAction(DropCanAction, TEXT("BuiltIn_DropCan"), EInputActionValueType::Boolean);
+	EnsureInputAction(ChargePaintAction, TEXT("BuiltIn_ChargePaint"), EInputActionValueType::Boolean);
 
 	BuildSupplementContext();
 }
@@ -1150,6 +1168,25 @@ void ACWPlayerCharacter::BuildSupplementContext()
 	{
 		// WASD·E·Q·Space·마우스가 이미 차 있어서 손이 닿는 자리 중 남은 키로 골랐다.
 		SupplementContext->MapKey(SwapHelmetAction, EKeys::H);
+	}
+
+	// 보급 키. F 로 꺼내고 G 로 반납하고 R 로 붓는다. (기획서 6-1 ~ 6-3)
+	//
+	// 들기와 내려놓기를 한 키로 토글하지 않는 이유: 둘 다 박스 근처에서만 되는 조작이라
+	// 같은 자리에서 두 의도가 겹친다. 통을 더 꺼내려다 반납하는 사고가 난다.
+	if (PickUpCanAction != nullptr)
+	{
+		SupplementContext->MapKey(PickUpCanAction, EKeys::F);
+	}
+
+	if (DropCanAction != nullptr)
+	{
+		SupplementContext->MapKey(DropCanAction, EKeys::G);
+	}
+
+	if (ChargePaintAction != nullptr)
+	{
+		SupplementContext->MapKey(ChargePaintAction, EKeys::R);
 	}
 }
 
@@ -1365,6 +1402,21 @@ void ACWPlayerCharacter::Server_InteractWith_Implementation(AActor* Target)
 	PerformInteractWith(Target);
 }
 
+void ACWPlayerCharacter::PickUpCan()
+{
+	SupplyCarrierComponent->PickUpCan();
+}
+
+void ACWPlayerCharacter::DropCan()
+{
+	SupplyCarrierComponent->DropCan();
+}
+
+void ACWPlayerCharacter::ChargePaint()
+{
+	SupplyCarrierComponent->ChargeNearestTool();
+}
+
 void ACWPlayerCharacter::CancelWork()
 {
 	WorkerComponent->CancelWork();
@@ -1399,6 +1451,18 @@ void ACWPlayerCharacter::Parry()
 	if (WorkerComponent->IsParryBlocked())
 	{
 		UE_LOG(LogTemp, Verbose, TEXT("[%s] 작업 중이라 패링 입력을 무시합니다."), *GetName());
+		return;
+	}
+
+	// 페인트 통을 들고 있으면 패링할 수 없다. (기획서 6-5)
+	//
+	// 통 소지의 실패 비용을 이 제한과 오염 확산량 둘이 떠받친다. 이동속도 페널티를 폐기했으므로
+	// 여기까지 열어주면 통을 많이 드는 선택에 아무 대가가 없어진다.
+	// 보급자는 차를 피하거나 팀원에게 패링을 부탁해야 한다.
+	if (SupplyCarrierComponent->IsCarrying())
+	{
+		SupplyCarrierComponent->NotifyActionRejected(ECWSupplyRejectReason::CansInHand);
+		UE_LOG(LogTemp, Verbose, TEXT("[%s] 페인트 통을 들고 있어 패링 입력을 무시합니다."), *GetName());
 		return;
 	}
 
