@@ -5,7 +5,6 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -24,8 +23,9 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
-#include "Characters/Components/CWHeadgearComponent.h"
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
+#include "Characters/Components/CWWearableComponent.h"
+#include "Characters/Wearables/CWWearableItem.h"
 #include "Interfaces/Interface_Interactable.h"
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
@@ -70,14 +70,15 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
 	TemperatureComponent = CreateDefaultSubobject<UCWTemperatureComponent>(TEXT("TemperatureComponent"));
-	HeadgearComponent = CreateDefaultSubobject<UCWHeadgearComponent>(TEXT("HeadgearComponent"));
 	SupplyCarrierComponent = CreateDefaultSubobject<UCWSupplyCarrierComponent>(TEXT("SupplyCarrierComponent"));
 
-	// 헬멧 슬롯. BP 에서는 Static Mesh 를 꽂고 기즈모로 맞추기만 하면 된다.
-	HelmetSlot_00 = CreateHelmetSlot(TEXT("HelmetSlot_00"));
-	HelmetSlot_01 = CreateHelmetSlot(TEXT("HelmetSlot_01"));
-	HelmetSlot_02 = CreateHelmetSlot(TEXT("HelmetSlot_02"));
-	HelmetSlot_03 = CreateHelmetSlot(TEXT("HelmetSlot_03"));
+	/**
+	 * 착용물 컴포넌트. 헬멧과 옷을 하나로 관리한다.
+	 *
+	 * 슬롯을 여기서 만들지 않는다. 카탈로그가 정의한 슬롯 수만큼 컴포넌트가 BeginPlay 에서
+	 * 직접 만든다. 그래서 슬롯을 늘릴 때 이 생성자를 고치지 않아도 된다.
+	 */
+	WearableComponent = CreateDefaultSubobject<UCWWearableComponent>(TEXT("WearableComponent"));
 
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
@@ -99,37 +100,6 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 		GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 		GetMesh()->AnimClass = PlaceholderAnim.Class;
 	}
-}
-
-UStaticMeshComponent* ACWPlayerCharacter::CreateHelmetSlot(const TCHAR* SlotName)
-{
-	UStaticMeshComponent* HelmetSlot = CreateDefaultSubobject<UStaticMeshComponent>(SlotName);
-
-	/**
-	 * 소켓이 아니라 본 이름("head")에 붙인다.
-	 *
-	 * 소켓을 먼저 만들어야 한다는 전제를 없애기 위한 선택이다. 위치 보정은 어차피 각
-	 * 슬롯의 상대 트랜스폼으로 하고, 그건 BP 뷰포트에서 기즈모로 맞추는 게 스켈레톤
-	 * 에디터에서 소켓을 옮기는 것보다 직관적이다. 나중에 소켓으로 공통 기준을 잡고
-	 * 싶어지면 이 이름만 소켓 이름으로 바꾸면 된다.
-	 */
-	HelmetSlot->SetupAttachment(GetMesh(), TEXT("head"));
-
-	// 래그돌 중 머리 물리 바디와 서로 밀어내는 것을 막는다. 헬멧은 어떤 판정에도 관여하지 않는다.
-	HelmetSlot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	HelmetSlot->SetGenerateOverlapEvents(false);
-
-	// 시각 전용이라 복제하지 않는다. 어느 슬롯을 켜는지만 헤드기어 컴포넌트가 복제한다.
-	HelmetSlot->SetIsReplicated(false);
-
-	/**
-	 * 이 태그로 UCWHeadgearComponent 가 슬롯을 찾는다.
-	 * 컴포넌트의 HelmetComponentTag 기본값과 같아야 한다 — 한쪽만 바꾸면 슬롯을 못 찾아
-	 * H 를 눌러도 아무 일이 없다.
-	 */
-	HelmetSlot->ComponentTags.Add(TEXT("Helmet"));
-
-	return HelmetSlot;
 }
 
 void ACWPlayerCharacter::BeginPlay()
@@ -1080,6 +1050,9 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	EnhancedInput->BindAction(PickUpCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::PickUpCan);
 	EnhancedInput->BindAction(DropCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::DropCan);
 	EnhancedInput->BindAction(ChargePaintAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ChargePaint);
+
+	// 옷 입기/벗기.
+	EnhancedInput->BindAction(ToggleOutfitAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ToggleOutfit);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
@@ -1099,6 +1072,7 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	EnsureInputAction(PickUpCanAction, TEXT("BuiltIn_PickUpCan"), EInputActionValueType::Boolean);
 	EnsureInputAction(DropCanAction, TEXT("BuiltIn_DropCan"), EInputActionValueType::Boolean);
 	EnsureInputAction(ChargePaintAction, TEXT("BuiltIn_ChargePaint"), EInputActionValueType::Boolean);
+	EnsureInputAction(ToggleOutfitAction, TEXT("BuiltIn_ToggleOutfit"), EInputActionValueType::Boolean);
 
 	BuildSupplementContext();
 }
@@ -1187,6 +1161,12 @@ void ACWPlayerCharacter::BuildSupplementContext()
 	if (ChargePaintAction != nullptr)
 	{
 		SupplementContext->MapKey(ChargePaintAction, EKeys::R);
+	}
+
+	if (!AlreadyMapped.Contains(ToggleOutfitAction))
+	{
+		// 헬멧(H) 바로 옆이라 착용 관련 키끼리 붙어 있게 된다.
+		SupplementContext->MapKey(ToggleOutfitAction, EKeys::J);
 	}
 }
 
@@ -1478,7 +1458,14 @@ void ACWPlayerCharacter::Parry()
 
 void ACWPlayerCharacter::SwapHelmet()
 {
-	HeadgearComponent->CycleHelmet();
+	// 머리 슬롯만 순환한다. CWWearableSlots 에 슬롯 이름 상수를 둔 이유가 이 호출이다.
+	WearableComponent->CycleSlotItem(CWWearableSlots::Head);
+}
+
+void ACWPlayerCharacter::ToggleOutfit()
+{
+	// 어느 슬롯이 함께 벗겨지는지는 카탈로그의 bIncludeInToggleAll 이 정한다.
+	WearableComponent->ToggleAllSlots();
 }
 
 FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const

@@ -10,20 +10,20 @@
 class UAnimMontage;
 class UCameraComponent;
 class UNiagaraSystem;
-class UCWHeadgearComponent;
 class UCWParryComponent;
 class UCWSupplyCarrierComponent;
 class UCWTemperatureComponent;
 class UCWToolHolderComponent;
 class UCWVehicleHitReactionComponent;
+class UCWWearableComponent;
 class UCWWorkerComponent;
 class UInputAction;
 enum class EInputActionValueType : uint8;
 class UInputMappingContext;
 class USoundAttenuation;
+class USkeletalMeshComponent;
 class USoundBase;
 class USpringArmComponent;
-class UStaticMeshComponent;
 struct FInputActionValue;
 
 /**
@@ -35,8 +35,8 @@ struct FInputActionValue;
  *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
  *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
  *   - UCWTemperatureComponent : 작업으로 오른 체온에 따라 이동속도와 작업속도를 깎는다
- *   - UCWHeadgearComponent    : H 로 머리 소켓의 헬멧을 갈아 끼운다
  *   - UCWSupplyCarrierComponent : F/G/R 로 페인트 통을 꺼내고 반납하고 도구에 붓는다
+ *   - UCWWearableComponent    : H 로 헬멧을 갈아 끼우고 J 로 작업복을 입고 벗는다
  *
  * 입력 구성
  *   Input Action 과 Mapping Context 를 C++ 이 런타임에 직접 만든다.
@@ -115,6 +115,9 @@ protected:
 	 * 게임플레이에 영향이 없고, 오히려 래그돌 중에 헬멧이 머리를 잘 따라가는지 확인하기 좋다.
 	 */
 	void SwapHelmet();
+
+	/** J. 옷을 전부 입거나 전부 벗는다. 헬멧과 같은 이유로 피격 잠금을 확인하지 않는다. */
+	void ToggleOutfit();
 
 	/**
 	 * 래그돌을 모든 머신에서 같이 켠다. 서버 기준 위치를 함께 넘겨 피격 시작점이 화면마다 갈라지는 것을 줄인다.
@@ -195,12 +198,6 @@ private:
 	 * 트레이스가 빗나가면 캐릭터 위치를 그대로 낸다. 그러면 패링 컴포넌트가 정면으로 대체한다.
 	 */
 	FVector ResolveCursorWorldLocation() const;
-
-	/**
-	 * 헬멧 슬롯 하나를 만들어 머리 본에 붙이고 공통 설정을 적용한다. 생성자에서만 부른다.
-	 * @param SlotName 컴포넌트 이름. 헬멧 순서는 이 이름의 오름차순으로 정해진다.
-	 */
-	UStaticMeshComponent* CreateHelmetSlot(const TCHAR* SlotName);
 
 	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
@@ -353,36 +350,19 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
-	TObjectPtr<UCWHeadgearComponent> HeadgearComponent;
-
 	// 페인트 통 운반. (기획서 6-1 ~ 6-3, 6-6)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
 	TObjectPtr<UCWSupplyCarrierComponent> SupplyCarrierComponent;
 
 	/**
-	 * 머리에 붙는 헬멧 슬롯. 생성자가 만들어 head 본에 붙이고 헬멧 태그를 달아 둔다.
-	 * BP 에서는 Static Mesh 를 꽂고 뷰포트 기즈모로 위치·크기를 맞추기만 하면 된다.
+	 * 헬멧과 옷을 함께 관리한다. 어떤 슬롯이 있고 무엇을 입을 수 있는지는
+	 * 카탈로그 애셋(UCWWearableCatalog)이 정의하므로 이 클래스는 슬롯을 만들지 않는다.
 	 *
-	 * 배열이 아니라 이름 있는 멤버로 하나씩 두는 이유
-	 *   네이티브 컴포넌트는 VisibleAnywhere 가 붙은 개별 UPROPERTY 멤버여야 BP 디테일
-	 *   패널이 바인딩할 프로퍼티를 찾는다. 배열에 담아 두면 컴포넌트 트리에는 나타나지만
-	 *   선택해도 디테일 패널이 비어서 메시를 꽂을 수 없다.
-	 *
-	 * 메시가 꽂히지 않은 슬롯은 UCWHeadgearComponent 가 순환에서 제외한다.
-	 * 더 필요하면 여기에 멤버를 늘리고 생성자에서 CreateHelmetSlot 을 한 줄 더 부르면 된다.
+	 * HeadgearComponent + OutfitComponent + 슬롯 컴포넌트 8개를 대체한다.
+	 * BP 클래스 디폴트에서 이 컴포넌트의 Catalog 를 지정해야 동작한다.
 	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
-	TObjectPtr<UStaticMeshComponent> HelmetSlot_00;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
-	TObjectPtr<UStaticMeshComponent> HelmetSlot_01;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
-	TObjectPtr<UStaticMeshComponent> HelmetSlot_02;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Headgear")
-	TObjectPtr<UStaticMeshComponent> HelmetSlot_03;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wearable")
+	TObjectPtr<UCWWearableComponent> WearableComponent;
 
 protected:
 	/**
@@ -631,6 +611,10 @@ protected:
 	// 근처 도구에 페인트를 붓는 키(R). (기획서 6-3)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ChargePaintAction;
+
+	// 옷을 입고 벗는 키(J). 헬멧과 마찬가지로 프로토타입 확인용이다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ToggleOutfitAction;
 
 private:
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
