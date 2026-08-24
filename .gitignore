@@ -27,6 +27,9 @@ Saved/
 # RiderLink Plugin
 Plugins/Developer/RiderLink/
 
+#Tripo3d unreal bridge Plugin
+Plugins/Developer/Tripo3d_UE_Bridge
+
 #Jetbrains Rider
 .idea/
 *.sln.iml
