@@ -6,11 +6,20 @@
 #include "Painting/Data/CWBrushStroke.h"
 #include "CWWorkerComponent.generated.h"
 
+class ACWBaseTool;
 class ACWBaseWorkZone;
 class UCWTemperatureComponent;
 class UCWWorkerComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnTargetZoneChangedSignature, UCWWorkerComponent*, WorkerComponent, ACWBaseWorkZone*, TargetZone);
+
+/**
+ * 페인트가 없어 작업이 막히기 시작했을 때 true, 다시 채워져 풀렸을 때 false.
+ *
+ * 머리 위 "페인트가 부족합니다!" 알림이 붙는 자리다. (기획서 5-4)
+ * 작업 키를 누르고 있는 동안 매 프레임이 아니라 상태가 바뀌는 순간에만 발행된다.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnPaintDepletedChangedSignature, UCWWorkerComponent*, WorkerComponent, bool, bPaintDepleted);
 
 /**
  * 플레이어 캐릭터에 붙이는 작업 입력 컴포넌트.
@@ -69,6 +78,32 @@ public:
 	 */
 	void SubmitWorkHeat(float EffectiveWorkSeconds);
 
+	/**
+	 * 존이 자기 진행량만큼 페인트를 써달라고 보고한다. (기획서 5-3)
+	 *
+	 * 체온의 SubmitWorkHeat 과 같은 자리다. 다만 이쪽은 서버로 올려보내지 않는다.
+	 * 잔량은 도구 액터가 리플리케이트하고, 서버는 서버대로 같은 계산을 돌리기 때문이다.
+	 *   - 게이지 존   : 서버에서만 ApplyWork 가 돌아 서버가 깎는다
+	 *   - 칸 존       : 칠한 본인이 로컬로 깎고, 올라간 붓질을 받아 서버도 깎는다
+	 *   - 미니게임 존 : 그리는 본인이 로컬로 깎고, 올라간 진행도를 받아 서버도 깎는다
+	 * 어느 쪽이든 양쪽이 같은 양을 깎으므로 따로 RPC 를 태울 필요가 없고,
+	 * 어긋나더라도 서버 값이 리플리케이션으로 덮는다.
+	 */
+	void ConsumePaint(float Amount);
+
+	/**
+	 * 지금 들고 있는 도구에 작업할 페인트가 남아 있는가. (기획서 5-1)
+	 *
+	 * 빗자루처럼 페인트를 쓰지 않는 도구는 언제나 true 다.
+	 * 맨손도 true 를 돌려준다. 도구가 없어서 작업이 안 되는 것은 존이 따로 거른다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work|Paint")
+	bool HasPaintForWork() const;
+
+	/** 지금 들고 있는 도구 액터. 맨손이면 nullptr. 잔량을 물어볼 때 쓴다. */
+	UFUNCTION(BlueprintPure, Category = "Work|Paint")
+	ACWBaseTool* GetHeldToolActor() const { return HeldToolActor; }
+
 	/** 작업 키를 눌렀을 때. Enhanced Input 의 Started 에 연결한다. */
 	UFUNCTION(BlueprintCallable, Category = "Work")
 	void StartWork();
@@ -77,9 +112,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Work")
 	void StopWork();
 
-	/** 도구를 집거나 놓을 때 호출한다. 놓을 때는 ECWToolType::None. */
+	/**
+	 * 도구를 집거나 놓을 때 호출한다. 놓을 때는 ECWToolType::None 과 nullptr.
+	 *
+	 * 종류와 액터를 둘 다 받는 이유: 종류는 남의 화면에도 필요해서 리플리케이트하지만,
+	 * 잔량은 도구 액터가 들고 있어서 실물 포인터가 있어야 물어볼 수 있다. (기획서 5-1)
+	 * 액터를 생략하면 종류만 바뀐다. 홀더 없이 이 함수만 불러 테스트하던 경로가 그대로 남는다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Work")
-	void SetHeldTool(ECWToolType NewTool);
+	void SetHeldTool(ECWToolType NewTool, ACWBaseTool* NewToolActor = nullptr);
 
 	/**
 	 * 이동 입력을 현재 대상 존에 넘긴다. 미니게임이 있는 존이면 방향 전환에 쓰인다.
@@ -220,6 +261,12 @@ private:
 
 	void SetTargetZone(ACWBaseWorkZone* NewZone);
 
+	/** 페인트 부족 상태가 바뀌었을 때만 델리게이트를 발행한다. */
+	void SetPaintDepleted(bool bNewDepleted);
+
+	/** 들고 있는 도구의 잔량을 화면에 띄운다. 페인트 UI 가 붙기 전까지 프로토타입 확인용. */
+	void ShowDebugPaint() const;
+
 	bool IsLocallyControlledWorker() const;
 
 public:
@@ -246,6 +293,11 @@ protected:
 	// 작업 지점을 서버에 올리는 간격(초). 0.1 이면 초당 10번이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.02"))
 	float WorkLocationSendInterval = 0.1f;
+
+	// 들고 있는 도구의 페인트 잔량을 화면 좌상단에 띄운다. 페인트 HUD 가 생기면 끄면 된다.
+	// 자기가 조종하는 캐릭터에서만 그린다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
+	bool bShowDebugPaint = false;
 
 	// 존이 보고한 체온 상승분을 모아 서버로 올리는 간격(초).
 	// 매 프레임 보낼 이유가 없다. 어차피 합산해서 더하는 값이라 묶어도 결과가 같다.
@@ -300,6 +352,19 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
 
+	/**
+	 * 지금 들고 있는 도구 액터. 잔량을 묻고 깎는 대상이다.
+	 *
+	 * 리플리케이트하지 않는다. 서버는 PerformInteract 에서, 클라이언트는 OnRep_HeldTool 에서
+	 * 각자 홀더가 넣어주므로 양쪽 모두 자기 값을 갖는다. 남의 도구 잔량은 그 도구 액터가
+	 * 직접 리플리케이트하므로 여기를 거칠 이유가 없다.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<ACWBaseTool> HeldToolActor;
+
+	// 페인트가 없어 작업이 막힌 상태인가. 매 프레임 알리지 않고 바뀌는 순간만 잡는다.
+	bool bPaintDepleted = false;
+
 	// 취소를 눌렀는가. 서버 응답을 기다리지 않고 이동 잠금을 즉시 풀기 위한 로컬 플래그다.
 	// 리플리케이트하지 않는다. 작업을 다시 시작할 때 풀린다.
 	bool bCancelRequested = false;
@@ -307,4 +372,7 @@ private:
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Work")
 	FCWOnTargetZoneChangedSignature OnTargetZoneChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Work|Paint")
+	FCWOnPaintDepletedChangedSignature OnPaintDepletedChanged;
 };

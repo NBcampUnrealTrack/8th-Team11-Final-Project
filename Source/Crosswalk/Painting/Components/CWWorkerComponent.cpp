@@ -7,6 +7,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWPaintingSubsystem.h"
 #include "Painting/Components/CWTemperatureComponent.h"
+#include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 
 UCWWorkerComponent::UCWWorkerComponent()
@@ -93,8 +94,18 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	// 작업 키를 누르고 있지 않아도(미니게임이 혼자 도는 동안) 나가야 하므로 아래 조기 반환보다 위에 둔다.
 	FlushPendingWorkHeat();
 
+	// 페인트가 없으면 작업이 진행되지 않는다. (기획서 5-1)
+	//
+	// 작업하려 했는데 페인트가 없는 경우만 잡는다. 작업 키를 놓거나 다운되면 저절로 풀린다.
+	// 대상 존을 찾은 뒤에 보는 이유: 존도 없는 허공에 대고 키를 누를 때마다
+	// 머리 위에 "페인트가 부족합니다!" 가 뜨면 안 된다.
+	const bool bWantsToWork = bWorking && !bWorkBlocked && FoundZone != nullptr;
+	SetPaintDepleted(bWantsToWork && !HasPaintForWork());
+
+	ShowDebugPaint();
+
 	// 진행도를 실제로 올리는 것은 서버뿐이다.
-	if (!bWorking || bWorkBlocked || FoundZone == nullptr)
+	if (!bWantsToWork || bPaintDepleted)
 	{
 		return;
 	}
@@ -192,6 +203,56 @@ void UCWWorkerComponent::Server_SubmitWorkHeat_Implementation(float EffectiveWor
 	}
 }
 
+void UCWWorkerComponent::ConsumePaint(float Amount)
+{
+	if (HeldToolActor != nullptr)
+	{
+		HeldToolActor->ConsumePaint(Amount);
+	}
+}
+
+bool UCWWorkerComponent::HasPaintForWork() const
+{
+	// 맨손이면 잔량을 볼 것이 없다. 도구가 없어서 작업이 안 되는 것은 존의 CanUseTool 이 거른다.
+	return HeldToolActor == nullptr || HeldToolActor->HasPaint();
+}
+
+void UCWWorkerComponent::ShowDebugPaint() const
+{
+	// 남의 캐릭터까지 그리면 같은 자리에 여러 줄이 겹친다. 내 것만 띄운다.
+	if (!bShowDebugPaint || !IsLocallyControlledWorker() || GEngine == nullptr)
+	{
+		return;
+	}
+
+	if (HeldToolActor == nullptr || !HeldToolActor->UsesPaint())
+	{
+		return;
+	}
+
+	// 키를 컴포넌트 주소로 잡아 매 프레임 같은 줄을 덮어쓴다. 화면이 밀려 올라가지 않는다.
+	GEngine->AddOnScreenDebugMessage(
+		static_cast<uint64>(reinterpret_cast<UPTRINT>(this)),
+		0.f,
+		bPaintDepleted ? FColor::Red : FColor::Cyan,
+		FString::Printf(TEXT("Paint %.0f / %.0f (%.0f%%)"),
+			HeldToolActor->GetPaintAmount(),
+			HeldToolActor->GetMaxPaintAmount(),
+			HeldToolActor->GetPaintRatio() * 100.f));
+}
+
+void UCWWorkerComponent::SetPaintDepleted(bool bNewDepleted)
+{
+	if (bPaintDepleted == bNewDepleted)
+	{
+		return;
+	}
+
+	bPaintDepleted = bNewDepleted;
+
+	OnPaintDepletedChanged.Broadcast(this, bPaintDepleted);
+}
+
 float UCWWorkerComponent::GetWorkSpeedFactor() const
 {
 	return TemperatureComponent != nullptr ? TemperatureComponent->GetWorkSpeedFactor() : 1.f;
@@ -282,12 +343,16 @@ void UCWWorkerComponent::Server_SubmitDirectionInput_Implementation(ACWBaseWorkZ
 	}
 }
 
-void UCWWorkerComponent::SetHeldTool(ECWToolType NewTool)
+void UCWWorkerComponent::SetHeldTool(ECWToolType NewTool, ACWBaseTool* NewToolActor)
 {
 	HeldTool = NewTool;
+	HeldToolActor = NewToolActor;
 
 	// 도구가 바뀌면 진행 중이던 작업은 끊는다.
 	bWorking = false;
+
+	// 새 도구는 잔량이 다르다. 이전 도구 기준의 부족 표시를 그대로 두면 안 된다.
+	SetPaintDepleted(false);
 }
 
 void UCWWorkerComponent::SetWorkBlocked(bool bNewBlocked)
@@ -443,7 +508,7 @@ void UCWWorkerComponent::ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProg
 
 	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
 	{
-		Zone->ReceiveReportedProgress(NewProgress);
+		Zone->ReceiveReportedProgress(this, NewProgress);
 		return;
 	}
 
@@ -461,7 +526,7 @@ void UCWWorkerComponent::Server_ReportWorkProgress_Implementation(ACWBaseWorkZon
 {
 	if (Zone != nullptr)
 	{
-		Zone->ReceiveReportedProgress(NewProgress);
+		Zone->ReceiveReportedProgress(this, NewProgress);
 	}
 }
 
@@ -469,7 +534,7 @@ void UCWWorkerComponent::Server_ReportWorkCompleted_Implementation(ACWBaseWorkZo
 {
 	if (Zone != nullptr)
 	{
-		Zone->ReceiveReportedProgress(1.f);
+		Zone->ReceiveReportedProgress(this, 1.f);
 	}
 }
 
@@ -482,7 +547,7 @@ void UCWWorkerComponent::SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<
 
 	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
 	{
-		Zone->ReceiveBrushStrokes(Strokes);
+		Zone->ReceiveBrushStrokes(this, Strokes);
 		return;
 	}
 
@@ -493,7 +558,7 @@ void UCWWorkerComponent::Server_SubmitBrushStrokes_Implementation(ACWBaseWorkZon
 {
 	if (Zone != nullptr)
 	{
-		Zone->ReceiveBrushStrokes(Strokes);
+		Zone->ReceiveBrushStrokes(this, Strokes);
 	}
 }
 

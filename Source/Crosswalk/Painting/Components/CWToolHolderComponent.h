@@ -6,6 +6,7 @@
 #include "CWToolHolderComponent.generated.h"
 
 class ACWBaseTool;
+class UCWSupplyCarrierComponent;
 class UCWToolHolderComponent;
 class UCWWorkerComponent;
 
@@ -69,6 +70,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Tool")
 	ECWToolType GetHeldToolType() const;
 
+	/** 페인트 통을 들고 있어서 도구를 집을 수 없는 상태인가. (기획서 6-6) */
+	UFUNCTION(BlueprintPure, Category = "Tool")
+	bool IsBlockedByCarriedCans() const;
+
 private:
 	/**
 	 * 클라이언트가 보낸 집기 요청. 서버에서만 실행된다.
@@ -119,6 +124,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> WorkerComponent;
+
+	// 통을 들고 있으면 도구를 집을 수 없다. (기획서 6-6) 없어도 동작한다.
+	UPROPERTY(Transient)
+	TObjectPtr<UCWSupplyCarrierComponent> SupplyCarrierComponent;
 
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Tool")

@@ -156,7 +156,7 @@ public:
 	TObjectPtr<UInstancedStaticMeshComponent> BorderMeshes;
 
 protected:
-	// 테두리 선의 두께(cm).
+	// 테두리 선의 두께(cm). 선은 Area 경계에 중심을 두고 그려져서 안팎으로 절반씩 걸친다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "1.0"))
 	float BorderThickness = 12.f;
 
@@ -221,9 +221,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
 	FName ProgressParameterName = TEXT("Progress");
 
-	// 테두리를 도로면보다 살짝 띄워 Z-파이팅을 막는다. (cm)
+	/**
+	 * 테두리를 도로면보다 살짝 띄워 Z-파이팅을 막는다. (cm)
+	 *
+	 * 오염 레이어의 칸 메쉬(ACWWorkZone_Cells::CellHeightOffset, 기본 1)보다 **높아야 한다.**
+	 * 같으면 두 면이 같은 높이에서 다투다가 페인트가 선을 덮어버려서,
+	 * 어디까지 칠해야 하는지 알려주는 가이드라인이 사라진다.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	float GuideHeightOffset = 1.f;
+	float GuideHeightOffset = 2.f;
 
 private:
 	// 작업 키가 마지막으로 눌린 시각. 이 값으로 가속 여부를 판단한다.

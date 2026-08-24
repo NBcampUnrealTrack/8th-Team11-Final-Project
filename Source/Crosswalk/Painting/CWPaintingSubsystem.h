@@ -7,6 +7,7 @@
 #include "CWPaintingSubsystem.generated.h"
 
 class ACWBaseWorkZone;
+class ACWWorkZone_Cells;
 class UCWWorkerComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneRegisteredSignature, ACWBaseWorkZone*, Zone);
@@ -46,6 +47,34 @@ public:
 
 	void RegisterWorker(UCWWorkerComponent* Worker);
 	void UnregisterWorker(UCWWorkerComponent* Worker);
+
+	/**
+	 * 붓질 하나를 겹치는 다른 칸 존들에게도 전달한다.
+	 *
+	 * 왜 필요한가
+	 *   UCWWorkerComponent::FindTargetZone 은 언제나 한 존만 고른다. 그래서 붓이 스트라이프
+	 *   경계에 걸쳐 있으면 스트라이프만 칠해지고, 밖으로 나간 부분은 아무 데도 기록되지 않는다.
+	 *   같은 이유로 오염 레이어에서 지우는 붓이 스트라이프에 걸쳐도 안쪽이 안 칠해진다.
+	 *
+	 *   전달을 "겹치는 존 전부" 에게 보내면 그 이음새가 사라진다. 한 프레임에 양쪽이 같이 처리되므로
+	 *   경계에 붓을 대고 멈춰 있어도 끊기지 않는다.
+	 *
+	 * 비용은 사실상 없다. 겹치지 않는 존은 격자 인덱스 범위가 비어 칸을 한 개도 돌지 않는다.
+	 *
+	 * @param SourceZone 이미 자기 몫을 처리한 존. 두 번 적용되지 않게 제외한다.
+	 */
+	void BroadcastBrushStroke(ACWWorkZone_Cells* SourceZone, UCWWorkerComponent* Worker, const FVector& Center, float Radius);
+
+	/**
+	 * 이 지점 아래의 지면 높이를 찾는다. 못 찾으면 넘어온 좌표를 그대로 돌려준다.
+	 *
+	 * 작업 존을 전부 빼고 쏜다. 존의 Area 박스는 커서 트레이스를 받으려고 ECC_Visibility 를
+	 * 막고 있어서, 그냥 아래로 쏘면 지면이 아니라 박스 윗면을 맞는다.
+	 * 그러면 바닥에 붙어야 할 것이 박스 높이만큼 공중에 뜬다.
+	 *
+	 * @param IgnoredActor 추가로 뺄 액터. 캐릭터 위치에서 쏠 때 자기 캡슐을 빼는 데 쓴다.
+	 */
+	FVector ProjectToGround(const FVector& Location, const AActor* IgnoredActor = nullptr) const;
 
 	/**
 	 * 등록된 존 목록. 배열을 그대로 넘겨 매 프레임 호출에서도 할당이 생기지 않게 한다.

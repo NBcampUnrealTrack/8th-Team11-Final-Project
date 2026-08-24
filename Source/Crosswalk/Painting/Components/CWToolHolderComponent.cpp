@@ -5,6 +5,7 @@
 #include "GameFramework/Pawn.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "Net/UnrealNetwork.h"
+#include "Painting/Components/CWSupplyCarrierComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
 
 UCWToolHolderComponent::UCWToolHolderComponent()
@@ -26,6 +27,7 @@ void UCWToolHolderComponent::BeginPlay()
 	Super::BeginPlay();
 
 	WorkerComponent = GetOwner()->FindComponentByClass<UCWWorkerComponent>();
+	SupplyCarrierComponent = GetOwner()->FindComponentByClass<UCWSupplyCarrierComponent>();
 }
 
 void UCWToolHolderComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -60,6 +62,16 @@ void UCWToolHolderComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UCWToolHolderComponent::Interact()
 {
+	// 통을 들고 있으면 여기서 먼저 자른다. 서버도 PickUpTool 에서 다시 보지만,
+	// 데디케이티드 서버에서는 거절 피드백이 이 클라이언트까지 오지 않는다.
+	// (NotifyActionRejected 는 조종 중인 본인 기계에서만 발행된다)
+	// 그러면 "양손이 찼다" 가 영영 안 뜨고 입력이 조용히 씹힌 것처럼 보인다.
+	if (HeldTool == nullptr && IsBlockedByCarriedCans())
+	{
+		SupplyCarrierComponent->NotifyActionRejected(ECWSupplyRejectReason::CansInHand);
+		return;
+	}
+
 	// 클라이언트는 판정하지 않고 요청만 보낸다.
 	// FocusedTool 을 같이 보내는 이유: 서버는 이 클라이언트의 화면에서 무엇이 선택돼 있었는지 모른다.
 	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
@@ -87,11 +99,25 @@ void UCWToolHolderComponent::PerformInteract(ACWBaseTool* RequestedTool)
 	PickUpTool(RequestedTool);
 }
 
+bool UCWToolHolderComponent::IsBlockedByCarriedCans() const
+{
+	return SupplyCarrierComponent != nullptr && SupplyCarrierComponent->IsCarrying();
+}
+
 bool UCWToolHolderComponent::PickUpTool(ACWBaseTool* Tool)
 {
 	// 1인 1개. 들고 있는 게 있으면 먼저 내려놓아야 한다.
 	if (Tool == nullptr || HeldTool != nullptr)
 	{
+		return false;
+	}
+
+	// 페인트 통을 들고 있으면 도구를 집을 수 없다. (기획서 6-6)
+	// 통은 박스 근처에서만 내려놓을 수 있으므로, 여기서 막히면 박스까지 돌아가야 한다.
+	// 그 마찰이 "혼자 보급할 때는 통을 1개만 들고 오는 게 유리하다" 를 만든다.
+	if (IsBlockedByCarriedCans())
+	{
+		SupplyCarrierComponent->NotifyActionRejected(ECWSupplyRejectReason::CansInHand);
 		return false;
 	}
 
@@ -266,6 +292,8 @@ void UCWToolHolderComponent::NotifyWorkerComponent()
 {
 	if (WorkerComponent != nullptr)
 	{
-		WorkerComponent->SetHeldTool(GetHeldToolType());
+		// 종류만이 아니라 액터도 함께 넘긴다. 페인트 잔량은 도구가 들고 있어서
+		// 실물 포인터가 없으면 물어볼 수가 없다. (기획서 5-1)
+		WorkerComponent->SetHeldTool(GetHeldToolType(), HeldTool);
 	}
 }

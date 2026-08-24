@@ -58,7 +58,7 @@ public:
 
 	virtual void ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds) override;
 
-	virtual void ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes) override;
+	virtual void ReceiveBrushStrokes(UCWWorkerComponent* Worker, const TArray<FCWBrushStroke>& Strokes) override;
 
 	/**
 	 * 외부에서 칸을 추가한다. 차량이 마르지 않은 페인트를 밟고 지나갈 때 쓴다.
@@ -70,11 +70,48 @@ public:
 	 * 서버에서만 유효하다. 클라이언트에서 부르면 조용히 무시된다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Work")
-	void AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly = false);
+	int32 AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly = false);
 
 	/** 칸을 채우는 존인가. (3단계 도색) 지우는 존이면 false. */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsFillMode() const { return WorkMode == ECWCellWorkMode::FillCells; }
+
+	/** 이 존이 페인트 오염 레이어인가. (스트라이프 밖에 묻은 페인트를 전부 담는 존) */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsPaintSpillLayer() const { return bPaintSpillLayer; }
+
+	virtual bool BlocksPaintSpill() const override;
+
+	/**
+	 * 스트라이프의 점수 영역과 겹치는 칸을 격자에서 빼둔다. (오염 레이어 전용)
+	 *
+	 * 왜 필요한가
+	 *   레이어는 도로 전체를 덮고 스트라이프는 그 위에 놓인다. 겹친 자리에 칸을 남겨두면
+	 *   같은 지점을 두 존이 각자 기록한다. 스트라이프를 칠하는 동안 레이어에도 오염이 쌓여서
+	 *   도색을 끝낼수록 치울 것이 늘어나는 이상한 상태가 된다.
+	 *
+	 *   빼두면 기획서 6-4 의 "도색 구역 점수 영역에는 오염이 생기지 않는다" 도 저절로 지켜진다.
+	 *   그 자리에는 애초에 켤 칸이 없기 때문이다.
+	 *
+	 * 등록 목록을 보기 때문에 BeginPlay 가 아니라 다음 틱에 돌아야 한다.
+	 * 액터의 BeginPlay 순서는 보장되지 않아서, 지금 바로 훑으면 아직 등록 전인 스트라이프를 놓친다.
+	 */
+	void RefreshSpillMask();
+
+	/**
+	 * 다른 존에서 넘어온 붓질을 받는다. (UCWPaintingSubsystem::BroadcastBrushStroke)
+	 *
+	 * 붓이 두 존에 걸쳐 있을 때 이음새를 없애는 장치다. FindTargetZone 은 언제나 한 존만
+	 * 고르기 때문에, 스트라이프가 잡히면 그 밖으로 나간 부분이 아무 데도 기록되지 않는다.
+	 *
+	 * 받는 쪽이 자기 CanWorkNow 로 다시 판단하므로 잠금 규칙이 저절로 지켜진다.
+	 * 도구가 채우는지 지우는지도 받는 존이 스스로 정한다. 보내는 쪽의 판단을 그대로 쓰면
+	 * 흰 롤러가 오염 레이어에서 칸을 지우는 일이 생긴다.
+	 */
+	void ReceiveForwardedBrush(UCWWorkerComponent* Worker, const FVector& Center, float Radius);
+
+	/** 면적 1cm² 당 페인트 소모량. 격자 해상도가 달라도 같은 붓질이면 같은 값이 나오게 한다. */
+	float GetPaintCostPerArea() const;
 
 	/** Area 바깥으로 칠할 수 있는 여유 폭(cm). 0 이면 바깥 고리가 없다. */
 	UFUNCTION(BlueprintPure, Category = "Work")
@@ -83,6 +120,27 @@ public:
 	/** 이 도구가 삐져나간 페인트를 지우는 도구인가. (검은색 롤러) */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsCleanupTool(ECWToolType ToolType) const;
+
+	/** 이 도구가 칸을 채우는 도구인가. FillTools 가 비어 있으면 WorkMode 로 판단한다. */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsFillTool(ECWToolType ToolType) const;
+
+	/**
+	 * 이 도구를 썼을 때 칸이 채워지는가(true) 지워지는가(false).
+	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳" 이 같은 답을 써야 해서 함수로 뺐다.
+	 */
+	bool ResolveFillForTool(ECWToolType ToolType) const;
+
+	/**
+	 * 바깥 고리가 있는가. (OverspillMargin > 0)
+	 *
+	 * 정리 도구의 동작 범위를 가른다. 고리가 있으면 고리만, 없으면 격자 전체다.
+	 * 고리가 없는데도 고리만 지우게 두면 오염 레이어에서 검은 롤러가 통째로 먹통이 된다.
+	 */
+	bool HasOverspillRing() const;
+
+	/** 정리 도구로 지울 수 있는 칸이 남아 있는가. 고리 유무에 따라 세는 대상이 다르다. */
+	int32 GetCleanableCellCount() const;
 
 	/**
 	 * 이 월드 지점의 칸이 칠해져 있는가. 격자 밖이면 false.
@@ -173,7 +231,16 @@ private:
 	 *
 	 * @return 실제로 바뀐 칸이 있으면 true
 	 */
-	bool ApplyStroke(const FCWBrushStroke& Stroke);
+	int32 ApplyStroke(const FCWBrushStroke& Stroke);
+
+	/**
+	 * 칠하거나 지운 칸 수만큼 작업자의 도구에서 페인트를 뺀다. (기획서 5-3)
+	 *
+	 * 칸 수로 계산하는 이유: 진행도로 계산하면 바깥 고리가 공짜가 된다. 고리는 진행도에
+	 * 잡히지 않으므로, 삐져나가게 칠하나 정확히 칠하나 총액이 같아져 낭비에 대가가 없어진다.
+	 * 칸 수로 세면 고리에 묻은 칸도 그대로 비용이 되고, 그걸 검은색 롤러로 지울 때 또 든다.
+	 */
+	void ConsumePaintForCells(UCWWorkerComponent* Worker, int32 ChangedCellCount) const;
 
 	/**
 	 * 서버가 확정한 붓질을 전원에게 뿌린다.
@@ -277,6 +344,15 @@ private:
 
 			for (int32 CellX = MinX; CellX <= MaxX; ++CellX)
 			{
+				const int32 CellIndex = GetCellIndex(CellX, CellY);
+
+				// 스트라이프에 가려진 칸은 이 격자에 없는 것으로 친다. (오염 레이어 전용)
+				// 그 자리는 도색 시스템 소관이라 오염이 쌓여서도, 지워져서도 안 된다.
+				if (CellMasked.IsValidIndex(CellIndex) && CellMasked[CellIndex])
+				{
+					continue;
+				}
+
 				const bool bCounted = IsCountedCell(CellX, CellY);
 
 				// 검은색 롤러는 삐져나간 페인트만 지운다. 완성된 횡단보도 위를 지나가도 안전하다.
@@ -292,7 +368,7 @@ private:
 					continue;
 				}
 
-				if (!Visitor(GetCellIndex(CellX, CellY), bCounted))
+				if (!Visitor(CellIndex, bCounted))
 				{
 					return;
 				}
@@ -306,7 +382,7 @@ private:
 	 * 중심점 주변 반경 안의 칸들을 켜거나 끈다.
 	 * @return 실제로 상태가 바뀐 칸이 하나라도 있으면 true
 	 */
-	bool SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly);
+	int32 SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly);
 
 	/** 이 칸이 진행도로 세는 영역(Area 안쪽) 안에 있는가. */
 	bool IsCountedCell(int32 CellX, int32 CellY) const;
@@ -422,14 +498,52 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	FIntPoint GridSize = FIntPoint(40, 20);
 
+	/**
+	 * 지금 설정으로 나오는 칸 하나의 크기(cm). 읽기 전용이고, 박스나 GridSize 를 만지면 바로 갱신된다.
+	 *
+	 * 에디터에서 크기를 맞출 때 쓰라고 띄운다. 예전에는 PIE 를 돌려야만 알 수 있어서,
+	 * 박스를 조금 늘릴 때마다 플레이해 보고 되돌아오는 일이 반복됐다.
+	 *
+	 * 8~10cm 면 붓 자국처럼 보이고, 20cm 를 넘으면 어떤 머티리얼을 써도 네모가 눈에 띈다.
+	 * 오염 레이어는 스트라이프의 1~1.5배로 맞추면 경계에서 이음새가 티나지 않는다.
+	 */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Work", meta = (DisplayName = "칸 크기 (cm)"))
+	FVector2D CellSizePreview = FVector2D::ZeroVector;
+
+	/**
+	 * 지금 설정으로 나오는 전체 칸 수. 바깥 고리까지 포함한다.
+	 *
+	 * 이 수가 곧 렌더 인스턴스 수다. **20,000 을 넘으면 프레임에 영향이 온다.**
+	 * 넘었으면 GridSize 를 줄여 칸을 키우거나, 박스를 줄이면 된다.
+	 */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Work", meta = (DisplayName = "전체 칸 수 (2만 이하 권장)"))
+	int32 CellCountPreview = 0;
+
 	// Area 바깥으로 몇 cm 까지 칠할 수 있는가. 여기 묻은 페인트는 진행도에 포함되지 않고,
 	// CleanupTools 로 지워야 하는 "삐져나간 페인트" 가 된다. 0 이면 Area 밖으로는 칠해지지 않는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0"))
 	float OverspillMargin = 0.f;
 
-	// 삐져나간 페인트를 지우는 도구. (3단계+ 검은색 롤러)
-	// 이 도구는 Area 바깥 칸만 지운다. 완성된 횡단보도는 지울 수 없고,
-	// 존이 완료된 뒤에도 정리를 계속할 수 있다.
+	/**
+	 * 칸을 "채우는" 도구를 직접 지정한다. 비워두면 WorkMode 로 판단한다. (기존 존들은 비워 두면 된다)
+	 *
+	 * 왜 필요한가
+	 *   WorkMode 하나가 두 가지를 동시에 정하고 있었다. "진행도를 어떻게 세는가" 와
+	 *   "도구가 칸을 채우는가 지우는가" 다. 오염 레이어는 그 둘이 서로 반대여야 한다.
+	 *   흰 롤러로는 칠해지고(채움), 검은 롤러로는 지워지고, 진행도는 "얼마나 깨끗한가"(ClearCells) 다.
+	 *   WorkMode 만으로는 이 조합을 표현할 수 없다.
+	 *
+	 *   그래서 WorkMode 는 진행도 계산에만 쓰고, 채움/지움은 이 목록과 CleanupTools 가 정한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	TArray<ECWToolType> FillTools;
+
+	// 칸을 지우는 도구. (검은색 롤러)
+	//
+	// 바깥 고리가 있는 존이면 고리 칸만 지운다. 완성된 횡단보도까지 지워지면 안 되기 때문이다.
+	// 고리가 없는 존(오염 레이어)이면 격자 전체를 지운다. 그쪽은 격자 전체가 곧 정리 대상이다.
+	//
+	// 이 도구는 AcceptedTools 에 없어도 존에 들어올 수 있고, 존이 완료된 뒤에도 계속 쓸 수 있다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	TArray<ECWToolType> CleanupTools;
 
@@ -445,6 +559,37 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	ECWCellWorkMode WorkMode = ECWCellWorkMode::FillCells;
+
+	/**
+	 * 이 존이 페인트 오염 레이어인가. 스테이지에 배치하는 넓은 정리 존이 이걸 켠다.
+	 *
+	 * 켜면 두 가지가 달라진다.
+	 *   1. 다른 스트라이프의 점수 영역과 겹치는 칸을 격자에서 뺀다 (RefreshSpillMask)
+	 *   2. 붓질 전달의 대상이 된다. 스트라이프 밖으로 나간 페인트가 여기로 모인다
+	 *
+	 * 권장 설정
+	 *   WorkMode      = ClearCells      (진행도 = 얼마나 깨끗한가)
+	 *   bStartFilled  = false
+	 *   FillTools     = [WhiteRoller]   (흰 롤러로 칠하면 더러워진다)
+	 *   CleanupTools  = [BlackRoller]   (검은 롤러로 지운다)
+	 *   OverspillMargin = 0             (격자 전체가 정리 대상)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	bool bPaintSpillLayer = false;
+
+	/**
+	 * 면적당 페인트 소모량. 0 이면 PaintCostFull 과 점수 영역 면적으로 자동 계산한다.
+	 *
+	 * 스트라이프는 0 으로 두면 된다. "이 구역을 다 칠하면 PaintCostFull" 이라는 기획서 정의가
+	 * 그대로 단가가 되기 때문이다.
+	 *
+	 * 오염 레이어는 그 계산이 맞지 않는다. 레이어는 도로 전체라 면적이 훨씬 넓어서
+	 * 자동 계산하면 단가가 바닥까지 떨어지고 낙서가 사실상 공짜가 된다.
+	 * 그래서 레이어도 0 으로 두면 RefreshSpillMask 가 스트라이프의 단가를 그대로 물려받는다.
+	 * 직접 넣은 값이 있으면 그쪽이 우선한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.0"))
+	float PaintCostPerArea = 0.f;
 
 	// 시작할 때 모든 칸이 채워져 있는지. (1단계 청소는 true)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
@@ -600,6 +745,13 @@ protected:
 private:
 	// 칸별 채움 상태. 이게 이 존의 전부다. 바깥 고리를 포함한 전체 격자 크기다.
 	TArray<bool> CellFilled;
+
+	/**
+	 * 격자에서 빼둔 칸. 오염 레이어에서만 채워진다. (RefreshSpillMask)
+	 *
+	 * 비어 있으면 마스킹이 없는 것이다. 일반 존은 이 배열을 쓰지 않으므로 메모리도 안 든다.
+	 */
+	TArray<bool> CellMasked;
 
 	// 바깥 고리까지 포함한 전체 격자 크기. GridSize + 여백 칸 수 * 2.
 	FIntPoint FullGridSize = FIntPoint(1, 1);

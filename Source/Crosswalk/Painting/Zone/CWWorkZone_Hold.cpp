@@ -53,7 +53,16 @@ void ACWWorkZone_Hold::ApplyWork(UCWWorkerComponent* Worker, const FVector& Worl
 		return;
 	}
 
-	SetProgress(GetProgress() + DeltaSeconds / SecondsToComplete);
+	// 실제로 오른 만큼만 페인트를 뺀다. (기획서 5-3)
+	//
+	// 요청한 델타를 그대로 쓰지 않는 이유: SetProgress 는 1 에서 자르고 클라이언트에서는
+	// 아예 무시된다. 요청값으로 깎으면 게이지가 다 찬 존에 키를 붙잡고 있는 동안
+	// 진행은 없는데 페인트만 계속 빠지고, 클라이언트에서는 한 번 더 빠진다.
+	const float Before = GetProgress();
+
+	SetProgress(Before + DeltaSeconds / SecondsToComplete);
+
+	ConsumePaintForProgress(Worker, GetProgress() - Before);
 }
 
 void ACWWorkZone_Hold::OnProgressChanged(float NewProgress)

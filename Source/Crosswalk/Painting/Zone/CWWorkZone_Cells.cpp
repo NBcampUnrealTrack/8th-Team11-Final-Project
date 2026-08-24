@@ -8,9 +8,18 @@
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Painting/CWPaintingSubsystem.h"
 #include "Painting/Components/CWWorkerComponent.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
+
+namespace
+{
+	// 런타임 오염 구역 판정 박스의 높이 절반(cm).
+	// 오염은 평면으로만 판정하지만(ContainsGridPoint), 박스가 너무 납작하면
+	// 에디터에서 눈에 안 띄고 경사면에서 캐릭터가 존을 못 잡는다.
+	constexpr float SpillZoneAreaHalfHeight = 50.f;
+}
 
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {
@@ -68,6 +77,11 @@ void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
 	ResetCells();
 	RebuildAllCellInstances();
 	RefreshAreaBorder();
+
+	// 디테일 패널에 칸 크기와 칸 수를 띄운다. 박스를 끌면 실시간으로 따라온다.
+	// (ResetCells 안의 RebuildGridLayout 이 방금 다시 계산해 둔 값이다)
+	CellSizePreview = CachedCellSize;
+	CellCountPreview = CellFilled.Num();
 }
 
 void ACWWorkZone_Cells::RefreshAreaBorder()
@@ -148,6 +162,14 @@ void ACWWorkZone_Cells::BeginPlay()
 
 	// 틱은 할 일이 있을 때만 돈다. 시작 시점에 켤 이유는 디버그 표시뿐이다.
 	RefreshTickEnabled();
+
+	// 마스킹은 등록된 존 목록을 봐야 해서 다음 틱에 돈다.
+	// 액터의 BeginPlay 순서는 보장되지 않아 지금 훑으면 아직 등록 전인 스트라이프를 놓친다.
+	// 서버만이 아니라 모든 머신에서 한다. 각자 같은 격자를 그려야 화면이 맞는다.
+	if (bPaintSpillLayer)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(this, &ACWWorkZone_Cells::RefreshSpillMask);
+	}
 
 	// 페인트를 밟고 지나가는 차량 추적은 서버가 한다. 클라이언트가 칸을 늘리면 그림이 갈라진다.
 	if (!HasAuthority() || !bStainsVehicles)
@@ -466,8 +488,8 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	// 검은색 롤러는 지우는 쪽이고, 그것도 Area 바깥에 삐져나간 페인트만 지운다.
 	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
 
-	// 채우기 모드면 칸을 켜고, 지우기 모드면 칸을 끈다.
-	const bool bNewFilled = !bCleanup && (WorkMode == ECWCellWorkMode::FillCells);
+	// 도구가 칸을 채우는지 지우는지 정한다. FillTools/CleanupTools 가 비면 예전처럼 모드가 정한다.
+	const bool bNewFilled = ResolveFillForTool(Worker->GetHeldTool());
 
 	if (HasAuthority() && !Worker->IsLocalWorker())
 	{
@@ -491,7 +513,8 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	Stroke.Center = QuantizeStrokeLocation(WorldLocation);
 	Stroke.Radius = EffectiveRadius;
 	Stroke.bFilled = bNewFilled;
-	Stroke.bSpillOnly = bCleanup;
+	// 고리가 있는 존이면 정리 도구가 고리만 지운다. 고리가 없으면 격자 전체가 정리 대상이다.
+	Stroke.bSpillOnly = bCleanup && HasOverspillRing();
 
 	// 스냅샷이 이 붓질을 덮지 않도록 시각을 남긴다. (TryApplyCellSnapshot)
 	if (const UWorld* World = GetWorld())
@@ -501,11 +524,30 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 
 	// 붓질을 확정하는 것은 언제나 그 플레이어의 기계다. 서버 왕복을 기다리면 붓이 손에서 밀린다.
 	// 로컬 반영은 매 프레임 그대로 하고, 네트워크로 나가는 것만 묶는다.
-	if (!ApplyStroke(Stroke))
+	const int32 ChangedCellCount = ApplyStroke(Stroke);
+
+	// 같은 붓질을 겹치는 다른 존에게도 넘긴다. 경계에서 이음새가 생기지 않게 하는 장치다.
+	//
+	// 자기 칸이 하나도 안 바뀌었어도 넘긴다. 다 칠한 스트라이프 위에서 붓이 밖으로 나가는
+	// 순간이 정확히 그 경우인데, 여기서 조기 반환하면 그 바깥이 영영 안 칠해진다.
+	//
+	// 받는 쪽이 각자 서버에 자기 붓질을 올리므로 여기서 따로 보낼 필요는 없다.
+	// (ReceiveBrushStrokes 에서는 전달하지 않는다. 그러면 같은 붓질이 두 번 적용된다)
+	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
+	{
+		PaintingSubsystem->BroadcastBrushStroke(this, Worker, Stroke.Center, Stroke.Radius);
+	}
+
+	if (ChangedCellCount == 0)
 	{
 		// 바뀐 칸이 없으면 알릴 것도 없다. 붓을 대고 가만히 있는 동안 패킷이 나가지 않는다.
 		return;
 	}
+
+	// 칠한 칸 수만큼 페인트를 쓴다. (기획서 5-3)
+	// 잔량도 붓질과 같은 모델이다. 칠한 본인이 자기 기계에서 바로 깎고,
+	// 서버는 올라온 붓질을 ReceiveBrushStrokes 에서 다시 적용하며 똑같이 깎는다.
+	ConsumePaintForCells(Worker, ChangedCellCount);
 
 	if (HasAuthority())
 	{
@@ -519,7 +561,7 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	QueueOutgoingStroke(Worker, Stroke);
 }
 
-void ACWWorkZone_Cells::ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Strokes)
+void ACWWorkZone_Cells::ReceiveBrushStrokes(UCWWorkerComponent* Worker, const TArray<FCWBrushStroke>& Strokes)
 {
 	if (!HasAuthority() || IsLocked())
 	{
@@ -530,19 +572,26 @@ void ACWWorkZone_Cells::ReceiveBrushStrokes(const TArray<FCWBrushStroke>& Stroke
 	// 보낸 클라이언트에도 되돌아오지만 이미 칠해진 칸이라 아무 일도 일어나지 않는다.
 	for (const FCWBrushStroke& Stroke : Strokes)
 	{
-		if (ApplyStroke(Stroke))
+		const int32 ChangedCellCount = ApplyStroke(Stroke);
+		if (ChangedCellCount == 0)
 		{
-			QueueOutgoingStroke(nullptr, Stroke);
+			continue;
 		}
+
+		// 보낸 클라이언트가 자기 기계에서 깎은 것과 같은 양을 서버에서도 깎는다.
+		// 값이 어긋나더라도 도구의 리플리케이션이 서버 값으로 덮는다.
+		ConsumePaintForCells(Worker, ChangedCellCount);
+
+		QueueOutgoingStroke(nullptr, Stroke);
 	}
 }
 
-void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly)
+int32 ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, bool bSpillOnly)
 {
 	// 차량이 페인트를 밟는 판정은 서버가 한다. 클라이언트가 멋대로 칸을 늘리면 그림이 갈라진다.
 	if (!HasAuthority())
 	{
-		return;
+		return 0;
 	}
 
 	FCWBrushStroke Stroke;
@@ -553,10 +602,16 @@ void ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, b
 	Stroke.bFilled = true;
 	Stroke.bSpillOnly = bSpillOnly;
 
-	if (ApplyStroke(Stroke))
+	// 여기서는 페인트를 소모하지 않는다. 차량 자국도 터진 통도 누구의 도구에서 나온 것이 아니다.
+	const int32 ChangedCellCount = ApplyStroke(Stroke);
+	if (ChangedCellCount > 0)
 	{
 		QueueOutgoingStroke(nullptr, Stroke);
 	}
+
+	// 오염이 이 존에 실제로 얹혔는지 호출부가 알아야 한다.
+	// 하나도 안 얹혔으면 근처에 받아줄 존이 없다는 뜻이라, 런타임 오염 구역을 새로 만들어야 한다.
+	return ChangedCellCount;
 }
 
 FVector ACWWorkZone_Cells::QuantizeStrokeLocation(const FVector& WorldLocation)
@@ -573,11 +628,45 @@ bool ACWWorkZone_Cells::IsCleanupTool(ECWToolType ToolType) const
 	return ToolType != ECWToolType::None && CleanupTools.Contains(ToolType);
 }
 
+bool ACWWorkZone_Cells::IsFillTool(ECWToolType ToolType) const
+{
+	return ToolType != ECWToolType::None && FillTools.Contains(ToolType);
+}
+
+bool ACWWorkZone_Cells::ResolveFillForTool(ECWToolType ToolType) const
+{
+	// 지우는 도구가 우선이다. 같은 도구를 양쪽에 넣는 설정 실수가 있어도 지우기로 굳는다.
+	if (IsCleanupTool(ToolType))
+	{
+		return false;
+	}
+
+	if (IsFillTool(ToolType))
+	{
+		return true;
+	}
+
+	// 지정이 없으면 예전처럼 모드가 정한다. 기존 존들은 FillTools 를 비워 두면 동작이 그대로다.
+	return WorkMode == ECWCellWorkMode::FillCells;
+}
+
+bool ACWWorkZone_Cells::HasOverspillRing() const
+{
+	return CountedOrigin.X > 0 || CountedOrigin.Y > 0;
+}
+
+int32 ACWWorkZone_Cells::GetCleanableCellCount() const
+{
+	// 고리가 있으면 고리에 묻은 것만 지울 수 있다. 완성된 횡단보도까지 지워지면 안 된다.
+	// 고리가 없으면 격자 전체가 정리 대상이다. (오염 레이어)
+	return HasOverspillRing() ? GetSpillCellCount() : FilledCellCount;
+}
+
 bool ACWWorkZone_Cells::CanUseTool(ECWToolType ToolType) const
 {
-	// 정리 도구는 AcceptedTools 에 없어도 이 존에 들어올 수 있다.
-	// AcceptedTools 에 같이 넣어버리면 검은색 롤러로도 도색이 진행돼서 안 된다.
-	return IsCleanupTool(ToolType) || Super::CanUseTool(ToolType);
+	// 정리 도구와 채우기 도구는 AcceptedTools 에 없어도 이 존에 들어올 수 있다.
+	// AcceptedTools 에 같이 넣어버리면 검은색 롤러로도 도색 진행도가 올라가서 안 된다.
+	return IsCleanupTool(ToolType) || IsFillTool(ToolType) || Super::CanUseTool(ToolType);
 }
 
 bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
@@ -586,7 +675,17 @@ bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
 	{
 		// 도색이 끝난 뒤에도 삐져나간 페인트는 남는다. 그래서 bCompleted 를 보지 않는다.
 		// 대신 지울 게 없으면 대상에서 빠져야 한다. 안 그러면 다 치운 존이 계속 붓을 붙잡는다.
-		return !IsLocked() && GetSpillCellCount() > 0;
+		return !IsLocked() && GetCleanableCellCount() > 0;
+	}
+
+	if (IsFillTool(ToolType))
+	{
+		// 완료 여부를 보지 않는다. 오염 레이어는 "깨끗함" 이 완료라서, bCompleted 를 보면
+		// 깨끗한 레이어에 낙서를 시작할 수가 없다. 잠금만 본다.
+		//
+		// 다 칠한 스트라이프가 후보에 남는 문제는 생기지 않는다. 뒤집을 칸이 없으면
+		// HasWorkAt 이 false 라 우선순위에서 밀리고, 붓질이 가도 바뀌는 칸이 0 이다.
+		return !IsLocked();
 	}
 
 	return Super::CanWorkNow(ToolType);
@@ -601,15 +700,16 @@ void ACWWorkZone_Cells::Multicast_ApplyBrushes_Implementation(const TArray<FCWBr
 	}
 }
 
-bool ACWWorkZone_Cells::ApplyStroke(const FCWBrushStroke& Stroke)
+int32 ACWWorkZone_Cells::ApplyStroke(const FCWBrushStroke& Stroke)
 {
 	const float PreviousProgress = GetProgress();
 	const int32 PreviousSpillCount = GetSpillCellCount();
 
-	if (!SetCellsInRadius(Stroke.Center, Stroke.Radius, Stroke.bFilled, Stroke.bSpillOnly))
+	const int32 ChangedCellCount = SetCellsInRadius(Stroke.Center, Stroke.Radius, Stroke.bFilled, Stroke.bSpillOnly);
+	if (ChangedCellCount == 0)
 	{
-		// 바뀐 칸이 없으면 더 할 일도 없다.
-		return false;
+		// 바뀐 칸이 없으면 더 할 일도 없다. 덧칠은 페인트도 쓰지 않는다. (기획서 5-3)
+		return 0;
 	}
 
 	// 메쉬는 여기서 건드리지 않는다. SetCellsInRadius 가 바뀐 칸을 표시해 뒀고,
@@ -632,7 +732,180 @@ bool ACWWorkZone_Cells::ApplyStroke(const FCWBrushStroke& Stroke)
 	// 위에서 모아둔 것들(메쉬 갱신 / 전송 / 스냅샷)을 처리하려면 틱이 돌아야 한다.
 	RefreshTickEnabled();
 
-	return true;
+	return ChangedCellCount;
+}
+
+bool ACWWorkZone_Cells::BlocksPaintSpill() const
+{
+	// 도색 스트라이프는 켜지 않아도 자동으로 막는다. 오염이 쌓이면 도색과 정리가 같은 칸을 두고 다툰다.
+	// 오염 레이어 자신은 당연히 예외다. 자기 칸을 자기가 가리면 격자가 통째로 비어버린다.
+	return Super::BlocksPaintSpill() || (IsFillMode() && !bPaintSpillLayer);
+}
+
+void ACWWorkZone_Cells::RefreshSpillMask()
+{
+	if (!bPaintSpillLayer || CellFilled.Num() == 0)
+	{
+		return;
+	}
+
+	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
+	if (PaintingSubsystem == nullptr)
+	{
+		return;
+	}
+
+	// 가릴 대상은 존 타입이 아니라 "오염을 막는 영역인가" 로 고른다. (BlocksPaintSpill)
+	//
+	// 타입으로 고르면 칸 존이 아닌 것을 놓친다. 테두리 가이드라인 존이 그랬다.
+	// 마스킹에서 빠져 있어서 그려둔 선 위로 페인트가 덮여 선이 안 보였다.
+	//
+	// 1단계 청소 존은 켜지 않는다. 도로 청소용이라 영역이 넓은데, 가려버리면
+	// 그 위에는 낙서도 삐져나감도 아예 못 하게 된다.
+	TArray<const ACWBaseWorkZone*> MaskingZones;
+	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
+	{
+		const ACWBaseWorkZone* Zone = WeakZone.Get();
+		if (Zone != nullptr && Zone != this && Zone->BlocksPaintSpill())
+		{
+			MaskingZones.Add(Zone);
+		}
+	}
+
+	CellMasked.Init(false, CellFilled.Num());
+
+	if (MaskingZones.Num() == 0)
+	{
+		return;
+	}
+
+	// 페인트 단가를 스트라이프에서 물려받는다.
+	//
+	// 레이어가 자기 면적으로 자동 계산하면 도로 전체가 분모라 단가가 바닥까지 떨어져서
+	// 낙서가 사실상 공짜가 된다. 삐져나간 페인트든 낙서든 같은 롤러로 칠하는 같은 페인트이므로
+	// 단가도 같아야 한다. 레벨에서 두 값을 맞춰 넣는 실수를 없애려고 여기서 가져온다.
+	//
+	// 가리는 존 중 스트라이프(칸 존)에서만 가져온다. 테두리 가이드라인 존은 칸이 없어서 단가도 없다.
+	if (PaintCostPerArea <= 0.f)
+	{
+		for (const ACWBaseWorkZone* MaskingZone : MaskingZones)
+		{
+			if (const ACWWorkZone_Cells* CellsZone = Cast<ACWWorkZone_Cells>(MaskingZone))
+			{
+				PaintCostPerArea = CellsZone->GetPaintCostPerArea();
+				break;
+			}
+		}
+	}
+
+	int32 MaskedCount = 0;
+
+	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
+	{
+		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+		{
+			const FVector CellLocation = GetCellWorldLocation(CellX, CellY);
+
+			for (const ACWBaseWorkZone* MaskingZone : MaskingZones)
+			{
+				if (!MaskingZone->ContainsAreaPoint(CellLocation))
+				{
+					continue;
+				}
+
+				const int32 CellIndex = GetCellIndex(CellX, CellY);
+				CellMasked[CellIndex] = true;
+				++MaskedCount;
+
+				// 이미 칠해져 있던 칸이면 집계에서도 빼야 한다.
+				// 안 그러면 영영 지울 수 없는 칸이 정리 목표에 남는다.
+				if (CellFilled[CellIndex])
+				{
+					CellFilled[CellIndex] = false;
+					--FilledCellCount;
+					--CountedFilledCount;
+					QueueCellMeshUpdate(CellIndex);
+				}
+
+				break;
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[%s] 오염 레이어 마스킹: 가리는 존 %d개, 가려진 칸 %d / %d"),
+		*GetName(), MaskingZones.Num(), MaskedCount, CellFilled.Num());
+
+	FlushCellMeshUpdates();
+	RefreshProgress();
+}
+
+float ACWWorkZone_Cells::GetPaintCostPerArea() const
+{
+	// 직접 지정한 값이 있으면 그대로 쓴다. (오염 레이어)
+	if (PaintCostPerArea > 0.f)
+	{
+		return PaintCostPerArea;
+	}
+
+	// 없으면 "이 구역을 정확히 다 칠하면 PaintCostFull 이 든다" 에서 역산한다. (기획서 5-3)
+	//
+	// 전체 격자가 아니라 점수 영역 면적으로 나누는 것이 핵심이다. 그래야 안쪽만 정확히
+	// 칠했을 때 소모량이 정확히 PaintCostFull 이 되고, 밖으로 나간 만큼이 초과 비용이 된다.
+	const float CountedArea = CachedAreaSize.X * CachedAreaSize.Y;
+
+	return CountedArea > 0.f ? PaintCostFull / CountedArea : 0.f;
+}
+
+void ACWWorkZone_Cells::ConsumePaintForCells(UCWWorkerComponent* Worker, int32 ChangedCellCount) const
+{
+	if (Worker == nullptr || ChangedCellCount <= 0)
+	{
+		return;
+	}
+
+	// 칸 수가 아니라 칸 "면적" 으로 센다.
+	//
+	// 스트라이프와 오염 레이어는 칸 크기가 다르다. 칸 수로 세면 같은 붓질인데도
+	// 어느 격자에 찍혔느냐에 따라 소모량이 몇 배씩 달라진다. 면적으로 재면 격자 해상도와
+	// 무관하게 "얼마나 넓게 칠했는가" 하나로 정해진다.
+	const float ChangedArea = ChangedCellCount * CachedCellSize.X * CachedCellSize.Y;
+
+	Worker->ConsumePaint(ChangedArea * GetPaintCostPerArea());
+}
+
+void ACWWorkZone_Cells::ReceiveForwardedBrush(UCWWorkerComponent* Worker, const FVector& Center, float Radius)
+{
+	if (Worker == nullptr)
+	{
+		return;
+	}
+
+	const ECWToolType ToolType = Worker->GetHeldTool();
+
+	// 받는 쪽이 자기 규칙으로 다시 판단한다. 잠긴 스트라이프는 여기서 걸러지고,
+	// 같은 도구라도 존에 따라 채우기가 되기도 지우기가 되기도 한다.
+	if (!CanWorkNow(ToolType) || !IsWorkerInRange(Worker, Center))
+	{
+		return;
+	}
+
+	FCWBrushStroke Stroke;
+	Stroke.Center = Center;
+	Stroke.Radius = Radius;
+	Stroke.bFilled = ResolveFillForTool(ToolType);
+	Stroke.bSpillOnly = IsCleanupTool(ToolType) && HasOverspillRing();
+
+	const int32 ChangedCellCount = ApplyStroke(Stroke);
+	if (ChangedCellCount == 0)
+	{
+		return;
+	}
+
+	ConsumePaintForCells(Worker, ChangedCellCount);
+
+	// 전달받은 붓질도 자기 몫으로 네트워크에 올린다.
+	// 원본 존의 붓질과 별개로 나가므로 서버에서도 각자 같은 양이 적용된다.
+	QueueOutgoingStroke(HasAuthority() ? nullptr : Worker, Stroke);
 }
 
 void ACWWorkZone_Cells::RebuildGridLayout()
@@ -732,7 +1005,8 @@ bool ACWWorkZone_Cells::IsWorkerInRange(const UCWWorkerComponent* Worker, const 
 	//
 	// 실제 범위 제약은 붓이 닿는 거리 하나다.
 	// 붓 중심은 이미 캐릭터 주변으로 묶여서 들어온다. (UCWWorkerComponent::MaxBrushDistance)
-	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
+	// 고리가 있는 존이면 정리 도구는 고리 칸만 본다. ApplyWork 와 같은 기준이어야 한다.
+	const bool bSpillOnly = IsCleanupTool(Worker->GetHeldTool()) && HasOverspillRing();
 
 	// 높이만 확인한다. 칸 판정이 높이를 무시하므로 이걸 안 보면 다리 위에서도 아래가 칠해진다.
 	const FVector LocalWorker = ToLocalLocation(WorkerActor->GetActorLocation());
@@ -746,7 +1020,7 @@ bool ACWWorkZone_Cells::IsWorkerInRange(const UCWWorkerComponent* Worker, const 
 	// 칸 상태는 보지 않는다. 이미 다 칠한 자리에 서 있어도 이 존이 작업 대상인 것은 맞다.
 	// "지금 뒤집을 칸이 있는가" 는 HasWorkAt 이 따로 본다. 둘을 합치면 다 칠한 자리를
 	// 지나갈 때마다 대상이 풀려서 HUD 표시가 깜빡인다.
-	return HasAnyCellInRadius(WorkLocation, GetEffectiveBrushRadius(Worker), bCleanup);
+	return HasAnyCellInRadius(WorkLocation, GetEffectiveBrushRadius(Worker), bSpillOnly);
 }
 
 bool ACWWorkZone_Cells::HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const
@@ -756,12 +1030,12 @@ bool ACWWorkZone_Cells::HasWorkAt(const UCWWorkerComponent* Worker, const FVecto
 		return true;
 	}
 
-	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
-	const bool bNewFilled = !bCleanup && (WorkMode == ECWCellWorkMode::FillCells);
+	const bool bSpillOnly = IsCleanupTool(Worker->GetHeldTool()) && HasOverspillRing();
+	const bool bNewFilled = ResolveFillForTool(Worker->GetHeldTool());
 
 	// 이 붓질이 실제로 뒤집을 칸이 하나라도 있는지 본다.
 	// ApplyWork 와 똑같은 중심·반경·판정을 써야 "잡히는데 안 칠해지는" 상태가 안 생긴다.
-	return HasChangeableCellInRadius(WorldLocation, GetEffectiveBrushRadius(Worker), bNewFilled, bCleanup);
+	return HasChangeableCellInRadius(WorldLocation, GetEffectiveBrushRadius(Worker), bNewFilled, bSpillOnly);
 }
 
 float ACWWorkZone_Cells::GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const
@@ -809,12 +1083,12 @@ bool ACWWorkZone_Cells::HasChangeableCellInRadius(const FVector& WorldCenter, fl
 	return bFound;
 }
 
-bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
+int32 ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly)
 {
-	bool bAnyChanged = false;
+	int32 ChangedCellCount = 0;
 
 	ForEachCellInRadius(WorldCenter, Radius, bSpillOnly,
-		[this, bNewFilled, &bAnyChanged](int32 CellIndex, bool bCounted)
+		[this, bNewFilled, &ChangedCellCount](int32 CellIndex, bool bCounted)
 		{
 			if (CellFilled[CellIndex] == bNewFilled)
 			{
@@ -831,16 +1105,18 @@ bool ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radiu
 				CountedFilledCount += Delta;
 			}
 
-			bAnyChanged = true;
+			++ChangedCellCount;
 			return true;
 		});
 
-	if (bAnyChanged)
+	if (ChangedCellCount > 0)
 	{
 		PeakCountedFilledCount = FMath::Max(PeakCountedFilledCount, CountedFilledCount);
 	}
 
-	return bAnyChanged;
+	// 개수를 세는 이유: 페인트 소모가 "칠한 양" 에 비례하기 때문이다. (기획서 5-3)
+	// 점수 영역 안팎을 가리지 않고 세므로, 바깥 고리에 삐져나간 칸도 그대로 비용이 된다.
+	return ChangedCellCount;
 }
 
 bool ACWWorkZone_Cells::ShouldBuildCellMeshes() const

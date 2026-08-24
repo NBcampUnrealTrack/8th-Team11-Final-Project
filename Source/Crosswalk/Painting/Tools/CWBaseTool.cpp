@@ -36,6 +36,22 @@ void ACWBaseTool::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ACWBaseTool, Holder);
+	DOREPLIFETIME(ACWBaseTool, PaintAmount);
+}
+
+void ACWBaseTool::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 스테이지 시작 시 모든 도구는 가득 찬 상태다. (기획서 8절)
+	// 서버에서만 채우고 클라이언트는 리플리케이션으로 받는다.
+	if (HasAuthority() && bUsesPaint)
+	{
+		SetPaintAmount(MaxPaintAmount);
+	}
+
+	// 시작값이 0 인 도구(빗자루)도 게이지 초기 상태를 한 번은 알려야 한다.
+	HandlePaintAmountChanged();
 }
 
 void ACWBaseTool::Interact_Implementation(APawn* InstigatorPawn)
@@ -111,6 +127,79 @@ void ACWBaseTool::Drop(const FVector& DropLocation)
 	HandleHeldStateChanged();
 }
 
+float ACWBaseTool::ConsumePaint(float Amount)
+{
+	// 페인트를 쓰지 않는 도구(빗자루)는 아무리 작업해도 줄어들 것이 없다.
+	if (!bUsesPaint || Amount <= 0.f)
+	{
+		return 0.f;
+	}
+
+	// 권위를 보지 않는다. 부른 기계에서 바로 깎는다. (헤더 주석 참고)
+	// 잔량보다 많이 요청해도 남아 있던 만큼만 깎이고, 그 값이 반환된다.
+	return -SetPaintAmount(PaintAmount - Amount);
+}
+
+float ACWBaseTool::AddPaint(float Amount)
+{
+	// 충전은 통을 소비하는 1회성 행동이라 서버만 확정한다.
+	if (!HasAuthority() || !bUsesPaint || Amount <= 0.f)
+	{
+		return 0.f;
+	}
+
+	return SetPaintAmount(PaintAmount + Amount);
+}
+
+float ACWBaseTool::GetPaintRatio() const
+{
+	if (!bUsesPaint || MaxPaintAmount <= 0.f)
+	{
+		return 0.f;
+	}
+
+	return FMath::Clamp(PaintAmount / MaxPaintAmount, 0.f, 1.f);
+}
+
+float ACWBaseTool::SetPaintAmount(float NewAmount)
+{
+	const float Clamped = FMath::Clamp(NewAmount, 0.f, MaxPaintAmount);
+	const float Delta = Clamped - PaintAmount;
+
+	if (FMath::IsNearlyZero(Delta))
+	{
+		return 0.f;
+	}
+
+	PaintAmount = Clamped;
+
+	// 서버는 여기서 바로 알린다. 클라이언트는 OnRep_PaintAmount 로도 들어오는데,
+	// 로컬 예측으로 먼저 깎은 값과 같으면 HandlePaintAmountChanged 가 알아서 걸러낸다.
+	HandlePaintAmountChanged();
+
+	return Delta;
+}
+
+void ACWBaseTool::OnRep_PaintAmount()
+{
+	HandlePaintAmountChanged();
+}
+
+void ACWBaseTool::HandlePaintAmountChanged()
+{
+	if (FMath::IsNearlyEqual(PaintAmount, LastBroadcastPaintAmount))
+	{
+		return;
+	}
+
+	LastBroadcastPaintAmount = PaintAmount;
+
+	const float Ratio = GetPaintRatio();
+
+	OnPaintAmountChanged(PaintAmount, Ratio);
+	OnPaintChanged.Broadcast(this, PaintAmount, Ratio);
+}
+
 void ACWBaseTool::OnRep_Holder()
 {
 	// 손에 붙거나 떨어지는 것 자체는 어태치먼트 리플리케이션이 이미 처리했다.
@@ -122,9 +211,17 @@ void ACWBaseTool::HandleHeldStateChanged()
 {
 	const bool bNowHeld = IsHeld();
 
-	// 들고 있는 동안은 다른 플레이어의 탐색 결과에서 빠진다.
-	ToolMesh->SetCollisionEnabled(bNowHeld ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryOnly);
-
+	// 들고 있어도 콜리전을 끄지 않는다.
+	//
+	// 예전에는 껐다. 다른 플레이어의 집기 탐색에서 빼려는 목적이었는데, 그 필터는
+	// UCWToolHolderComponent::FindNearestPickableTool 이 IsHeld 로 이미 하고 있어서 필요가 없었다.
+	//
+	// 지금은 켜 두어야만 한다. 페인트 충전 대상에는 "남이 들고 있는 도구" 가 포함되는데
+	// (기획서 6-3) 콜리전이 꺼져 있으면 반경 오버랩에 아예 안 잡혀서, 작업자가 도구를 든 채
+	// 보급받는 협동 경로가 통째로 막힌다.
+	//
+	// 켜 두어도 해가 없는 이유: 모든 채널 응답이 Overlap 이라 무엇도 막지 않는다.
+	// 커서 트레이스(블로킹 히트만 받음)는 그대로 통과하고, 캐릭터 이동에도 걸리지 않는다.
 	if (bNowHeld)
 	{
 		SetFocused(false);
@@ -162,4 +259,9 @@ void ACWBaseTool::OnFocusChanged_Implementation(bool bNewFocused)
 {
 	// 외곽선 포스트프로세스가 아직 없어도 해가 없고, 생기면 바로 하이라이트가 된다.
 	ToolMesh->SetRenderCustomDepth(bNewFocused);
+}
+
+void ACWBaseTool::OnPaintAmountChanged_Implementation(float NewAmount, float NewRatio)
+{
+	// BP 자식에서 도구 위 게이지를 갱신하는 자리.
 }
