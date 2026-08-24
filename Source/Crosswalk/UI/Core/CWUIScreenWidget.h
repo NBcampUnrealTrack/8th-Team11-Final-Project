@@ -44,10 +44,12 @@ public:
 	void OnScreenOpened();
 
 	// 화면이 Root에서 제거되기 직전에 호출
+	// 종료 애니메이션과 시각 상태 정리는 이 이벤트에서 처리
 	UFUNCTION(BlueprintImplementableEvent, Category = "CW|UI")
 	void OnScreenClosing();
 
-	// 화면 제거 후 참조 정리와 로그에 사용
+	// 화면이 Root에서 제거된 후 호출
+	// 참조 해제와 로그만 처리하고 애니메이션이나 Geometry는 사용하지 않음
 	UFUNCTION(BlueprintImplementableEvent, Category = "CW|UI")
 	void OnScreenClosed();
 
