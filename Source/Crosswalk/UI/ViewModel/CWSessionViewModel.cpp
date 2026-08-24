@@ -525,11 +525,11 @@ void UCWSessionViewModel::SetRoomList(
 	const TArray<FCWRoomSummary>& InRooms
 )
 {
-	// FCWRoomSummary에 operator==가 없어 배열 값 비교 매크로를 사용하지 않음
-	RoomList = InRooms;
-
-	// 검색 결과는 수신할 때마다 MVVM Binding에 변경 사실 전달
-	UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(RoomList);
+	// 방 목록 내용이 실제로 변경된 경우에만 값을 갱신하고 FieldNotify 발생
+	UE_MVVM_SET_PROPERTY_VALUE(
+		RoomList,
+		InRooms
+	);
 }
 
 #pragma endregion

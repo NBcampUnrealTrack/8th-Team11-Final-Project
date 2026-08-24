@@ -226,7 +226,10 @@ void UCWUISubsystem::InitializeUI(
 {
 	// Bootstrap Component에서 전달받은 UI 설정을 저장
 	UIRootClass = InRootClass;
-	PageClasses = InPageClasses;
+
+	// 이전 World의 공용 페이지 등록을 유지하면서
+	// 현재 World에서 전달된 같은 페이지 설정은 새 값으로 덮어씀
+	PageClasses.Append(InPageClasses);
 
 	// 반복 초기화 시에도 기존 페이지 상태는 유지
 	EnsureUIRoot();
