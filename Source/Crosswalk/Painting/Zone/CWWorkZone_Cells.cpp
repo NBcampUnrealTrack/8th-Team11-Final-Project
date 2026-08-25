@@ -942,7 +942,7 @@ void ACWWorkZone_Cells::ResetCells()
 
 	if (bStartFilled)
 	{
-		// 시작부터 채워두는 건 점수 영역뿐이다. 바깥 고리는 작업 중에 삐져나가야 생긴다.
+		// 점수 영역만 채운다. 바깥 고리는 bStartSpillFilled 가 따로 본다.
 		for (int32 CellY = CountedOrigin.Y; CellY < CountedOrigin.Y + GridSize.Y; ++CellY)
 		{
 			for (int32 CellX = CountedOrigin.X; CellX < CountedOrigin.X + GridSize.X; ++CellX)
@@ -953,6 +953,25 @@ void ACWWorkZone_Cells::ResetCells()
 
 		FilledCellCount = GridSize.X * GridSize.Y;
 		CountedFilledCount = FilledCellCount;
+	}
+
+	if (bStartSpillFilled)
+	{
+		// 고리만 채운다. 점수 영역 밖이라 진행도(CountedFilledCount)는 그대로 두고,
+		// 정리 대상 수(GetSpillCellCount)만 올라간다.
+		for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
+		{
+			for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+			{
+				if (IsCountedCell(CellX, CellY))
+				{
+					continue;
+				}
+
+				CellFilled[GetCellIndex(CellX, CellY)] = true;
+				++FilledCellCount;
+			}
+		}
 	}
 
 	PeakCountedFilledCount = CountedFilledCount;
