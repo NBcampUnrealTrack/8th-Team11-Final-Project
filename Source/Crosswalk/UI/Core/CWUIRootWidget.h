@@ -6,6 +6,7 @@
 #include "Blueprint/UserWidget.h"
 #include "CWUIRootWidget.generated.h"
 
+class UCWToastWidget;
 class UOverlay;
 class UUserWidget;
 
@@ -49,6 +50,35 @@ public:
 	// HUD 레이어 전체의 표시 여부를 변경
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
 	void SetHUDLayerVisible(bool bVisible);
+
+#pragma endregion
+
+#pragma region Feedback
+
+public:
+	// 비차단 알림 Widget을 Toast 레이어에 추가
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	bool AddToastWidget(UUserWidget* InWidget);
+
+	// 입력을 차단하는 확인 Widget을 Popup 레이어에 추가
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	bool AddPopupWidget(UUserWidget* InWidget);
+
+	// 지정한 확인 Widget을 Popup 레이어에서 제거
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	bool RemovePopupWidget(UUserWidget* InWidget);
+
+	// Root에 설정된 Toast Widget 클래스를 반환
+	TSubclassOf<UCWToastWidget> GetToastWidgetClass() const;
+
+#pragma endregion
+
+#pragma region UIConfiguration
+
+protected:
+	// 공용 비차단 알림에 사용할 Toast Widget 클래스
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI|Feedback")
+	TSubclassOf<UCWToastWidget> ToastWidgetClass;
 
 #pragma endregion
 

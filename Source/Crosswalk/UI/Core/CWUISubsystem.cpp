@@ -3,8 +3,12 @@
 #include "CWUISubsystem.h"
 #include "Blueprint/UserWidget.h"
 #include "Core/CWGameInstance.h"
+#include "UI/CWUILog.h"
+#include "UI/Feedback/CWToastWidget.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
 #include "MVVMGameSubsystem.h"
 #include "Types/MVVMViewModelCollection.h"
@@ -13,6 +17,12 @@
 #include "CWUIRootWidget.h"
 #include "CWUIScreenWidget.h"
 #include "Widgets/SWidget.h"
+
+namespace
+{
+	// WBP_Toast의 페이드 애니메이션 전체 길이
+	constexpr float ToastDisplayDuration = 2.5f;
+}
 
 #pragma region Initialize
 
@@ -28,7 +38,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(LocalPlayer))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: LocalPlayer is invalid during initialization.")
 		);
@@ -41,7 +51,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(GameInstance))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: GameInstance is invalid during initialization.")
 		);
@@ -56,7 +66,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(CWGameInstance))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: GameInstance is not CWGameInstance.")
 		);
@@ -71,7 +81,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(MVVMSubsystem))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: MVVMGameSubsystem is invalid.")
 		);
@@ -85,7 +95,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(ViewModelCollection))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: global ViewModel collection is invalid.")
 		);
@@ -112,7 +122,7 @@ void UCWUISubsystem::Initialize(
 		SessionViewModel = ExistingSessionViewModel;
 
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Log,
 			TEXT("UISubsystem: existing SessionViewModel reused.")
 		);
@@ -127,7 +137,7 @@ void UCWUISubsystem::Initialize(
 	if (!IsValid(NewSessionViewModel))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: failed to create SessionViewModel.")
 		);
@@ -150,7 +160,7 @@ void UCWUISubsystem::Initialize(
 		NewSessionViewModel->Uninitialize();
 
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: failed to register SessionViewModel.")
 		);
@@ -162,7 +172,7 @@ void UCWUISubsystem::Initialize(
 	bOwnsSessionViewModelRegistration = true;
 
 	UE_LOG(
-		LogTemp,
+		LogCWUI,
 		Log,
 		TEXT("UISubsystem: SessionViewModel registered.")
 	);
@@ -170,6 +180,19 @@ void UCWUISubsystem::Initialize(
 
 void UCWUISubsystem::Deinitialize()
 {
+	// 종료 중 토스트와 대기 요청 및 타이머 정리
+	ResetToastState();
+
+	// 종료 중 표시된 팝업을 제거하고 입력 복원 상태 정리
+	if (UUserWidget* PopupWidget = CurrentPopup.Get())
+	{
+		PopupWidget->RemoveFromParent();
+	}
+
+	CurrentPopup.Reset();
+	CurrentInputMode = ECWUIInputMode::UIOnly;
+	PopupReturnInputMode = ECWUIInputMode::UIOnly;
+
 	UCWSessionViewModel* RegisteredViewModel =
 		SessionViewModel.Get();
 
@@ -254,7 +277,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	if (FoundClass == nullptr || !(*FoundClass))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: page class is not registered.")
 		);
@@ -266,7 +289,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	if (!EnsureUIRoot())
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: UI Root is unavailable.")
 		);
@@ -280,7 +303,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	if (!IsValid(LocalPlayer))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: LocalPlayer is invalid.")
 		);
@@ -295,7 +318,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	if (!IsValid(PlayerController))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: PlayerController is invalid.")
 		);
@@ -316,7 +339,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	if (!IsValid(NewScreen))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: failed to create screen widget.")
 		);
@@ -347,7 +370,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 		);
 
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: UI Root became invalid.")
 		);
@@ -371,7 +394,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	EndTransition();
 
 	UE_LOG(
-		LogTemp,
+		LogCWUI,
 		Log,
 		TEXT("UISubsystem: page opened. Page=%s"),
 		*UEnum::GetValueAsString(TargetPage)
@@ -399,7 +422,7 @@ bool UCWUISubsystem::ClosePage(ECWUIInputMode ReturnInputMode)
 	EndTransition();
 
 	UE_LOG(
-		LogTemp,
+		LogCWUI,
 		Log,
 		TEXT("UISubsystem: page closed.")
 	);
@@ -479,7 +502,7 @@ bool UCWUISubsystem::EnsureUIRoot()
 	if (!IsValid(LocalPlayer))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: LocalPlayer is invalid.")
 		);
@@ -491,7 +514,7 @@ bool UCWUISubsystem::EnsureUIRoot()
 	if (!UIRootClass)
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: UIRootClass is not configured.")
 		);
@@ -506,7 +529,7 @@ bool UCWUISubsystem::EnsureUIRoot()
 	if (!IsValid(PlayerController))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: PlayerController is invalid.")
 		);
@@ -524,7 +547,7 @@ bool UCWUISubsystem::EnsureUIRoot()
 	if (!IsValid(NewRoot))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UISubsystem: failed to create UI Root.")
 		);
@@ -541,6 +564,13 @@ bool UCWUISubsystem::EnsureUIRoot()
 		);
 	}
 
+	// 이전 World의 토스트 상태만 폐기
+	// 현재 World에서 새로 요청된 토스트 큐는 유지
+	if (ToastWorld.Get() != GetWorld())
+	{
+		ResetToastState();
+	}
+
 	// 이전 World의 UI 상태를 폐기
 	UIRoot.Reset();
 	CurrentScreen.Reset();
@@ -551,7 +581,7 @@ bool UCWUISubsystem::EnsureUIRoot()
 	UIRoot = NewRoot;
 
 	UE_LOG(
-		LogTemp,
+		LogCWUI,
 		Log,
 		TEXT("UISubsystem: UI Root created.")
 	);
@@ -638,11 +668,18 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 		PlayerController->CurrentMouseCursor =
 			EMouseCursor::Default;
 
-		// 현재 화면이 있으면 키보드 포커스 대상으로 지정
-		if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+		// 팝업이 열려 있으면 팝업을 우선 포커스 대상으로 사용
+		UUserWidget* FocusWidget = CurrentPopup.Get();
+
+		if (!IsValid(FocusWidget))
+		{
+			FocusWidget = CurrentScreen.Get();
+		}
+
+		if (IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
-				ScreenWidget->GetCachedWidget();
+				FocusWidget->GetCachedWidget();
 
 			if (CachedWidget.IsValid())
 			{
@@ -674,11 +711,18 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 			EMouseLockMode::DoNotLock
 		);
 
-		// 현재 화면이 있으면 UI 포커스 대상으로 지정
-		if (UCWUIScreenWidget* ScreenWidget = CurrentScreen.Get())
+		// 팝업이 열려 있으면 팝업을 우선 포커스 대상으로 사용
+		UUserWidget* FocusWidget = CurrentPopup.Get();
+
+		if (!IsValid(FocusWidget))
+		{
+			FocusWidget = CurrentScreen.Get();
+		}
+
+		if (IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
-				ScreenWidget->GetCachedWidget();
+				FocusWidget->GetCachedWidget();
 
 			if (CachedWidget.IsValid())
 			{
@@ -694,6 +738,9 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 	default:
 		break;
 	}
+
+	// 팝업을 닫을 때 복원할 수 있도록 실제 적용된 입력 모드 저장
+	CurrentInputMode = InInputMode;
 }
 
 void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)
@@ -777,6 +824,317 @@ void UCWUISubsystem::SetHUDVisible(bool bVisible)
 	{
 		RootWidget->SetHUDLayerVisible(bVisible);
 	}
+}
+
+#pragma endregion
+
+#pragma region Feedback
+
+bool UCWUISubsystem::OpenPopup(UUserWidget* InWidget)
+{
+	// 유효한 팝업과 Root가 준비된 경우에만 표시
+	if (!IsValid(InWidget) || !EnsureUIRoot())
+	{
+		return false;
+	}
+
+	// 현재 구조는 동시에 하나의 차단 팝업만 허용
+	if (CurrentPopup.IsValid())
+	{
+		UE_LOG(
+			LogCWUI,
+			Warning,
+			TEXT("UISubsystem: popup is already open.")
+		);
+
+		return false;
+	}
+
+	UCWUIRootWidget* RootWidget = UIRoot.Get();
+
+	if (!IsValid(RootWidget))
+	{
+		return false;
+	}
+
+	// 팝업을 닫을 때 현재 화면의 입력 모드로 돌아갈 수 있도록 저장
+	const ECWUIInputMode PreviousInputMode = CurrentInputMode;
+
+	if (!RootWidget->AddPopupWidget(InWidget))
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: failed to add popup widget.")
+		);
+
+		return false;
+	}
+
+	PopupReturnInputMode = PreviousInputMode;
+	CurrentPopup = InWidget;
+
+	// 차단 팝업이 열려 있는 동안 게임 입력을 받지 않도록 전환
+	ApplyInputMode(ECWUIInputMode::UIOnly);
+
+	UE_LOG(
+		LogCWUI,
+		Log,
+		TEXT("UISubsystem: popup opened.")
+	);
+
+	return true;
+}
+
+bool UCWUISubsystem::ClosePopup(UUserWidget* InWidget)
+{
+	if (!IsValid(InWidget))
+	{
+		return false;
+	}
+
+	// 다른 팝업이 현재 팝업을 닫지 못하도록 동일 인스턴스인지 확인
+	if (
+		!CurrentPopup.IsValid() ||
+		CurrentPopup.Get() != InWidget
+		)
+	{
+		UE_LOG(
+			LogCWUI,
+			Warning,
+			TEXT("UISubsystem: requested popup is not currently open.")
+		);
+
+		return false;
+	}
+
+	UCWUIRootWidget* RootWidget = UIRoot.Get();
+
+	if (
+		!IsValid(RootWidget) ||
+		!RootWidget->RemovePopupWidget(InWidget)
+		)
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: failed to remove popup widget.")
+		);
+
+		return false;
+	}
+
+	const ECWUIInputMode ReturnInputMode =
+		PopupReturnInputMode;
+
+	// 입력 모드를 적용하기 전에 참조를 비워 기존 화면으로 포커스 복귀
+	CurrentPopup.Reset();
+	PopupReturnInputMode = ECWUIInputMode::UIOnly;
+
+	ApplyInputMode(ReturnInputMode);
+
+	UE_LOG(
+		LogCWUI,
+		Log,
+		TEXT("UISubsystem: popup closed.")
+	);
+
+	return true;
+}
+
+void UCWUISubsystem::ShowToast(const FText& Message)
+{
+	// 빈 문구는 표시하지 않음
+	if (Message.IsEmpty())
+	{
+		return;
+	}
+
+	// 맵 이동 후 이전 World의 토스트 상태가 남아 있으면 폐기
+	if (ToastWorld.Get() != GetWorld())
+	{
+		ResetToastState();
+	}
+
+	// 이번 요청부터 현재 World의 토스트 상태로 관리
+	ToastWorld = GetWorld();
+
+	// 현재 표시 중인 문구와 같은 연속 요청은 무시
+	if (
+		CurrentToast.IsValid() &&
+		CurrentToastMessage.EqualTo(Message)
+		)
+	{
+		return;
+	}
+
+	// 큐의 마지막 문구와 같은 연속 요청도 중복 등록하지 않음
+	if (
+		ToastQueue.Num() > 0 &&
+		ToastQueue.Last().EqualTo(Message)
+		)
+	{
+		return;
+	}
+
+	ToastQueue.Add(Message);
+
+	// 표시 중인 토스트가 없으면 즉시 다음 문구 표시
+	if (!CurrentToast.IsValid())
+	{
+		ShowNextToast();
+	}
+}
+
+void UCWUISubsystem::ShowNextToast()
+{
+	// 이미 표시 중이거나 대기 문구가 없으면 처리하지 않음
+	if (CurrentToast.IsValid() || ToastQueue.IsEmpty())
+	{
+		return;
+	}
+
+	if (!EnsureUIRoot())
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: failed to prepare UI Root for toast.")
+		);
+
+		return;
+	}
+
+	UCWUIRootWidget* RootWidget = UIRoot.Get();
+
+	if (!IsValid(RootWidget))
+	{
+		return;
+	}
+
+	const TSubclassOf<UCWToastWidget> ToastClass =
+		RootWidget->GetToastWidgetClass();
+
+	if (!ToastClass)
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: ToastWidgetClass is not configured on UI Root.")
+		);
+
+		return;
+	}
+
+	ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	APlayerController* PlayerController =
+		IsValid(LocalPlayer)
+		? LocalPlayer->GetPlayerController(GetWorld())
+		: nullptr;
+
+	if (!IsValid(PlayerController))
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: PlayerController is invalid while creating toast.")
+		);
+
+		return;
+	}
+
+	const FText Message = ToastQueue[0];
+
+	UCWToastWidget* NewToast =
+		CreateWidget<UCWToastWidget>(
+			PlayerController,
+			ToastClass
+		);
+
+	if (!IsValid(NewToast))
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: failed to create toast widget.")
+		);
+
+		return;
+	}
+
+	NewToast->Setup(Message);
+
+	if (!RootWidget->AddToastWidget(NewToast))
+	{
+		UE_LOG(
+			LogCWUI,
+			Error,
+			TEXT("UISubsystem: failed to add toast widget to Root.")
+		);
+
+		return;
+	}
+
+	// 생성과 부착이 성공한 요청만 큐에서 제거
+	ToastQueue.RemoveAt(0);
+	CurrentToast = NewToast;
+	CurrentToastMessage = Message;
+
+	// 페이드 애니메이션이 끝나면 현재 토스트를 제거
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			ToastTimerHandle,
+			this,
+			&UCWUISubsystem::HandleToastFinished,
+			ToastDisplayDuration,
+			false
+		);
+	}
+
+	UE_LOG(
+		LogCWUI,
+		Verbose,
+		TEXT("UISubsystem: toast displayed.")
+	);
+}
+
+void UCWUISubsystem::ResetToastState()
+{
+	// 토스트를 표시한 World가 아직 유효하면 예약된 타이머 정리
+	if (UWorld* World = ToastWorld.Get())
+	{
+		World->GetTimerManager().ClearTimer(
+			ToastTimerHandle
+		);
+	}
+
+	// 현재 표시 중인 토스트가 남아 있으면 화면에서 제거
+	if (UCWToastWidget* ToastWidget = CurrentToast.Get())
+	{
+		ToastWidget->RemoveFromParent();
+	}
+
+	ToastTimerHandle.Invalidate();
+	CurrentToast.Reset();
+	CurrentToastMessage = FText::GetEmpty();
+	ToastQueue.Reset();
+	ToastWorld.Reset();
+}
+
+void UCWUISubsystem::HandleToastFinished()
+{
+	// 현재 토스트를 Root에서 제거
+	if (UCWToastWidget* ToastWidget = CurrentToast.Get())
+	{
+		ToastWidget->RemoveFromParent();
+	}
+
+	CurrentToast.Reset();
+	CurrentToastMessage = FText::GetEmpty();
+
+	// 대기 중인 다음 문구를 이어서 표시
+	ShowNextToast();
 }
 
 #pragma endregion

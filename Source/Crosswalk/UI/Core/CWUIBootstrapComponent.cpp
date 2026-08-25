@@ -3,6 +3,7 @@
 #include "CWUIBootstrapComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "Engine/LocalPlayer.h"
+#include "UI/CWUILog.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/Core/CWUIRootWidget.h"
 #include "UI/Core/CWUISubsystem.h"
@@ -20,7 +21,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (!IsValid(OwnerPC))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UIBootstrap: owner is not a PlayerController.")
 		);
@@ -40,7 +41,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (!IsValid(LocalPlayer))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UIBootstrap: LocalPlayer is invalid.")
 		);
@@ -55,7 +56,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (!IsValid(UISubsystem))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UIBootstrap: UISubsystem is invalid.")
 		);
@@ -67,7 +68,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (!UIRootClass)
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UIBootstrap: UIRootClass is not configured.")
 		);
@@ -80,7 +81,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 		!PageClasses.Contains(InitialPage))
 	{
 		UE_LOG(
-			LogTemp,
+			LogCWUI,
 			Error,
 			TEXT("UIBootstrap: InitialPage class is not registered.")
 		);
@@ -111,7 +112,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 		if (!IsValid(HUDWidget))
 		{
 			UE_LOG(
-				LogTemp,
+				LogCWUI,
 				Error,
 				TEXT("UIBootstrap: failed to create HUD Widget.")
 			);
@@ -122,7 +123,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 		if (!UISubsystem->AddHUDWidget(HUDWidget))
 		{
 			UE_LOG(
-				LogTemp,
+				LogCWUI,
 				Error,
 				TEXT("UIBootstrap: failed to add HUD Widget.")
 			);
@@ -136,7 +137,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 		if (!UISubsystem->OpenPage(InitialPage))
 		{
 			UE_LOG(
-				LogTemp,
+				LogCWUI,
 				Error,
 				TEXT("UIBootstrap: failed to open initial page.")
 			);
@@ -152,7 +153,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 	}
 
 	UE_LOG(
-		LogTemp,
+		LogCWUI,
 		Log,
 		TEXT("UIBootstrap: initialization completed.")
 	);
