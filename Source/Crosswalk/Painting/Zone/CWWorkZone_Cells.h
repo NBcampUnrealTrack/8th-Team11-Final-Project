@@ -208,7 +208,7 @@ private:
 	/** 차량을 찾을 반경. 존 크기에 자국 반경만큼 여유를 더한다. */
 	float GetVehicleSearchRadius() const;
 
-	/** 격자를 만들고 초기 상태(bStartFilled)를 적용한다. */
+	/** 격자를 만들고 초기 상태(bStartFilled, bStartSpillFilled)를 적용한다. */
 	void BuildGrid();
 
 	/** 칸 배열을 시작 상태로 되돌린다. 진행도는 건드리지 않는다. (에디터 미리보기와 공용) */
@@ -594,6 +594,15 @@ protected:
 	// 시작할 때 모든 칸이 채워져 있는지. (1단계 청소는 true)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	bool bStartFilled = false;
+
+	// 시작할 때 바깥 고리(=삐져나간 영역)가 페인트로 채워져 있는지.
+	//
+	// 이전 조가 흘려 놓고 간 페인트처럼, 도색을 시작하기 전부터 정리할 대상이 있는 상황을 만든다.
+	// 점수 영역은 건드리지 않아서 도색 진행도는 그대로 0 에서 시작하고, CleanupTools 로 고리를
+	// 지워야 CleanupObjectiveName 줄이 완료된다.
+	// OverspillMargin 이 0 이면 고리 자체가 없어서 아무 효과도 없다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	bool bStartSpillFilled = false;
 
 	// 붓 반경(cm). 한 번에 이 반경 안의 칸들이 처리된다.
 	// 체온이 오르면 이 값에 계수가 곱해져 실제 반경이 줄어든다. (bScaleBrushByWorkSpeed)
