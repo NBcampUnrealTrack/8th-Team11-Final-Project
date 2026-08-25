@@ -10,7 +10,9 @@
 class UCWUIRootWidget;
 class UCWUIScreenWidget;
 class UCWSessionViewModel;
+class UCWToastWidget;
 class UUserWidget;
+class UWorld;
 
 UCLASS()
 class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
@@ -117,6 +119,33 @@ public:
 
 #pragma endregion
 
+#pragma region Feedback
+
+public:
+	// 상호작용을 차단하는 팝업을 Root의 Popup 레이어에 표시
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	bool OpenPopup(UUserWidget* InWidget);
+
+	// 현재 표시 중인 팝업을 닫고 이전 입력 모드로 복귀
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	bool ClosePopup(UUserWidget* InWidget);
+
+	// 비차단 안내 문구를 토스트 큐에 추가
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	void ShowToast(const FText& Message);
+
+private:
+	// 대기 중인 다음 토스트를 생성하고 표시
+	void ShowNextToast();
+
+	// 현재 토스트를 제거하고 다음 요청을 처리
+	void HandleToastFinished();
+
+	// 현재 토스트와 대기 요청 및 타이머 상태를 모두 정리
+	void ResetToastState();
+
+#pragma endregion
+
 #pragma region ViewModel
 
 private:
@@ -158,6 +187,34 @@ private:
 
 	// 화면 전환 진행 여부
 	bool bIsTransitioning = false;
+
+	// 현재 로컬 플레이어에게 적용된 입력 모드
+	ECWUIInputMode CurrentInputMode = ECWUIInputMode::UIOnly;
+
+	// 팝업을 닫은 뒤 복원할 입력 모드
+	ECWUIInputMode PopupReturnInputMode = ECWUIInputMode::UIOnly;
+
+	// 현재 Popup 레이어에 표시 중인 팝업
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UUserWidget> CurrentPopup;
+
+	// 순서대로 표시할 토스트 문구
+	TArray<FText> ToastQueue;
+
+	// 현재 Toast 레이어에 표시 중인 토스트
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCWToastWidget> CurrentToast;
+
+	// 현재 표시 중인 문구
+	FText CurrentToastMessage;
+
+	// 현재 토스트의 표시 종료를 예약하는 타이머
+	FTimerHandle ToastTimerHandle;
+
+	// 현재 토스트 상태가 만들어진 World
+	// 맵 이동 후 이전 화면의 알림을 구분하는 데 사용
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UWorld> ToastWorld;
 
 #pragma endregion
 
