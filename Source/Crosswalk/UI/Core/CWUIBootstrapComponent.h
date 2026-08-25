@@ -9,6 +9,7 @@
 
 class UCWUIRootWidget;
 class UCWUIScreenWidget;
+class UCWUIPageConfigDataAsset;
 class UUserWidget;
 
 UCLASS(
@@ -35,9 +36,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TSubclassOf<UCWUIRootWidget> UIRootClass;
 
-	// 페이지별로 생성할 화면 클래스
+	// 이 환경에서 열 수 있는 페이지 정책
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
-	TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>> PageClasses;
+	TObjectPtr<UCWUIPageConfigDataAsset> PageConfigData;
 
 	// 최초 진입 시 표시할 페이지
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")

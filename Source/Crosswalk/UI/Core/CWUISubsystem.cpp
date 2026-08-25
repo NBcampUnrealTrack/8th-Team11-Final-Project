@@ -244,15 +244,18 @@ void UCWUISubsystem::Deinitialize()
 
 void UCWUISubsystem::InitializeUI(
 	TSubclassOf<UCWUIRootWidget> InRootClass,
-	const TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>>& InPageClasses
+	UCWUIPageConfigDataAsset* InPageConfigData
 )
 {
 	// Bootstrap Component에서 전달받은 UI 설정을 저장
 	UIRootClass = InRootClass;
 
-	// 이전 World의 공용 페이지 등록을 유지하면서
-	// 현재 World에서 전달된 같은 페이지 설정은 새 값으로 덮어씀
-	PageClasses.Append(InPageClasses);
+	// 이전 World의 페이지 정책을 유지하면서
+	// 현재 World에서 전달된 같은 페이지는 새 값으로 덮어씀
+	if (IsValid(InPageConfigData))
+	{
+		PageConfigs.Append(InPageConfigData->GetPageConfigs());
+	}
 
 	// 반복 초기화 시에도 기존 페이지 상태는 유지
 	EnsureUIRoot();
@@ -270,16 +273,16 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 		return false;
 	}
 
-	// 요청한 페이지에 등록된 Widget 클래스 검색
-	const TSubclassOf<UCWUIScreenWidget>* FoundClass =
-		PageClasses.Find(TargetPage);
+	// 요청한 페이지의 정책 검색
+	const FCWUIPageConfig* FoundConfig =
+		PageConfigs.Find(TargetPage);
 
-	if (FoundClass == nullptr || !(*FoundClass))
+	if (FoundConfig == nullptr || !FoundConfig->WidgetClass)
 	{
 		UE_LOG(
 			LogCWUI,
 			Error,
-			TEXT("UISubsystem: page class is not registered.")
+			TEXT("UISubsystem: page config is not registered.")
 		);
 
 		return false;
@@ -333,7 +336,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	UCWUIScreenWidget* NewScreen =
 		CreateWidget<UCWUIScreenWidget>(
 			PlayerController,
-			*FoundClass
+			FoundConfig->WidgetClass
 		);
 
 	if (!IsValid(NewScreen))
@@ -348,6 +351,19 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 		EndTransition();
 		return false;
 	}
+
+	// 현재 페이지가 HUD를 숨긴 상태였으면 그 페이지 열기 전 상태를 계승한다.
+	// 닫기를 거치지 않고 페이지를 직접 교체해도 원래 HUD 상태가 살아남는다.
+	const bool bBaseHUDVisible =
+		bCurrentPageHidesHUD ? bHUDWasVisibleBeforePage : bIsHUDVisible;
+
+	// 직접 전환이면 최초 페이지 열기 전 입력 모드를 계승한다.
+	// CloseCurrentPage 이후에는 CurrentPage=None 이라 직접 전환을 판정할 수 없으므로
+	// 반드시 CloseCurrentPage 앞에서 계산한다.
+	const ECWUIInputMode BaseInputMode =
+		(CurrentPage != ECWUIPage::None)
+		? InputModeBeforeCurrentPage
+		: CurrentInputMode;
 
 	// 새 화면 생성 성공 후 기존 화면 정리
 	CloseCurrentPage();
@@ -386,9 +402,24 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	CurrentScreen = NewScreen;
 	CurrentPage = TargetPage;
 
-	// 화면 진입 처리 후 페이지 입력 모드 적용
+	// 이 페이지를 닫을 때 복원할 기준 상태 저장
+	bHUDWasVisibleBeforePage = bBaseHUDVisible;
+	InputModeBeforeCurrentPage = BaseInputMode;
+	bCurrentPageHidesHUD = FoundConfig->bHideHUD;
+
+	// 화면 진입 처리 후 HUD 정책과 입력 모드 적용
 	NewScreen->OnScreenOpened();
-	ApplyInputModeForPage(TargetPage);
+
+	if (bCurrentPageHidesHUD)
+	{
+		SetHUDVisible(false);
+	}
+	else if (bIsHUDVisible != bBaseHUDVisible)
+	{
+		SetHUDVisible(bBaseHUDVisible);
+	}
+
+	ApplyInputMode(FoundConfig->InputMode);
 
 	// 화면 전환과 입력 차단 종료
 	EndTransition();
@@ -403,7 +434,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	return true;
 }
 
-bool UCWUISubsystem::ClosePage(ECWUIInputMode ReturnInputMode)
+bool UCWUISubsystem::ClosePage()
 {
 	// 전환 중이거나 열린 페이지가 없으면 닫기 요청을 무시
 	if (
@@ -416,7 +447,21 @@ bool UCWUISubsystem::ClosePage(ECWUIInputMode ReturnInputMode)
 
 	BeginTransition();
 
+	// 저장해 둔 기준 상태 복원
+	const bool bRestoreHUD = bCurrentPageHidesHUD;
+	const bool bTargetHUDVisible = bHUDWasVisibleBeforePage;
+	const ECWUIInputMode ReturnInputMode = InputModeBeforeCurrentPage;
+
 	CloseCurrentPage();
+
+	// 이 페이지가 HUD를 숨겼던 경우에만 원래 상태로 되돌린다
+	if (bRestoreHUD)
+	{
+		SetHUDVisible(bTargetHUDVisible);
+	}
+
+	bCurrentPageHidesHUD = false;
+
 	ApplyInputMode(ReturnInputMode);
 
 	EndTransition();
@@ -743,35 +788,6 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 	CurrentInputMode = InInputMode;
 }
 
-void UCWUISubsystem::ApplyInputModeForPage(ECWUIPage Page)
-{
-	// 페이지 종류에 따라 입력 모드 선택
-	switch (Page)
-	{
-	case ECWUIPage::Title:
-	case ECWUIPage::MainMenu:
-	case ECWUIPage::CreateRoom:
-	case ECWUIPage::JoinRoom:
-	case ECWUIPage::Room:
-	case ECWUIPage::StageSelect:
-	case ECWUIPage::Result:
-	case ECWUIPage::Settings:
-	case ECWUIPage::MultiplayerMenu:
-	case ECWUIPage::RoomList:
-		ApplyInputMode(ECWUIInputMode::UIOnly);
-		break;
-
-		// TODO: Loading 화면 구현 시 마우스 커서 숨김 여부를 확정한다.
-	case ECWUIPage::Loading:
-		ApplyInputMode(ECWUIInputMode::UIOnly);
-		break;
-
-	case ECWUIPage::None:
-	default:
-		break;
-	}
-}
-
 #pragma endregion
 
 #pragma region HUD
@@ -819,11 +835,17 @@ void UCWUISubsystem::ClearHUDWidgets()
 
 void UCWUISubsystem::SetHUDVisible(bool bVisible)
 {
-	// 실제 HUD 레이어 표시 변경은 Root에 위임
-	if (UCWUIRootWidget* RootWidget = UIRoot.Get())
+	// 실제 HUD 레이어와 내부 추적 상태를 함께 변경
+	UCWUIRootWidget* RootWidget = UIRoot.Get();
+
+	if (!IsValid(RootWidget))
 	{
-		RootWidget->SetHUDLayerVisible(bVisible);
+		return;
 	}
+
+	RootWidget->SetHUDLayerVisible(bVisible);
+	// 복원 계산에서 현재 상태를 참조하므로 함께 갱신
+	bIsHUDVisible = bVisible;
 }
 
 #pragma endregion
