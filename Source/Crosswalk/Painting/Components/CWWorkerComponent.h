@@ -92,6 +92,20 @@ public:
 	void ConsumePaint(float Amount);
 
 	/**
+	 * 존이 스스로 진행하다 페인트가 떨어져 멈췄다고 보고한다. (기획서 5-4)
+	 *
+	 * 테두리 미니게임처럼 작업 키를 누르지 않아도 진행하는 존이 쓴다. 이 컴포넌트는
+	 * "작업 키를 누르고 있는가" 로 소진 시점을 잡기 때문에, 키를 떼고 있는 동안 멈춘 것은
+	 * 스스로 알 수 없다. 그러면 UI 만 조용히 닫히고 이유가 안 보인다.
+	 *
+	 * 서버로도 올려보낸다. 미니게임은 그리는 본인 기계에서만 돌아 서버가 스스로 알 수 없는데,
+	 * 머리 위 알림은 보급자가 봐야 의미가 있어서 서버를 거쳐야 남의 화면에도 뜬다.
+	 *
+	 * 켜기만 하고 끄지는 않는다. 페인트가 채워지거나, 존을 벗어나거나, 다운되면 Tick 이 알아서 푼다.
+	 */
+	void NotifyZonePaintDepleted();
+
+	/**
 	 * 지금 들고 있는 도구에 작업할 페인트가 남아 있는가. (기획서 5-1)
 	 *
 	 * 빗자루처럼 페인트를 쓰지 않는 도구는 언제나 true 다.
@@ -99,6 +113,15 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work|Paint")
 	bool HasPaintForWork() const;
+
+	/**
+	 * 페인트가 없어 작업이 막힌 상태인가. 머리 위 알림의 현재 상태를 물어볼 때 쓴다.
+	 *
+	 * 위젯이 뒤늦게 만들어지면 이미 지나간 OnPaintDepletedChanged 를 받을 수 없다.
+	 * 생성 시점에 이 값으로 한 번 맞추고, 이후는 델리게이트로 따라가면 된다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work|Paint")
+	bool IsPaintDepleted() const { return bPaintDepleted; }
 
 	/** 지금 들고 있는 도구 액터. 맨손이면 nullptr. 잔량을 물어볼 때 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Work|Paint")
@@ -210,6 +233,13 @@ private:
 	void Server_SubmitDirectionInput(ACWBaseWorkZone* Zone, FVector2D MoveInput);
 
 	/**
+	 * 미니게임이 페인트 소진으로 멈췄다는 보고. 놓치면 남의 화면에 알림이 안 뜨므로 Reliable 이다.
+	 * 끄는 보고는 없다. 해제 조건은 서버도 자기 Tick 에서 같이 본다.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_NotifyZonePaintDepleted();
+
+	/**
 	 * 로컬에서 계산한 진행도 보고.
 	 * 중간 값은 몇 개 유실돼도 다음 것이 덮으므로 Unreliable 로 둔다.
 	 */
@@ -263,6 +293,12 @@ private:
 
 	/** 페인트 부족 상태가 바뀌었을 때만 델리게이트를 발행한다. */
 	void SetPaintDepleted(bool bNewDepleted);
+
+	UFUNCTION()
+	void OnRep_PaintDepleted();
+
+	/** 부족 상태가 실제로 바뀐 뒤의 처리. 서버·소유 클라이언트·원격 모두 각자 여기로 모인다. */
+	void HandlePaintDepletedChanged();
 
 	/** 들고 있는 도구의 잔량을 화면에 띄운다. 페인트 UI 가 붙기 전까지 프로토타입 확인용. */
 	void ShowDebugPaint() const;
@@ -362,8 +398,24 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<ACWBaseTool> HeldToolActor;
 
-	// 페인트가 없어 작업이 막힌 상태인가. 매 프레임 알리지 않고 바뀌는 순간만 잡는다.
+	/**
+	 * 페인트가 없어 작업이 막힌 상태인가. 매 프레임 알리지 않고 바뀌는 순간만 잡는다.
+	 *
+	 * 리플리케이트하는 이유는 기획서 5-4 의 기획 의도 때문이다. 머리 위 "페인트가 부족합니다!" 는
+	 * 본인이 아니라 **보급자가 봐야** 의미가 있다. 로컬 계산만 두면 판정이 서버와 본인 기계에서만
+	 * 돌아서(TickComponent 가 원격 캐릭터에서 조기 반환한다) 참가자 화면에는 남의 알림이 뜨지 않는다.
+	 *
+	 * 소유 클라이언트는 반응성을 위해 로컬 판정으로 즉시 세팅하고, 서버 값이 오면 덮인다.
+	 * bWorking 과 같은 모델이다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_PaintDepleted)
 	bool bPaintDepleted = false;
+
+	// 존이 스스로 진행하다 페인트 소진으로 멈췄다고 보고했는가. (NotifyZonePaintDepleted)
+	//
+	// 작업 키를 떼고 있어도 알림을 띄워두기 위한 플래그다. 리플리케이트하지 않는다.
+	// 서버는 RPC 로 따로 받고, 이 값에서 나온 결과(bPaintDepleted)만 전원에게 나간다.
+	bool bZoneReportedDepleted = false;
 
 	// 취소를 눌렀는가. 서버 응답을 기다리지 않고 이동 잠금을 즉시 풀기 위한 로컬 플래그다.
 	// 리플리케이트하지 않는다. 작업을 다시 시작할 때 풀린다.

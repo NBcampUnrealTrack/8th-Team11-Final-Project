@@ -109,6 +109,24 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 		return;
 	}
 
+	// 페인트가 떨어지면 미니게임을 닫는다. (기획서 5-4)
+	//
+	// 선은 작업 키를 떼도 계속 나아가므로, 작업 컴포넌트의 소진 게이트(ApplyWork 를 끊는 것)로는
+	// 여기까지 막지 못한다. 그대로 두면 잔량 0 인 도구로 테두리를 공짜로 다 그릴 수 있다.
+	//
+	// UI 만 닫고 끝내면 안 된다. 미니게임 중에는 WASD 가 선 방향 전환에 묶여 캐릭터가 제자리에
+	// 서 있어서, 이동 잠금을 함께 풀지 않으면 못 움직이는 채로 차에 치인다.
+	// StopMinigame 이 bMinigameActive 를 내리면 ConsumeDirectionInput 이 이동 입력을 놓아주므로
+	// 잠금도 같이 풀린다. 그려둔 진행도는 남으니 충전하고 돌아오면 이어서 그린다.
+	//
+	// StopMinigame 이 ActiveWorker 를 지우므로 보고를 먼저 보낸다.
+	if (ActiveWorker != nullptr && !ActiveWorker->HasPaintForWork())
+	{
+		ActiveWorker->NotifyZonePaintDepleted();
+		StopMinigame();
+		return;
+	}
+
 	// 꼭짓점에서는 올바른 방향키가 들어올 때까지 선이 멈춰 있는다.
 	if (!bWaitingAtCorner && ActiveWorker != nullptr)
 	{

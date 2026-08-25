@@ -24,6 +24,9 @@ void UCWWorkerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(UCWWorkerComponent, HeldTool);
 	DOREPLIFETIME(UCWWorkerComponent, bWorking);
 	DOREPLIFETIME(UCWWorkerComponent, bWorkBlocked);
+
+	// 남의 머리 위 알림에도 필요하다. 소유자에게만 보내면 보급자가 볼 수 없다. (기획서 5-4)
+	DOREPLIFETIME(UCWWorkerComponent, bPaintDepleted);
 }
 
 void UCWWorkerComponent::BeginPlay()
@@ -100,7 +103,17 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	// 대상 존을 찾은 뒤에 보는 이유: 존도 없는 허공에 대고 키를 누를 때마다
 	// 머리 위에 "페인트가 부족합니다!" 가 뜨면 안 된다.
 	const bool bWantsToWork = bWorking && !bWorkBlocked && FoundZone != nullptr;
-	SetPaintDepleted(bWantsToWork && !HasPaintForWork());
+
+	// 미니게임 존은 작업 키를 떼도 선이 계속 나아가므로, 소진으로 멈춘 것을 존이 따로 알려준다.
+	// (NotifyZonePaintDepleted) 그 보고는 여기서 푼다. 페인트가 채워졌거나, 존을 벗어났거나,
+	// 다운됐으면 더 이상 "페인트가 없어 막혀 있다" 가 아니다.
+	// 도구를 내려놓은 경우도 HasPaintForWork 가 true 라 여기서 같이 풀린다. (맨손은 언제나 true)
+	if (bZoneReportedDepleted && (FoundZone == nullptr || bWorkBlocked || HasPaintForWork()))
+	{
+		bZoneReportedDepleted = false;
+	}
+
+	SetPaintDepleted((bWantsToWork || bZoneReportedDepleted) && !HasPaintForWork());
 
 	ShowDebugPaint();
 
@@ -173,6 +186,23 @@ void UCWWorkerComponent::SubmitWorkHeat(float EffectiveWorkSeconds)
 
 	// 클라이언트. 모아 뒀다가 다음 Tick 에서 한 번에 올린다.
 	PendingWorkHeat += EffectiveWorkSeconds;
+}
+
+void UCWWorkerComponent::NotifyZonePaintDepleted()
+{
+	bZoneReportedDepleted = true;
+
+	// 알림을 남에게도 띄우려면 서버가 알아야 한다. 미니게임은 이 기계에서만 돌기 때문에
+	// 서버가 스스로는 소진 시점을 잡을 수 없다. (기획서 5-4)
+	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
+	{
+		Server_NotifyZonePaintDepleted();
+	}
+}
+
+void UCWWorkerComponent::Server_NotifyZonePaintDepleted_Implementation()
+{
+	bZoneReportedDepleted = true;
 }
 
 void UCWWorkerComponent::FlushPendingWorkHeat()
@@ -250,6 +280,18 @@ void UCWWorkerComponent::SetPaintDepleted(bool bNewDepleted)
 
 	bPaintDepleted = bNewDepleted;
 
+	HandlePaintDepletedChanged();
+}
+
+void UCWWorkerComponent::OnRep_PaintDepleted()
+{
+	// 원격 캐릭터는 Tick 이 조기 반환하므로 이 경로로만 상태가 들어온다.
+	// 소유 클라이언트가 미리 같은 값으로 맞춰 둔 경우에는 값이 바뀌지 않아 여기까지 오지 않는다.
+	HandlePaintDepletedChanged();
+}
+
+void UCWWorkerComponent::HandlePaintDepletedChanged()
+{
 	OnPaintDepletedChanged.Broadcast(this, bPaintDepleted);
 }
 
