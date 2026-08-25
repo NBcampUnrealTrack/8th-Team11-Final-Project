@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "Data/Enums/CWUITypes.h"
+#include "UI/Data/CWUIPageConfigDataAsset.h"
 #include "CWUISubsystem.generated.h"
 
 class UCWUIRootWidget;
@@ -34,7 +35,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI")
 	void InitializeUI(
 		TSubclassOf<UCWUIRootWidget> InRootClass,
-		const TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>>& InPageClasses
+		UCWUIPageConfigDataAsset* InPageConfigData
 	);
 
 #pragma endregion
@@ -46,10 +47,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI")
 	bool OpenPage(ECWUIPage TargetPage);
 
-	// 열린 페이지를 제거하고 지정한 입력 모드로 복귀
-	// 인게임에서 연 설정 화면을 닫을 때 사용
+	// 열린 페이지를 제거하고 열기 전 입력 모드·HUD 상태로 복귀
 	UFUNCTION(BlueprintCallable, Category = "CW|UI")
-	bool ClosePage(ECWUIInputMode ReturnInputMode = ECWUIInputMode::GameAndUI);
+	bool ClosePage();
 
 	// 현재 표시 중인 페이지를 반환
 	UFUNCTION(BlueprintPure, Category = "CW|UI")
@@ -91,10 +91,6 @@ public:
 	// 로컬 PlayerController에 지정한 입력 모드를 적용
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Input")
 	void ApplyInputMode(ECWUIInputMode InInputMode);
-
-private:
-	// 페이지 종류에 대응하는 입력 모드를 선택
-	void ApplyInputModeForPage(ECWUIPage Page);
 
 #pragma endregion
 
@@ -165,9 +161,9 @@ private:
 	UPROPERTY()
 	TSubclassOf<UCWUIRootWidget> UIRootClass;
 
-	// 페이지별로 생성할 화면 클래스
+	// 병합된 페이지 정책. 맵 이동 시 이전 것을 유지하며 같은 키만 덮어씀
 	UPROPERTY()
-	TMap<ECWUIPage, TSubclassOf<UCWUIScreenWidget>> PageClasses;
+	TMap<ECWUIPage, FCWUIPageConfig> PageConfigs;
 
 #pragma endregion
 
@@ -190,6 +186,18 @@ private:
 
 	// 현재 로컬 플레이어에게 적용된 입력 모드
 	ECWUIInputMode CurrentInputMode = ECWUIInputMode::UIOnly;
+
+	// 현재 HUD 레이어의 실제 표시 상태
+	bool bIsHUDVisible = true;
+
+	// 현재 페이지가 열리기 전 HUD 표시 상태
+	bool bHUDWasVisibleBeforePage = true;
+
+	// 현재 페이지 정책이 HUD를 숨겼는지 여부
+	bool bCurrentPageHidesHUD = false;
+
+	// 현재 페이지를 열기 전 사용하던 입력 모드
+	ECWUIInputMode InputModeBeforeCurrentPage = ECWUIInputMode::UIOnly;
 
 	// 팝업을 닫은 뒤 복원할 입력 모드
 	ECWUIInputMode PopupReturnInputMode = ECWUIInputMode::UIOnly;

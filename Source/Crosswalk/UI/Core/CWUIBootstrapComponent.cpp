@@ -7,6 +7,7 @@
 #include "GameFramework/PlayerController.h"
 #include "UI/Core/CWUIRootWidget.h"
 #include "UI/Core/CWUISubsystem.h"
+#include "UI/Data/CWUIPageConfigDataAsset.h"
 
 #pragma region ActorComponentLifecycle
 
@@ -76,23 +77,40 @@ void UCWUIBootstrapComponent::BeginPlay()
 		return;
 	}
 
-	// 시작 페이지가 있으면 해당 클래스가 등록됐는지 확인
-	if (InitialPage != ECWUIPage::None &&
-		!PageClasses.Contains(InitialPage))
+	// 페이지 정책 데이터가 설정됐는지 확인
+	if (!IsValid(PageConfigData))
 	{
 		UE_LOG(
 			LogCWUI,
 			Error,
-			TEXT("UIBootstrap: InitialPage class is not registered.")
+			TEXT("UIBootstrap: PageConfigData is not configured.")
 		);
 
 		return;
 	}
 
+	// 시작 페이지가 있으면 해당 정책이 등록됐는지 확인
+	if (InitialPage != ECWUIPage::None)
+	{
+		FCWUIPageConfig InitialConfig;
+
+		if (!PageConfigData->FindPageConfig(InitialPage, InitialConfig) ||
+			!InitialConfig.WidgetClass)
+		{
+			UE_LOG(
+				LogCWUI,
+				Error,
+				TEXT("UIBootstrap: InitialPage config is not registered.")
+			);
+
+			return;
+		}
+	}
+
 	// UI 설정을 Subsystem에 전달하고 Root를 준비
 	UISubsystem->InitializeUI(
 		UIRootClass,
-		PageClasses
+		PageConfigData
 	);
 
 	// 설정된 HUD Widget을 현재 HUD 레이어에 추가
