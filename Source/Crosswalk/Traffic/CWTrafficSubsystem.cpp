@@ -4,7 +4,9 @@
 
 #include "Engine/World.h"
 #include "CWBaseVehicle.h"
+#include "CWTrafficDirector.h"
 #include "CWTrafficLane.h"
+#include "CWTrafficStopLine.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
 UCWTrafficSubsystem* UCWTrafficSubsystem::Get(const UObject* WorldContextObject)
@@ -207,6 +209,109 @@ void UCWTrafficSubsystem::GetVehiclesNearPoint(const FVector& Point, float Radiu
 			OutVehicles.Add(Vehicle);
 		}
 	}
+}
+
+void UCWTrafficSubsystem::RegisterSignalDirector(ACWTrafficDirector* Director)
+{
+	if (Director)
+	{
+		SignalDirectors.AddUnique(Director);
+	}
+}
+
+void UCWTrafficSubsystem::UnregisterSignalDirector(ACWTrafficDirector* Director)
+{
+	SignalDirectors.RemoveAllSwap([Director](const TWeakObjectPtr<ACWTrafficDirector>& Entry)
+	{
+		return !Entry.IsValid() || Entry.Get() == Director;
+	});
+}
+
+void UCWTrafficSubsystem::RegisterStopLine(ACWTrafficStopLine* StopLine)
+{
+	if (StopLine)
+	{
+		StopLines.AddUnique(StopLine);
+	}
+}
+
+void UCWTrafficSubsystem::UnregisterStopLine(ACWTrafficStopLine* StopLine)
+{
+	StopLines.RemoveAllSwap([StopLine](const TWeakObjectPtr<ACWTrafficStopLine>& Entry)
+	{
+		return !Entry.IsValid() || Entry.Get() == StopLine;
+	});
+}
+
+bool UCWTrafficSubsystem::FindActiveStopLine(const ACWTrafficLane* Lane, float FromDistance, float& OutStopLineDistance) const
+{
+	if (!Lane)
+	{
+		return false;
+	}
+
+	/**
+	 * 두 가지를 각자 다른 곳에 물어본다.
+	 *
+	 *   "여기가 정지선이다"      -> 정지선 액터 (차선에 붙는다)
+	 *   "지금 빨간불인가"        -> 신호 제어기 (페이즈를 돌린다)
+	 *
+	 * 정지선은 차선의 속성이고 신호는 페이즈의 속성이라 소유자가 다르다.
+	 * 둘을 한 곳에 묶으면 같은 차선이 여러 페이즈에 걸릴 때 정지선이 중복된다.
+	 */
+	bool bLaneControlled = false;
+	for (const TWeakObjectPtr<ACWTrafficDirector>& DirectorPtr : SignalDirectors)
+	{
+		const ACWTrafficDirector* Director = DirectorPtr.Get();
+		if (!Director || !Director->ControlsLane(Lane))
+		{
+			continue;
+		}
+
+		// 통제 중인데 초록이면 세우지 않는다. 제어기가 둘이면 하나라도 초록이면 통행이다.
+		if (Director->IsLaneGreen(Lane))
+		{
+			return false;
+		}
+
+		bLaneControlled = true;
+	}
+
+	// 신호가 없는 차선에 정지선만 놓아도 세우지 않는다. 세울 근거가 없다.
+	if (!bLaneControlled)
+	{
+		return false;
+	}
+
+	bool bFound = false;
+	float Nearest = 0.f;
+
+	for (const TWeakObjectPtr<ACWTrafficStopLine>& StopLinePtr : StopLines)
+	{
+		const ACWTrafficStopLine* StopLine = StopLinePtr.Get();
+		if (!StopLine || !StopLine->HasLane(Lane))
+		{
+			continue;
+		}
+
+		const float Distance = StopLine->GetDistanceAlongLane(Lane);
+
+		// 이미 지난 정지선은 뒤로 끌어당기지 않는다. 지나갔으면 그냥 가는 것이 맞다.
+		if (Distance <= FromDistance)
+		{
+			continue;
+		}
+
+		if (!bFound || Distance < Nearest)
+		{
+			Nearest = Distance;
+			bFound = true;
+		}
+	}
+
+	OutStopLineDistance = Nearest;
+
+	return bFound;
 }
 
 int32 UCWTrafficSubsystem::GetActiveVehicleCount() const
