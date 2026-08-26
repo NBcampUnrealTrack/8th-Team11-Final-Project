@@ -2,6 +2,7 @@
 
 #include "CWTrafficVehicleSpawner.h"
 
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "CWBaseVehicle.h"
@@ -25,6 +26,19 @@ void ACWTrafficVehicleSpawner::StartSpawning()
 		UE_LOG(LogTemp, Warning, TEXT("[%s] TargetLane이 없거나 스폰 가능한 차종이 없어 스폰을 시작하지 않는다."), *GetName());
 		return;
 	}
+
+	/**
+	 * 시작했다는 것도 로그로 남긴다.
+	 *
+	 * 실패할 때만 찍으면 "어느 스포너가 어느 차선에 실제로 돌고 있는가" 를 알 방법이
+	 * 없다. 스포너를 복제하면 TargetLane 이 원본 것을 그대로 물고 오는데, 그 상태에서는
+	 * 경고가 하나도 안 뜨면서 한 차선에만 차가 나온다 - 조용히 틀리는 배치라 이 줄이 없으면
+	 * 화면만 보고 원인을 찾아야 한다.
+	 */
+	UE_LOG(LogTemp, Log, TEXT("[%s] 스폰 시작. 차선 %s / 주기 %.1f~%.1f초"),
+		*GetName(), *TargetLane->GetName(), SpawnIntervalMin, SpawnIntervalMax);
+
+	WarnOnSharedTargetLane();
 
 	PrewarmLane();
 
@@ -51,6 +65,19 @@ void ACWTrafficVehicleSpawner::StopSpawning()
 	{
 		World->GetTimerManager().ClearTimer(SpawnTimerHandle);
 	}
+}
+
+ACWBaseVehicle* ACWTrafficVehicleSpawner::RequestSpawn()
+{
+	const TSubclassOf<ACWBaseVehicle> SpawnClass = PickVehicleClass();
+
+	// 입구에 앞차가 아직 남아 있으면 이번 차례는 건너뛴다. 겹쳐 스폰하는 것보다 낫다.
+	if (!SpawnClass || IsLaneEntranceBlocked(SpawnClass))
+	{
+		return nullptr;
+	}
+
+	return SpawnVehicleOfClass(SpawnClass, 0.f);
 }
 
 ACWBaseVehicle* ACWTrafficVehicleSpawner::SpawnVehicle(float StartDistance)
@@ -94,6 +121,54 @@ TSubclassOf<ACWBaseVehicle> ACWTrafficVehicleSpawner::PickVehicleClass() const
 	return VehicleMix.Last().VehicleClass;
 }
 
+void ACWTrafficVehicleSpawner::WarnOnSharedTargetLane() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !TargetLane)
+	{
+		return;
+	}
+
+	/**
+	 * 같은 차선을 보는 스포너가 또 있으면 알린다.
+	 *
+	 * 스포너를 복제해서 만들면 TargetLane 이 원본 것을 그대로 가리킨다. 그러면 두 스포너가
+	 * 같은 차선에 차를 밀어넣는데, IsLaneEntranceBlocked 가 겹치는 것만 막아 주므로
+	 * 크래시도 겹침도 없다 - 대신 다른 차선은 영원히 비어 있고 "저 줄에만 차가 나온다" 로 보인다.
+	 */
+	for (TActorIterator<ACWTrafficVehicleSpawner> It(World); It; ++It)
+	{
+		const ACWTrafficVehicleSpawner* Other = *It;
+		if (Other == this || !Other || Other->TargetLane != TargetLane)
+		{
+			continue;
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] TargetLane(%s)이 %s 와 같다. 두 스포너가 한 차선에 차를 넣으면 다른 차선은 비게 된다. 복제할 때 차선을 다시 지정하지 않은 것은 아닌지 확인해야 한다."),
+			*GetName(), *TargetLane->GetName(), *Other->GetName());
+
+		return;
+	}
+}
+
+void ACWTrafficVehicleSpawner::SetSpawnInterval(float NewMin, float NewMax)
+{
+	// 하한이 상한보다 크게 들어와도 RollSpawnInterval 이 정리하므로 그대로 받는다.
+	SpawnIntervalMin = FMath::Max(0.1f, NewMin);
+	SpawnIntervalMax = FMath::Max(0.1f, NewMax);
+}
+
+void ACWTrafficVehicleSpawner::SetVehicleMix(const TArray<FCWTrafficVehicleEntry>& NewMix)
+{
+	if (NewMix.Num() == 0)
+	{
+		return;
+	}
+
+	VehicleMix = NewMix;
+}
+
 void ACWTrafficVehicleSpawner::BeginPlay()
 {
 	Super::BeginPlay();
@@ -114,13 +189,7 @@ void ACWTrafficVehicleSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ACWTrafficVehicleSpawner::HandleSpawnTimer()
 {
-	const TSubclassOf<ACWBaseVehicle> SpawnClass = PickVehicleClass();
-
-	// 입구에 앞차가 아직 남아 있으면 이번 차례는 건너뛴다. 겹쳐 스폰하는 것보다 낫다.
-	if (SpawnClass && !IsLaneEntranceBlocked(SpawnClass))
-	{
-		SpawnVehicleOfClass(SpawnClass, 0.f);
-	}
+	RequestSpawn();
 
 	GetWorldTimerManager().SetTimer(SpawnTimerHandle, this, &ACWTrafficVehicleSpawner::HandleSpawnTimer, RollSpawnInterval(), false);
 }

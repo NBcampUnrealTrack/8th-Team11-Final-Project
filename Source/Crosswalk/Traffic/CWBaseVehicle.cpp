@@ -62,6 +62,15 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	/**
+	 * 지난 프레임 속도로 위험 상태를 다시 본다.
+	 *
+	 * 이번 프레임 이동을 반영하려면 아래 두 경로(튕겨나가는 중 / 차선 주행)가 각자
+	 * 속도를 채운 뒤에 불러야 하는데, 그러면 호출 지점이 둘로 갈라져 한쪽을 빼먹기 쉽다.
+	 * 전환 시점이 한 프레임 늦는 것이 전부라 여기서 한 번만 부른다.
+	 */
+	RefreshDangerState();
+
 	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
 	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다. (서버 전용)
 	if (bParried)
@@ -435,32 +444,57 @@ float ACWBaseVehicle::ResolveStepSpeed() const
 		return DesiredSpeed;
 	}
 
-	const ACWBaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this);
-	if (!VehicleAhead)
+	/**
+	 * 앞차와 정지선을 각자 계산해서 더 느린 쪽을 쓴다.
+	 *
+	 * 두 감속을 하나의 식으로 합치면 안 된다. **제동 거리가 다르기 때문이다.**
+	 * 앞차는 나와 비슷한 속도로 달리고 있어서 상대속도가 0 에 가깝고, FollowingGap
+	 * 정도의 짧은 구간으로 충분히 흡수된다. 정지선은 상대속도가 주행 속도 그대로라
+	 * 같은 구간을 쓰면 0.2초 만에 서는 급제동이 된다.
+	 *
+	 * 실제로 그렇게 만들어 놓고 "정지선이 이상하게 동작한다" 로 하루를 썼다.
+	 * 정지선을 "길이 0인 가상의 앞차" 로 넣는 비유가 너무 잘 맞아서, 서는 자리는
+	 * 분리했으면서 제동 거리는 앞차 값을 그대로 쓰고 있었다.
+	 */
+	float StepSpeed = DesiredSpeed;
+
+	if (const ACWBaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this))
 	{
-		return DesiredSpeed;
+		const float BumperToBumper = VehicleAhead->GetDistanceAlongLane() - DistanceAlongLane
+			- (GetVehicleLength() * 0.5f) - (VehicleAhead->GetVehicleLength() * 0.5f);
+
+		StepSpeed = FMath::Min(StepSpeed, ResolveApproachSpeed(BumperToBumper - FollowingGap, FollowingGap, DesiredSpeed));
 	}
 
-	// 두 차의 앞뒤 범퍼 사이 빈 거리. 여기서 FollowingGap을 더 빼 여유를 남긴다.
-	const float BumperToBumper = VehicleAhead->GetDistanceAlongLane() - DistanceAlongLane
-		- (GetVehicleLength() * 0.5f) - (VehicleAhead->GetVehicleLength() * 0.5f);
-	const float Headway = BumperToBumper - FollowingGap;
-
-	if (Headway <= 0.f)
+	float StopLineDistance = 0.f;
+	if (TrafficSubsystem->FindActiveStopLine(CurrentLane, DistanceAlongLane, StopLineDistance))
 	{
-		// 이미 최소 간격 안까지 붙었으면 멈춰 세운다. 통과보다 정지가 덜 어색하다.
+		// 앞범퍼에서 정지선까지. 여기서 StopLineGap 을 빼면 실제로 서야 하는 자리까지의 거리다.
+		const float ToStopLine = StopLineDistance - DistanceAlongLane - (GetVehicleLength() * 0.5f);
+
+		StepSpeed = FMath::Min(StepSpeed, ResolveApproachSpeed(ToStopLine - StopLineGap, StopLineBrakeDistance, DesiredSpeed));
+	}
+
+	return StepSpeed;
+}
+
+float ACWBaseVehicle::ResolveApproachSpeed(float Remaining, float BrakeDistance, float DesiredSpeed)
+{
+	if (Remaining <= 0.f)
+	{
+		// 이미 서야 할 자리를 지났으면 멈춰 세운다. 통과보다 정지가 덜 어색하다.
 		return 0.f;
 	}
 
-	// 최소 간격이 없으면 줄일 구간도 없다. 붙기 직전까지 제 속도로 간다.
-	if (FollowingGap <= KINDA_SMALL_NUMBER)
+	// 제동 구간이 없으면 줄일 구간도 없다. 붙기 직전까지 제 속도로 간다.
+	if (BrakeDistance <= KINDA_SMALL_NUMBER)
 	{
 		return DesiredSpeed;
 	}
 
 	/**
-	 * 여유 거리에 비례해 속도를 줄인다. FollowingGap 만큼 여유가 있으면 제 속도이고,
-	 * 여유가 0 에 가까워질수록 0 으로 수렴한다.
+	 * 남은 거리에 비례해 속도를 줄인다. 제동 구간만큼 남아 있으면 제 속도이고,
+	 * 0 에 가까워질수록 0 으로 수렴한다.
 	 *
 	 * "이번 프레임에 갈 수 있는 거리 / DeltaSeconds" 로 깎으면 안 된다. 뒤차가 앞차를
 	 * 따라붙어 이 계산에 걸리는 순간부터 속도가 프레임 시간에 묶이기 때문이다.
@@ -472,11 +506,11 @@ float ACWBaseVehicle::ResolveStepSpeed() const
 	 * 프레임 시간이 기계마다 다르므로 같은 상황에서 속도가 갈리고, 그만큼 클라이언트가
 	 * 서버 값을 받을 때마다 보정된다. 거리만 보고 정하면 양쪽 결과가 같아진다.
 	 *
-	 * 여유가 0 에 가까울수록 속도도 0 에 가까워지므로 한 프레임에 앞차를 통과하지 못한다.
-	 * (앞차가 멈춰 있을 때 여유가 음수로 넘어가려면 프레임 시간이 FollowingGap / 속도,
+	 * 남은 거리가 0 에 가까울수록 속도도 0 에 가까워지므로 한 프레임에 통과하지 못한다.
+	 * (앞차가 멈춰 있을 때 음수로 넘어가려면 프레임 시간이 제동 구간 / 속도,
 	 *  기본값 기준 0.2초를 넘어야 한다. 그 경우도 다음 프레임에 위에서 0 으로 걸린다)
 	 */
-	return DesiredSpeed * FMath::Min(Headway / FollowingGap, 1.f);
+	return DesiredSpeed * FMath::Min(Remaining / BrakeDistance, 1.f);
 }
 
 void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
@@ -509,9 +543,59 @@ void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
 void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
+	TryApplyHit(OtherActor, bFromSweep, SweepResult);
+}
+
+void ACWBaseVehicle::RefreshDangerState()
+{
+	// 피격은 서버만 확정한다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const bool bAboveMinHitSpeed = GetCurrentSpeed() >= MinHitSpeed;
+	if (bAboveMinHitSpeed == bWasAboveMinHitSpeed)
+	{
+		return;
+	}
+
+	bWasAboveMinHitSpeed = bAboveMinHitSpeed;
+
+	// 느려진 방향은 볼 것이 없다. 이미 맞은 사람을 되돌리지는 않는다.
+	if (!bAboveMinHitSpeed || CollisionBox == nullptr)
+	{
+		return;
+	}
+
+	// 느릴 때 그냥 통과시킨 대상이 아직 몸에 겹쳐 있다. 이제 위험해졌으므로 다시 본다.
+	TArray<AActor*> OverlappingActors;
+	CollisionBox->GetOverlappingActors(OverlappingActors);
+
+	for (AActor* OverlappingActor : OverlappingActors)
+	{
+		// 스윕 정보가 없으므로 피격 지점은 최근접점으로 대체된다. (ResolveHitLocation)
+		TryApplyHit(OverlappingActor, false, FHitResult());
+	}
+}
+
+void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHitResult& SweepResult)
+{
 	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
 	// 패링이 노리는 그림이다. 쳐낸 사람도 차에서 떨어졌다가 다시 닿으면 똑같이 맞는다.
 	if (!HasAuthority() || !OtherActor || OtherActor == this)
+	{
+		return;
+	}
+
+	/**
+	 * 너무 느린 차는 치지 않는다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우다.
+	 *
+	 * 여기서 기록(HitActors)을 남기지 않는 것이 중요하다. 남기면 그 차가 다시 출발해도
+	 * 이미 판정한 대상으로 걸러져서 영영 맞지 않는다. 대신 RefreshDangerState 가
+	 * 속도가 하한을 넘어서는 순간에 겹쳐 있는 대상을 다시 본다.
+	 */
+	if (GetCurrentSpeed() < MinHitSpeed)
 	{
 		return;
 	}

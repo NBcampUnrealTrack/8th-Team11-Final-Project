@@ -32,6 +32,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	void StopSpawning();
 
+	/**
+	 * 지금 1대 스폰을 요청한다. 차선 입구가 앞차에 점유돼 있으면 거절한다.
+	 *
+	 * 자체 간격 타이머를 쓰지 않고 밖에서 도착 시점을 편성할 때 쓴다 (ACWTrafficDirector).
+	 * 차종 추첨·개체 편차·입구 점유 검사는 자체 타이머 경로와 완전히 같은 것을 탄다 -
+	 * 두 경로가 다른 판정을 쓰면 편성 여부에 따라 차가 겹치거나 안 겹치게 된다.
+	 *
+	 * @return 스폰한 차량. 입구가 막혔거나 스폰 가능한 차종이 없으면 nullptr.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
+	ACWBaseVehicle* RequestSpawn();
+
+	/** 이 스포너가 차량을 흘려보내는 차선. 편성 쪽에서 차선 길이를 읽는 데 쓴다. */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
+	ACWTrafficLane* GetTargetLane() const { return TargetLane; }
+
 	/** 차간 간격을 무시하고 즉시 1대 스폰. 차종은 비율대로 뽑는다. 테스트용. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	ACWBaseVehicle* SpawnVehicle(float StartDistance = 0.f);
@@ -39,6 +55,20 @@ public:
 	/** VehicleMix에서 가중치 추첨으로 차종을 고른다. 목록이 비면 VehicleClass로 떨어진다. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
 	TSubclassOf<ACWBaseVehicle> PickVehicleClass() const;
+
+	/**
+	 * 스폰 간격을 바꾼다. ACWTrafficDifficulty 가 스테이지 진행도에 따라 부른다.
+	 *
+	 * 이미 걸려 있는 타이머는 건드리지 않고 **다음 차례부터** 적용된다. 남은 시간을
+	 * 다시 계산해 끼워 넣으면 단계가 바뀌는 순간 차가 갑자기 튀어나오거나 한 박자
+	 * 통째로 비는데, 그 순간만 부자연스러워지고 얻는 것이 없다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
+	void SetSpawnInterval(float NewMin, float NewMax);
+
+	/** 차종 구성을 바꾼다. 빈 목록은 무시한다 - 실수로 차가 아예 안 나오는 상태를 만들지 않기 위해서다. */
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
+	void SetVehicleMix(const TArray<FCWTrafficVehicleEntry>& NewMix);
 
 protected:
 	virtual void BeginPlay() override;
@@ -74,6 +104,14 @@ private:
 
 	/** 들어올 차종 기준으로 차선 입구가 아직 앞차에 점유돼 있는지. */
 	bool IsLaneEntranceBlocked(TSubclassOf<ACWBaseVehicle> IncomingClass) const;
+
+	/**
+	 * 같은 TargetLane 을 보는 스포너가 또 있으면 경고한다.
+	 *
+	 * 복제해서 만들면 차선 참조가 딸려오는데, 그 상태는 크래시도 겹침도 없이 조용히
+	 * 틀린다 - 다른 차선만 비고 "저 줄에만 차가 나온다" 로 보인다.
+	 */
+	void WarnOnSharedTargetLane() const;
 
 protected:
 	/** 차량을 흘려보낼 차선. 레벨에 배치한 ATrafficLane을 지정한다. */

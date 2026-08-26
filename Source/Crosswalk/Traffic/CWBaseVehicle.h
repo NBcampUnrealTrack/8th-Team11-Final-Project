@@ -105,6 +105,16 @@ public:
 	float GetVehicleLength() const;
 
 	/**
+	 * 차종 기본 주행 속도(cm/s). 앞차나 개체 편차가 반영되기 전의 값이다.
+	 *
+	 * 실제로 얼마나 빨리 오는지는 GetCurrentSpeed 가 답하지만, 그것은 굴러가는 차에만
+	 * 있는 값이다. 배치 단계에서 "이 차종이 한 지점을 지나가는 데 몇 초 걸리는가" 를
+	 * CDO 로 미리 계산하려면 편차가 섞이지 않은 이 값이 필요하다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetBaseSpeed() const { return Speed; }
+
+	/**
 	 * 차체 표면에서 Point 까지의 거리(cm). 박스 안쪽이면 0.
 	 * 근접 판정에 원점 거리를 쓰면 트럭이 승용차보다 불리해지므로 표면 기준으로 잰다.
 	 */
@@ -187,6 +197,14 @@ private:
 	float ResolveStepSpeed() const;
 
 	/**
+	 * 멈춰야 할 지점까지 Remaining 만큼 남았을 때 낼 속도. 앞차와 정지선이 각자 부른다.
+	 *
+	 * @param Remaining      서야 하는 자리까지 남은 거리(cm). 0 이하면 정지다.
+	 * @param BrakeDistance  속도를 줄이는 데 쓸 구간(cm). 이만큼 남아 있으면 제 속도다.
+	 */
+	static float ResolveApproachSpeed(float Remaining, float BrakeDistance, float DesiredSpeed);
+
+	/**
 	 * 현재 진행 거리와 좌우 오프셋을 실제 트랜스폼에 반영한다.
 	 * StepSpeed는 이번 프레임에 실제로 이동한 속도(cm/s). GetVelocity 가 돌려줄 값에 쓰인다.
 	 */
@@ -237,6 +255,28 @@ private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayParriedFX(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier);
 
+	/**
+	 * 이 대상을 지금 칠 수 있으면 치고 기록한다. 서버에서만 유효하다.
+	 *
+	 * 오버랩이 시작될 때와, 느렸다가 다시 빨라진 순간 두 곳에서 들어온다.
+	 * 두 경로가 같은 판정을 써야 하므로 조건을 여기 한 곳에 모은다.
+	 */
+	void TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHitResult& SweepResult);
+
+	/**
+	 * 위험한 속도인지 다시 보고, 하한을 넘어서는 순간에 겹쳐 있던 대상을 다시 판정한다.
+	 *
+	 * 왜 필요한가
+	 *   MinHitSpeed 아래에서는 오버랩이 들어와도 치지 않고 기록도 남기지 않는다.
+	 *   그런데 오버랩 이벤트는 겹치기 시작할 때 한 번만 온다. 그래서 멈춰 있는 차에
+	 *   걸어 들어간 사람은, 그 차가 다시 출발해도 새 이벤트가 없어서 영영 맞지 않는다.
+	 *   "차 안에 서 있으면 안전" 이 되어 버린다.
+	 *
+	 *   그래서 속도가 하한을 넘어서는 순간에 지금 겹쳐 있는 대상을 다시 훑는다.
+	 *   전환은 차가 다시 출발할 때 한 번뿐이라 매 프레임 도는 비용이 아니다.
+	 */
+	void RefreshDangerState();
+
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
@@ -273,9 +313,51 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
 	bool bFlattenOnHit = false;
 
+	/**
+	 * 피격이 성립하는 최소 주행 속도(cm/s). 이보다 느린 차는 몸이 닿아도 치지 않는다.
+	 *
+	 * 앞차에 막혀 서 있는 차에 걸어 들어갔을 때 다운되는 것을 막는다. 넉백 세기는 속도에
+	 * 비례하므로 이미 0 에 가깝지만, 다운과 페인트 통 파손은 켜지고 꺼지는 값이라
+	 * 속도가 0 이어도 그대로 일어난다. 세기만 줄여서는 해결되지 않는다.
+	 *
+	 * 100 인 이유: 플레이어 기본 이동속도가 500 이라 그 5분의 1 이다. 이보다 느리게
+	 * 굴러오는 차를 "치였다" 로 보기는 어렵고, 정상 주행(750)과는 충분히 멀다.
+	 *
+	 * 0 을 넣으면 이 판정이 꺼지고 예전처럼 속도와 무관하게 친다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float MinHitSpeed = 100.f;
+
 	/** 앞차 뒤범퍼와 유지할 최소 여유 거리(cm). 차 길이에 더해서 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float FollowingGap = 150.f;
+
+	/**
+	 * 정지선 앞에 남길 거리(cm). 앞 범퍼와 정지선 사이의 간격이다.
+	 *
+	 * FollowingGap 과 분리한 이유: 실제 도로에서도 앞차를 따라가는 거리와 정지선 앞에
+	 * 서는 거리는 다르다. 앞차 간격(150cm)을 그대로 쓰면 차가 정지선에서 그만큼 멀리
+	 * 서고, 차 길이 절반까지 더해져 정지선보다 370cm 뒤에 멈춘 것처럼 보인다.
+	 *
+	 * 감속이 시작되는 거리는 StopLineBrakeDistance 가 따로 정한다. 이 값을 줄여도
+	 * 급제동이 되지 않고, 서는 자리만 정지선에 가까워진다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopLineGap = 60.f;
+
+	/**
+	 * 정지선 앞에서 속도를 줄이는 데 쓰는 구간(cm). 이만큼 남았을 때부터 감속이 시작된다.
+	 *
+	 * **FollowingGap 과 값이 크게 다른 것이 정상이다.** 앞차는 나와 비슷한 속도로
+	 * 달리고 있어서 상대속도가 0 에 가깝고 150cm 로 충분히 흡수된다. 정지선은 상대속도가
+	 * 주행 속도 그대로라 같은 값을 쓰면 750cm/s 를 150cm 안에서 죽여야 하고, 시간상수가
+	 * 0.2초인 급제동이 된다 - 부드럽게 서는 것이 아니라 벽에 박힌 것처럼 보인다.
+	 *
+	 * 기본값 900 은 감속도 3m/s^2 기준이다. v^2 / 2a = 7.5^2 / 6 = 9.4m.
+	 * 차선이 짧아 900cm 를 못 잡는 맵에서는 줄여야 하는데, 그만큼 제동이 급해진다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopLineBrakeDistance = 900.f;
 
 	/** 패링 판정 윈도우(초). 충돌 직전 이 시간 안에 입력해야 성공. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
@@ -385,6 +467,9 @@ private:
 
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
 	TSet<TWeakObjectPtr<AActor>> HitActors;
+
+	/** 직전 프레임에 MinHitSpeed 를 넘고 있었는지. 넘어서는 순간을 잡는 데만 쓴다. */
+	bool bWasAboveMinHitSpeed = false;
 
 	FTimerHandle ParriedDespawnTimerHandle;
 };

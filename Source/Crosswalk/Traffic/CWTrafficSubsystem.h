@@ -8,6 +8,9 @@
 #include "CWTrafficSubsystem.generated.h"
 
 class ACWBaseVehicle;
+class ACWTrafficDirector;
+class ACWTrafficLane;
+class ACWTrafficStopLine;
 
 /**
  * 활성 차량 목록을 들고 있는 조회 창구.
@@ -56,6 +59,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic")
 	int32 GetActiveVehicleCount() const;
 
+	void RegisterSignalDirector(ACWTrafficDirector* Director);
+	void UnregisterSignalDirector(ACWTrafficDirector* Director);
+
+	void RegisterStopLine(ACWTrafficStopLine* StopLine);
+	void UnregisterStopLine(ACWTrafficStopLine* StopLine);
+
+	/**
+	 * 이 차선에서 지금 차를 세워야 하는 가장 가까운 정지선을 찾는다.
+	 *
+	 * 차량이 "내 차선에 지금 정지선이 있나" 를 묻는 창구다. 차량이 신호 액터를 직접
+	 * 순회하지 않도록 앞차 조회(FindVehicleAhead)와 같은 자리에 둔다.
+	 *
+	 * 서버와 클라이언트 양쪽에서 같은 답이 나온다 - 신호가 읽는 값이 복제 프로퍼티와
+	 * 레벨 배치값뿐이기 때문이다. 그래서 차량이 각자 감속을 계산해도 어긋나지 않는다.
+	 *
+	 * @param FromDistance  차량의 현재 진행 거리. 이미 지난 정지선은 무시한다
+	 */
+	bool FindActiveStopLine(const ACWTrafficLane* Lane, float FromDistance, float& OutStopLineDistance) const;
+
 private:
 	/**
 	 * 시도 정보 기준으로 이 차량이 패링 후보인지 본다.
@@ -65,4 +87,10 @@ private:
 
 private:
 	TArray<TWeakObjectPtr<ACWBaseVehicle>> ActiveVehicles;
+
+	/** 레벨에 배치된 신호 제어기들. 클라이언트에도 등록된다 - 정지선 판정을 양쪽이 하기 때문이다. */
+	TArray<TWeakObjectPtr<ACWTrafficDirector>> SignalDirectors;
+
+	/** 레벨에 배치된 정지선들. 같은 이유로 클라이언트에도 등록된다. */
+	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
 };
