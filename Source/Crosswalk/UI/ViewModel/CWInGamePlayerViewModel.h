@@ -44,6 +44,15 @@ private:
 	// GameState의 PlayerArray를 로컬·원격 플레이어 데이터로 변환
 	void RefreshPlayers();
 
+	// 다음 Tick 재시도 예약 핸들 (중복 예약 방지·취소용)
+	FTimerHandle RefreshPlayersRetryHandle;
+
+	// RefreshPlayers 재시도를 다음 Tick에 한 번만 예약
+	void ScheduleRefreshPlayersRetry();
+
+	// 재시도 예약을 취소하고 핸들 무효화
+	void ClearRefreshPlayersRetry();
+
 #pragma endregion
 
 #pragma region GameStateBinding
