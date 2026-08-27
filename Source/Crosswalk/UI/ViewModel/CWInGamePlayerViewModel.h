@@ -44,9 +44,6 @@ private:
 	// GameState의 PlayerArray를 로컬·원격 플레이어 데이터로 변환
 	void RefreshPlayers();
 
-	// 다음 Tick 재시도 예약 핸들 (중복 예약 방지·취소용)
-	FTimerHandle RefreshPlayersRetryHandle;
-
 	// RefreshPlayers 재시도를 다음 Tick에 한 번만 예약
 	void ScheduleRefreshPlayersRetry();
 
@@ -58,11 +55,17 @@ private:
 #pragma region GameStateBinding
 
 protected:
-	// 인게임 전용 GameState일 때만 플레이어 목록을 구독
-	virtual void BindGameState(AGameStateBase* InGameState) override;
+	// 바인딩할 인게임 GameState 클래스
+	virtual UClass* GetGameStateClass() const override;
 
-	// 현재 구독 중인 인게임 GameState에서 구독 해제
-	virtual void UnbindGameState() override;
+	// GameState 의 플레이어 목록 변경 delegate 구독
+	virtual void SubscribeToGameState(AGameStateBase* InGameState) override;
+
+	// GameState 의 플레이어 목록 변경 delegate 해제 + 재시도 타이머 정리
+	virtual void UnsubscribeFromGameState(AGameStateBase* InGameState) override;
+
+	// 현재 GameState 의 플레이어 목록을 즉시 반영
+	virtual void RefreshFromGameState() override;
 
 	// 표시 상태를 기본값으로 되돌림
 	virtual void ResetViewModelState() override;
@@ -120,9 +123,8 @@ private:
 	)
 	TArray<FCWRoomPlayerInfo> RemotePlayers;
 
-	// 현재 구독 중인 인게임 GameState
-	UPROPERTY()
-	TWeakObjectPtr<ACWGameState> BoundGameState;
+	// 다음 Tick 재시도 예약 핸들 (중복 예약 방지·취소용)
+	FTimerHandle RefreshPlayersRetryHandle;
 
 #pragma endregion
 };

@@ -110,11 +110,17 @@ private:
 #pragma region GameStateBinding
 
 protected:
-	// 방 전용 GameState일 때만 방 데이터를 구독
-	virtual void BindGameState(AGameStateBase* InGameState) override;
+	// 바인딩할 RoomGameState 클래스
+	virtual UClass* GetGameStateClass() const override;
 
-	// 현재 구독 중인 RoomGameState에서 구독 해제
-	virtual void UnbindGameState() override;
+	// RoomGameState 의 플레이어 변경 delegate 구독
+	virtual void SubscribeToGameState(AGameStateBase* InGameState) override;
+
+	// RoomGameState 의 플레이어 변경 delegate 해제
+	virtual void UnsubscribeFromGameState(AGameStateBase* InGameState) override;
+
+	// 현재 RoomGameState 의 방 상태를 즉시 반영
+	virtual void RefreshFromGameState() override;
 
 	// 표시 상태를 기본값으로 되돌림
 	virtual void ResetViewModelState() override;
@@ -255,10 +261,6 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	bool bShouldShowStartCondition = false;
-
-	// 현재 구독 중인 RoomGameState
-	UPROPERTY()
-	TWeakObjectPtr<ACWRoomGameState> BoundGameState;
 
 #pragma endregion
 };

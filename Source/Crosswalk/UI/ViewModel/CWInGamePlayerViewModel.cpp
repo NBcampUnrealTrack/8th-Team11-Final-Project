@@ -13,11 +13,11 @@
 
 void UCWInGamePlayerViewModel::RefreshPlayers()
 {
-	// 이번 실행 시작 — 기존 예약 정리 (필요 시 끝에서 다시 예약)
+	// 이번 실행이 시작됐으니 기존 예약 정리 (필요 시 끝에서 다시 예약)
 	ClearRefreshPlayersRetry();
 
 	ACWGameState* GameState =
-		BoundGameState.Get();
+		Cast<ACWGameState>(GetBoundGameState());
 
 	UWorld* World = GetBoundWorld();
 
@@ -40,11 +40,8 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		return;
 	}
 
-	// Listen Server의 로컬 컨트롤러만 호스트로 판정
-	SetIsHost(
-		LocalPlayerController->IsLocalController() &&
-		LocalPlayerController->HasAuthority()
-	);
+	// Listen Server의 로컬 컨트롤러만 호스트로 판정 (베이스 공용 헬퍼)
+	SetIsHost(IsLocalHost());
 
 	APlayerState* LocalPlayerState =
 		LocalPlayerController->PlayerState;
@@ -230,58 +227,55 @@ void UCWInGamePlayerViewModel::ClearRefreshPlayersRetry()
 
 #pragma region GameStateBinding
 
-void UCWInGamePlayerViewModel::BindGameState(
+UClass* UCWInGamePlayerViewModel::GetGameStateClass() const
+{
+	return ACWGameState::StaticClass();
+}
+
+void UCWInGamePlayerViewModel::SubscribeToGameState(
 	AGameStateBase* InGameState
 )
 {
-	ACWGameState* NewGameState =
+	ACWGameState* GameState =
 		Cast<ACWGameState>(InGameState);
 
-	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
-	if (!IsValid(NewGameState))
-	{
-		UnbindGameState();
-		ResetViewModelState();
-		return;
-	}
-
-	// 같은 GameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == NewGameState)
+	if (!IsValid(GameState))
 	{
 		return;
 	}
-
-	UnbindGameState();
-
-	BoundGameState = NewGameState;
 
 	// 플레이어 입장·퇴장·이름 변경 이벤트 구독
-	NewGameState->OnPlayerListChanged.AddDynamic(
+	GameState->OnPlayerListChanged.AddDynamic(
 		this,
 		&UCWInGamePlayerViewModel::HandlePlayerListChanged
 	);
-
-	// 이벤트가 ViewModel 생성 전에 발생했을 수 있으므로 즉시 한 번 읽음
-	RefreshPlayers();
 }
 
-void UCWInGamePlayerViewModel::UnbindGameState()
+void UCWInGamePlayerViewModel::UnsubscribeFromGameState(
+	AGameStateBase* InGameState
+)
 {
-	// 언바인드 시 재시도 예약 취소 (Uninitialize 경로 포함)
+	// GameState 유효성과 무관하게 재시도 예약부터 정리
 	ClearRefreshPlayersRetry();
 
-	if (
-		ACWGameState* GameState =
-		BoundGameState.Get()
-		)
+	ACWGameState* GameState =
+		Cast<ACWGameState>(InGameState);
+
+	if (!IsValid(GameState))
 	{
-		GameState->OnPlayerListChanged.RemoveDynamic(
-			this,
-			&UCWInGamePlayerViewModel::HandlePlayerListChanged
-		);
+		return;
 	}
 
-	BoundGameState.Reset();
+	GameState->OnPlayerListChanged.RemoveDynamic(
+		this,
+		&UCWInGamePlayerViewModel::HandlePlayerListChanged
+	);
+}
+
+void UCWInGamePlayerViewModel::RefreshFromGameState()
+{
+	// 이벤트가 ViewModel 생성 전에 발생했을 수 있으므로 즉시 한 번 읽음
+	RefreshPlayers();
 }
 
 void UCWInGamePlayerViewModel::ResetViewModelState()
