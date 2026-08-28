@@ -35,7 +35,7 @@ void UCWBaseGameStateViewModel::Initialize(UObject* WorldContextObject)
 		&UCWBaseGameStateViewModel::HandleGameStateSet
 	);
 
-	// 이미 생성돼 있으면 즉시 구독한다. 타입 확인은 파생 클래스가 한다
+	// 이미 생성돼 있으면 파생이 지정한 GameState 타입을 확인하고 즉시 구독
 	BindGameState(World->GetGameState<AGameStateBase>());
 }
 
@@ -92,9 +92,61 @@ UWorld* UCWBaseGameStateViewModel::GetBoundWorld() const
 	return BoundWorld.Get();
 }
 
+bool UCWBaseGameStateViewModel::IsLocalHost() const
+{
+	const APlayerController* PlayerController =
+		GetOwningPlayerController();
+
+	// 리슨 서버의 로컬 컨트롤러만 호스트로 판정 (연결 지연 시 null 방어)
+	return
+		IsValid(PlayerController) &&
+		PlayerController->IsLocalController() &&
+		PlayerController->HasAuthority();
+}
+
+AGameStateBase* UCWBaseGameStateViewModel::GetBoundGameState() const
+{
+	return BoundGameState.Get();
+}
+
+void UCWBaseGameStateViewModel::BindGameState(AGameStateBase* InGameState)
+{
+	// 타입이 다르거나 GameState가 무효면 기존 구독과 표시 상태를 정리
+	if (!IsValid(InGameState) ||
+		!InGameState->IsA(GetGameStateClass()))
+	{
+		UnbindGameState();
+		ResetViewModelState();
+		return;
+	}
+
+	// 같은 GameState에 중복 바인딩하지 않음
+	if (BoundGameState.Get() == InGameState)
+	{
+		return;
+	}
+
+	UnbindGameState();
+
+	BoundGameState = InGameState;
+
+	SubscribeToGameState(InGameState);
+
+	// OnRep가 이미 지난 경우를 위해 현재 값을 즉시 한 번 반영
+	RefreshFromGameState();
+}
+
+void UCWBaseGameStateViewModel::UnbindGameState()
+{
+	// GameState가 이미 무효여도 파생의 정리(타이머 등)는 실행돼야 하므로 항상 호출
+	UnsubscribeFromGameState(BoundGameState.Get());
+
+	BoundGameState.Reset();
+}
+
 void UCWBaseGameStateViewModel::HandleGameStateSet(AGameStateBase* InGameState)
 {
-	// 타입 확인은 파생 클래스가 한다
+	// 파생이 지정한 GameState 타입 확인과 바인딩을 공통 처리
 	BindGameState(InGameState);
 }
 

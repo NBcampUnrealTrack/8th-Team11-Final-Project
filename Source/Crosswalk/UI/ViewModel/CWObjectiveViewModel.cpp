@@ -30,64 +30,72 @@ void UCWObjectiveViewModel::SetIsStageCleared(
 
 #pragma region GameStateBinding
 
-void UCWObjectiveViewModel::BindGameState(
+UClass* UCWObjectiveViewModel::GetGameStateClass() const
+{
+	return ACWGameState::StaticClass();
+}
+
+void UCWObjectiveViewModel::SubscribeToGameState(
 	AGameStateBase* InGameState
 )
 {
-	ACWGameState* NewGameState =
+	ACWGameState* GameState =
 		Cast<ACWGameState>(InGameState);
 
-	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
-	if (!IsValid(NewGameState))
-	{
-		UnbindGameState();
-		ResetViewModelState();
-		return;
-	}
-
-	// 동일한 GameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == NewGameState)
+	if (!IsValid(GameState))
 	{
 		return;
 	}
-
-	UnbindGameState();
-
-	BoundGameState = NewGameState;
 
 	// 복제된 목표 목록이 변경될 때 알림 수신
-	NewGameState->OnStageObjectivesChanged.AddDynamic(
+	GameState->OnStageObjectivesChanged.AddDynamic(
 		this,
 		&UCWObjectiveViewModel::HandleStageObjectivesChanged
 	);
 
 	// 복제된 스테이지 상태가 변경될 때 알림 수신
-	NewGameState->OnStageStateChanged.AddDynamic(
+	GameState->OnStageStateChanged.AddDynamic(
 		this,
 		&UCWObjectiveViewModel::HandleStageStateChanged
 	);
-
-	// OnRep가 이미 지난 경우를 위해 현재 값을 즉시 한 번 읽음
-	SetObjectives(NewGameState->GetObjectives());
-	SetIsStageCleared(NewGameState->IsStageCleared());
 }
 
-void UCWObjectiveViewModel::UnbindGameState()
+void UCWObjectiveViewModel::UnsubscribeFromGameState(
+	AGameStateBase* InGameState
+)
 {
-	if (ACWGameState* GameState = BoundGameState.Get())
-	{
-		GameState->OnStageObjectivesChanged.RemoveDynamic(
-			this,
-			&UCWObjectiveViewModel::HandleStageObjectivesChanged
-		);
+	ACWGameState* GameState =
+		Cast<ACWGameState>(InGameState);
 
-		GameState->OnStageStateChanged.RemoveDynamic(
-			this,
-			&UCWObjectiveViewModel::HandleStageStateChanged
-		);
+	if (!IsValid(GameState))
+	{
+		return;
 	}
 
-	BoundGameState.Reset();
+	GameState->OnStageObjectivesChanged.RemoveDynamic(
+		this,
+		&UCWObjectiveViewModel::HandleStageObjectivesChanged
+	);
+
+	GameState->OnStageStateChanged.RemoveDynamic(
+		this,
+		&UCWObjectiveViewModel::HandleStageStateChanged
+	);
+}
+
+void UCWObjectiveViewModel::RefreshFromGameState()
+{
+	ACWGameState* GameState =
+		Cast<ACWGameState>(GetBoundGameState());
+
+	if (!IsValid(GameState))
+	{
+		return;
+	}
+
+	// OnRep가 이미 지난 경우를 위해 현재 값을 즉시 반영
+	SetObjectives(GameState->GetObjectives());
+	SetIsStageCleared(GameState->IsStageCleared());
 }
 
 void UCWObjectiveViewModel::ResetViewModelState()

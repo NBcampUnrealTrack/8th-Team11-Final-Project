@@ -13,8 +13,11 @@
 
 void UCWInGamePlayerViewModel::RefreshPlayers()
 {
+	// 이번 실행이 시작됐으니 기존 예약 정리 (필요 시 끝에서 다시 예약)
+	ClearRefreshPlayersRetry();
+
 	ACWGameState* GameState =
-		BoundGameState.Get();
+		Cast<ACWGameState>(GetBoundGameState());
 
 	UWorld* World = GetBoundWorld();
 
@@ -32,19 +35,13 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 	// Owning Player 연결이 아직 끝나지 않았다면 다음 Tick에 재시도
 	if (!IsValid(LocalPlayerController))
 	{
-		World->GetTimerManager().SetTimerForNextTick(
-			this,
-			&UCWInGamePlayerViewModel::RefreshPlayers
-		);
+		ScheduleRefreshPlayersRetry();
 
 		return;
 	}
 
-	// Listen Server의 로컬 컨트롤러만 호스트로 판정
-	SetIsHost(
-		LocalPlayerController->IsLocalController() &&
-		LocalPlayerController->HasAuthority()
-	);
+	// Listen Server의 로컬 컨트롤러만 호스트로 판정 (베이스 공용 헬퍼)
+	SetIsHost(IsLocalHost());
 
 	APlayerState* LocalPlayerState =
 		LocalPlayerController->PlayerState;
@@ -53,10 +50,7 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 	// 잘못된 원격 목록을 확정하지 않고 다음 Tick에 재시도
 	if (!IsValid(LocalPlayerState))
 	{
-		World->GetTimerManager().SetTimerForNextTick(
-			this,
-			&UCWInGamePlayerViewModel::RefreshPlayers
-		);
+		ScheduleRefreshPlayersRetry();
 
 		return;
 	}
@@ -101,8 +95,8 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 			PlayerState->GetPlayerId();
 
 		// Seamless Travel 중 아직 초기화되지 않은 임시 PlayerState는 표시하지 않음
-		// PlayerId는 RepNotify가 없어 뒤늦게 도착해도 갱신 이벤트가 오지 않는다.
-		// 이번 프레임에는 건너뛰고 다음 Tick에 다시 확인한다.
+		// PlayerId는 RepNotify가 없어 뒤늦게 도착해도 갱신 이벤트가 오지 않음
+		// 이번 프레임에는 건너뛰고 다음 Tick에 다시 확인
 		if (CandidatePlayerId <= 0)
 		{
 			bHasPendingPlayerId = true;
@@ -137,7 +131,7 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		const APlayerController* PlayerController =
 			PlayerState->GetPlayerController();
 
-		// PlayerState가 가진 컨트롤러와 위젯의 Owning Player를 직접 비교해
+		// PlayerState가 가진 컨트롤러와 위젯의 Owning Player를 직접 비교해서
 		// 현재 화면을 소유한 로컬 플레이어인지 보조 판정
 		const bool bOwnedByLocalController =
 			IsValid(PlayerController) &&
@@ -192,66 +186,96 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 	// 목록을 먼저 반영한 뒤, 빠진 플레이어가 있으면 다음 Tick에 다시 채움
 	if (bHasPendingPlayerId)
 	{
+		ScheduleRefreshPlayersRetry();
+	}
+}
+
+void UCWInGamePlayerViewModel::ScheduleRefreshPlayersRetry()
+{
+	// 이미 예약된 핸들이 유효하면 중복 예약하지 않음
+	if (RefreshPlayersRetryHandle.IsValid())
+	{
+		return;
+	}
+
+	UWorld* World = GetBoundWorld();
+
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	RefreshPlayersRetryHandle =
 		World->GetTimerManager().SetTimerForNextTick(
 			this,
 			&UCWInGamePlayerViewModel::RefreshPlayers
 		);
+}
+
+void UCWInGamePlayerViewModel::ClearRefreshPlayersRetry()
+{
+	// 남은 예약을 실제로 취소 (재-Initialize 시 이전 콜백 발동 방지)
+	if (UWorld* World = GetBoundWorld())
+	{
+		World->GetTimerManager().ClearTimer(RefreshPlayersRetryHandle);
 	}
+
+	RefreshPlayersRetryHandle.Invalidate();
 }
 
 #pragma endregion
 
 #pragma region GameStateBinding
 
-void UCWInGamePlayerViewModel::BindGameState(
+UClass* UCWInGamePlayerViewModel::GetGameStateClass() const
+{
+	return ACWGameState::StaticClass();
+}
+
+void UCWInGamePlayerViewModel::SubscribeToGameState(
 	AGameStateBase* InGameState
 )
 {
-	ACWGameState* NewGameState =
+	ACWGameState* GameState =
 		Cast<ACWGameState>(InGameState);
 
-	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
-	if (!IsValid(NewGameState))
-	{
-		UnbindGameState();
-		ResetViewModelState();
-		return;
-	}
-
-	// 같은 GameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == NewGameState)
+	if (!IsValid(GameState))
 	{
 		return;
 	}
-
-	UnbindGameState();
-
-	BoundGameState = NewGameState;
 
 	// 플레이어 입장·퇴장·이름 변경 이벤트 구독
-	NewGameState->OnPlayerListChanged.AddDynamic(
+	GameState->OnPlayerListChanged.AddDynamic(
 		this,
 		&UCWInGamePlayerViewModel::HandlePlayerListChanged
 	);
-
-	// 이벤트가 ViewModel 생성 전에 발생했을 수 있으므로 즉시 한 번 읽음
-	RefreshPlayers();
 }
 
-void UCWInGamePlayerViewModel::UnbindGameState()
+void UCWInGamePlayerViewModel::UnsubscribeFromGameState(
+	AGameStateBase* InGameState
+)
 {
-	if (
-		ACWGameState* GameState =
-		BoundGameState.Get()
-		)
+	// GameState 유효성과 무관하게 재시도 예약부터 정리
+	ClearRefreshPlayersRetry();
+
+	ACWGameState* GameState =
+		Cast<ACWGameState>(InGameState);
+
+	if (!IsValid(GameState))
 	{
-		GameState->OnPlayerListChanged.RemoveDynamic(
-			this,
-			&UCWInGamePlayerViewModel::HandlePlayerListChanged
-		);
+		return;
 	}
 
-	BoundGameState.Reset();
+	GameState->OnPlayerListChanged.RemoveDynamic(
+		this,
+		&UCWInGamePlayerViewModel::HandlePlayerListChanged
+	);
+}
+
+void UCWInGamePlayerViewModel::RefreshFromGameState()
+{
+	// 이벤트가 ViewModel 생성 전에 발생했을 수 있으므로 즉시 한 번 읽음
+	RefreshPlayers();
 }
 
 void UCWInGamePlayerViewModel::ResetViewModelState()

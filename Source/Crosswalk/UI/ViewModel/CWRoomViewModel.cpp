@@ -66,7 +66,7 @@ bool UCWRoomViewModel::RequestStartGame()
 void UCWRoomViewModel::RefreshRoomState()
 {
 	ACWRoomGameState* RoomGameState =
-		BoundGameState.Get();
+		Cast<ACWRoomGameState>(GetBoundGameState());
 
 	if (!IsValid(RoomGameState))
 	{
@@ -181,11 +181,8 @@ void UCWRoomViewModel::RefreshRoomState()
 	const bool bNewCanStartGame =
 		RoomGameState->CanStartGame();
 
-	// Listen Server의 로컬 컨트롤러만 호스트로 판정
-	const bool bNewIsHost =
-		IsValid(LocalPlayerController) &&
-		LocalPlayerController->IsLocalController() &&
-		LocalPlayerController->HasAuthority();
+	// Listen Server의 로컬 컨트롤러만 호스트로 판정 (베이스 공용 헬퍼)
+	const bool bNewIsHost = IsLocalHost();
 
 	const bool bNeedsMorePlayers =
 		NewCurrentPlayerCount < NewMinimumPlayers;
@@ -232,53 +229,53 @@ void UCWRoomViewModel::RefreshRoomState()
 
 #pragma region GameStateBinding
 
-void UCWRoomViewModel::BindGameState(
+UClass* UCWRoomViewModel::GetGameStateClass() const
+{
+	return ACWRoomGameState::StaticClass();
+}
+
+void UCWRoomViewModel::SubscribeToGameState(
 	AGameStateBase* InGameState
 )
 {
-	ACWRoomGameState* NewGameState =
+	ACWRoomGameState* RoomGameState =
 		Cast<ACWRoomGameState>(InGameState);
 
-	// 타입이 다르거나 GameState가 사라지면 기존 구독과 표시 상태를 정리
-	if (!IsValid(NewGameState))
-	{
-		UnbindGameState();
-		ResetViewModelState();
-		return;
-	}
-
-	// 동일한 RoomGameState에 중복 바인딩하지 않음
-	if (BoundGameState.Get() == NewGameState)
+	if (!IsValid(RoomGameState))
 	{
 		return;
 	}
-
-	UnbindGameState();
-
-	BoundGameState = NewGameState;
 
 	// 플레이어 입장·퇴장·이름·준비 상태 변경 알림 구독
-	NewGameState->OnRoomPlayersChanged.AddDynamic(
+	RoomGameState->OnRoomPlayersChanged.AddDynamic(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
-
-	// OnRep 또는 AddPlayerState 알림이 지난 경우를 위해 즉시 한 번 읽음
-	RefreshRoomState();
 }
 
-void UCWRoomViewModel::UnbindGameState()
+void UCWRoomViewModel::UnsubscribeFromGameState(
+	AGameStateBase* InGameState
+)
 {
-	if (ACWRoomGameState* RoomGameState =
-		BoundGameState.Get())
+	// 바인딩 시 등록한 방 플레이어 변경 delegate 를 해제
+	ACWRoomGameState* RoomGameState =
+		Cast<ACWRoomGameState>(InGameState);
+
+	if (!IsValid(RoomGameState))
 	{
-		RoomGameState->OnRoomPlayersChanged.RemoveDynamic(
-			this,
-			&UCWRoomViewModel::HandleRoomPlayersChanged
-		);
+		return;
 	}
 
-	BoundGameState.Reset();
+	RoomGameState->OnRoomPlayersChanged.RemoveDynamic(
+		this,
+		&UCWRoomViewModel::HandleRoomPlayersChanged
+	);
+}
+
+void UCWRoomViewModel::RefreshFromGameState()
+{
+	// OnRep 또는 AddPlayerState 알림이 지난 경우를 위해 즉시 한 번 읽음
+	RefreshRoomState();
 }
 
 void UCWRoomViewModel::ResetViewModelState()
