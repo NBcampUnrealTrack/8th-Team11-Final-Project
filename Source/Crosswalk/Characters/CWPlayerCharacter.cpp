@@ -20,6 +20,7 @@
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
@@ -34,6 +35,12 @@
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	// 머티리얼 그래프의 파라미터 이름.
+	const FName HeatRatioParameterName(TEXT("HeatRatio"));
+}
 
 ACWPlayerCharacter::ACWPlayerCharacter()
 {
@@ -108,6 +115,15 @@ void ACWPlayerCharacter::BeginPlay()
 
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
+
+	// 체온 오라. 서버 클라 양쪽다 각각 모든 캐릭터에 대해서 생성.
+	if (HeatOverlayMaterial != nullptr)
+	{
+		HeatOverlayMID = UMaterialInstanceDynamic::Create(HeatOverlayMaterial, this);
+		GetMesh()->SetOverlayMaterial(HeatOverlayMID);
+	}
+
+	TemperatureComponent->OnTemperatureChanged.AddDynamic(this, &ACWPlayerCharacter::HandleTemperatureChanged);
 
 	// 다운 시간이 끝나면 일어난다. 서버에서만 들어오고, 연출은 여기서 멀티캐스트로 뿌린다.
 	HitReactionComponent->OnGetUpRequested.AddDynamic(this, &ACWPlayerCharacter::HandleGetUpRequested);
@@ -859,6 +875,16 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 		0.f,
 		ResolveSoundAttenuation()
 	);
+}
+
+void ACWPlayerCharacter::HandleTemperatureChanged(UCWTemperatureComponent* InTemperatureComponent, float Temperature, float HeatRatio)
+{
+	if (HeatOverlayMID == nullptr)
+	{
+		return;
+	}
+
+	HeatOverlayMID->SetScalarParameterValue(HeatRatioParameterName, HeatRatio);
 }
 
 void ACWPlayerCharacter::PlayVehicleHitSound()
