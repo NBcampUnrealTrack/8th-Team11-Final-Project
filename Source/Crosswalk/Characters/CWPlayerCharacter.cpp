@@ -116,14 +116,42 @@ void ACWPlayerCharacter::BeginPlay()
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
 
-	// 체온 오라. 서버 클라 양쪽다 각각 모든 캐릭터에 대해서 생성.
-	if (HeatOverlayMaterial != nullptr)
+	/**
+	 * 체온 오라. 서버 클라 양쪽다 각각 모든 캐릭터에 대해서 생성.
+	 *
+	 * 오버레이 슬롯은 메시당 하나뿐이라, 새 머티리얼을 넣으면 외곽선이 자리를 잃는다.
+	 * 그래서 교체하지 않고 이미 걸려 있는 외곽선 머티리얼을 MID 로 감싸서
+	 * 스칼라 파라미터만 흔든다.
+	 */
+	UMaterialInterface* BaseOverlay = HeatOverlayMaterial;
+	if (BaseOverlay == nullptr)
 	{
-		HeatOverlayMID = UMaterialInstanceDynamic::Create(HeatOverlayMaterial, this);
+		// 컴포넌트에 지정된 것이 없으면 스켈레탈 메시 애셋에 구워진 외곽선이 나온다.
+		BaseOverlay = GetMesh()->GetOverlayMaterial();
+	}
+
+	if (BaseOverlay != nullptr)
+	{
+		HeatOverlayMID = UMaterialInstanceDynamic::Create(BaseOverlay, this);
 		GetMesh()->SetOverlayMaterial(HeatOverlayMID);
+
+		/**
+		 * 착용물은 Super::BeginPlay 안에서 컴포넌트 BeginPlay 가 먼저 돌면서 원본 오버레이를
+		 * 이미 물려받았다. 새로 만든 MID 로 다시 물려야 헬멧과 작업복도 같이 달아오른다.
+		 */
+		if (WearableComponent != nullptr)
+		{
+			WearableComponent->RefreshOverlayMaterial();
+		}
 	}
 
 	TemperatureComponent->OnTemperatureChanged.AddDynamic(this, &ACWPlayerCharacter::HandleTemperatureChanged);
+
+	// BroadcastIfChanged 는 값이 변할 때만 쏜다. 초기 상태는 여기서 한 번 밀어넣는다.
+	if (HeatOverlayMID != nullptr)
+	{
+		HeatOverlayMID->SetScalarParameterValue(HeatRatioParameterName, TemperatureComponent->GetHeatRatio());
+	}
 
 	// 다운 시간이 끝나면 일어난다. 서버에서만 들어오고, 연출은 여기서 멀티캐스트로 뿌린다.
 	HitReactionComponent->OnGetUpRequested.AddDynamic(this, &ACWPlayerCharacter::HandleGetUpRequested);

@@ -355,7 +355,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
 
-	//체온 오라 머티리얼 지정. BP 캐릭터에서 머티리얼 인스턴스 지정해야 함. 체온 시스템 자체와는 무관함.
+	/**
+	 * 체온 오라 머티리얼 오버라이드. 비워 두면 메시에 걸린 외곽선 머티리얼을 그대로 감싼다.
+	 * 외곽선과 같은 오버레이 슬롯을 쓰므로, 지정한다면 외곽선까지 그리는 머티리얼이어야 한다.
+	 * 체온 시스템 자체와는 무관하고 연출만 담당한다.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category= "Temperature|FX")
 	TObjectPtr<UMaterialInterface> HeatOverlayMaterial;
 
