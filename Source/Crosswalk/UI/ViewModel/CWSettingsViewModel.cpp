@@ -3,14 +3,21 @@
 #include "UI/ViewModel/CWSettingsViewModel.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
+
+namespace
+{
+	// 비디오 모드 변경 확인 제한시간
+	constexpr float VideoModeConfirmationDuration = 10.0f;
+}
 
 #pragma region ViewModelLifecycle
 
 void UCWSettingsViewModel::Initialize(UObject* WorldContextObject)
 {
-	// 재초기화 시 이전 상태가 남지 않도록 먼저 정리 (중복 초기화 안전)
+	// 재초기화 시 이전 상태가 남지 않도록 먼저 정리
 	Uninitialize();
 
 	if (!IsValid(WorldContextObject))
@@ -18,18 +25,33 @@ void UCWSettingsViewModel::Initialize(UObject* WorldContextObject)
 		return;
 	}
 
-	// 10초 확인 타이머(5-3)에 쓸 World만 확보. 없어도 5-2 동작에는 지장 없음
-	BoundWorld = WorldContextObject->GetWorld();
+	UWorld* World = WorldContextObject->GetWorld();
+
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	// 비디오 모드 확인 타이머에 사용할 현재 World를 보관
+	BoundWorld = World;
 
 	bIsInitialized = true;
 }
 
 void UCWSettingsViewModel::Uninitialize()
 {
-	// 5-3에서 pending 비디오 모드 복구·타이머 정리를 여기 추가 (World Reset보다 먼저)
+	// 화면이 사라질 때 미확정 비디오 모드를 변경 전 값으로 복구
+	FinishPendingVideoMode(false, false);
+
+	// pending 상태가 아니어도 남아 있을 수 있는 타이머를 안전하게 정리
+	ClearVideoModeConfirmationTimer();
+
+	// 예외 경로에서 남을 수 있는 비디오 모드 복구값까지 정리
+	ClearVideoModeSnapshot();
 
 	bIsInitialized = false;
 
+	// 타이머와 복구값을 정리한 뒤 World 참조를 해제
 	BoundWorld.Reset();
 }
 
@@ -120,7 +142,7 @@ void UCWSettingsViewModel::RefreshSettingsData()
 
 bool UCWSettingsViewModel::RequestSetResolutionByIndex(int32 Index)
 {
-	if (!bIsInitialized)
+	if (!bIsInitialized || bIsVideoModeConfirmationPending)
 	{
 		return false;
 	}
@@ -135,12 +157,23 @@ bool UCWSettingsViewModel::RequestSetResolutionByIndex(int32 Index)
 
 	const FIntPoint NewResolution = SupportedResolutions[Index];
 
-	// 이미 같은 해상도면 불필요한 적용은 생략하고 선택값만 맞춘다
-	if (GameUserSettings->GetScreenResolution() != NewResolution)
+	// 같은 값은 적용하지 않고 정상 처리
+	if (GameUserSettings->GetScreenResolution() == NewResolution)
 	{
-		GameUserSettings->SetScreenResolution(NewResolution);
-		ApplyAndSave(GameUserSettings);
+		SetSelectedResolutionIndex(Index);
+		return true;
 	}
+
+	// 엔진의 LastConfirmed는 창 크기 변경 중 자동 갱신될 수 있으므로
+	// VM이 변경 전 비디오 모드를 별도로 보관한다
+	CaptureVideoModeSnapshot(GameUserSettings);
+
+	GameUserSettings->SetScreenResolution(NewResolution);
+
+	bIsVideoModeConfirmationPending = true;
+
+	// 확인 전에는 화면에만 임시 적용하고 저장하지 않음
+	GameUserSettings->ApplyResolutionSettings(false);
 
 	SetSelectedResolutionIndex(Index);
 
@@ -149,7 +182,7 @@ bool UCWSettingsViewModel::RequestSetResolutionByIndex(int32 Index)
 
 bool UCWSettingsViewModel::RequestSetWindowModeByIndex(int32 Index)
 {
-	if (!bIsInitialized)
+	if (!bIsInitialized || bIsVideoModeConfirmationPending)
 	{
 		return false;
 	}
@@ -164,21 +197,33 @@ bool UCWSettingsViewModel::RequestSetWindowModeByIndex(int32 Index)
 	const EWindowMode::Type NewWindowMode =
 		static_cast<EWindowMode::Type>(Index);
 
-	if (GameUserSettings->GetFullscreenMode() != NewWindowMode)
+	// 같은 값은 적용하지 않고 정상 처리
+	if (GameUserSettings->GetFullscreenMode() == NewWindowMode)
 	{
-		GameUserSettings->SetFullscreenMode(NewWindowMode);
-		ApplyAndSave(GameUserSettings);
+		SetSelectedWindowModeIndex(Index);
+		return true;
 	}
+
+	// 엔진의 LastConfirmed는 창 크기 변경 중 자동 갱신될 수 있으므로
+	// VM이 변경 전 비디오 모드를 별도로 보관한다
+	CaptureVideoModeSnapshot(GameUserSettings);
+
+	GameUserSettings->SetFullscreenMode(NewWindowMode);
+
+	bIsVideoModeConfirmationPending = true;
+
+	// 확인 전에는 화면에만 임시 적용하고 저장하지 않음
+	GameUserSettings->ApplyResolutionSettings(false);
 
 	SetSelectedWindowModeIndex(Index);
 
-	// 창 모드 변경 뒤 해상도 목록 재조회는 WBP가 다음 Tick에 RefreshSettingsData로 처리
+	// 창 모드 변경 뒤 해상도 목록 재조회는 WBP가 다음 Tick에 처리
 	return true;
 }
 
 bool UCWSettingsViewModel::RequestSetQualityByIndex(int32 Index)
 {
-	if (!bIsInitialized)
+	if (!bIsInitialized || bIsVideoModeConfirmationPending)
 	{
 		return false;
 	}
@@ -200,6 +245,127 @@ bool UCWSettingsViewModel::RequestSetQualityByIndex(int32 Index)
 	SetSelectedQualityIndex(Index);
 
 	return true;
+}
+
+#pragma endregion
+
+#pragma region VideoModeConfirmation
+
+void UCWSettingsViewModel::StartVideoModeConfirmation()
+{
+	if (!bIsInitialized || !bIsVideoModeConfirmationPending)
+	{
+		return;
+	}
+
+	UWorld* World = BoundWorld.Get();
+
+	if (!IsValid(World))
+	{
+		// 타이머를 시작할 수 없으면 미확정 설정을 즉시 복구
+		FinishPendingVideoMode(false, true);
+		return;
+	}
+
+	// 중복 타이머를 방지하고 확인 제한시간을 새로 시작
+	ClearVideoModeConfirmationTimer();
+
+	World->GetTimerManager().SetTimer(
+		VideoModeConfirmationTimerHandle,
+		this,
+		&UCWSettingsViewModel::HandleVideoModeConfirmationExpired,
+		VideoModeConfirmationDuration,
+		false
+	);
+}
+
+void UCWSettingsViewModel::ConfirmPendingVideoMode()
+{
+	FinishPendingVideoMode(true, false);
+}
+
+void UCWSettingsViewModel::CancelPendingVideoMode()
+{
+	FinishPendingVideoMode(false, false);
+}
+
+void UCWSettingsViewModel::FinishPendingVideoMode(
+	bool bConfirm,
+	bool bNotifyExpiration
+)
+{
+	// 이미 처리된 늦은 콜백은 무시
+	if (!bIsVideoModeConfirmationPending)
+	{
+		return;
+	}
+
+	ClearVideoModeConfirmationTimer();
+
+	bIsVideoModeConfirmationPending = false;
+
+	UGameUserSettings* GameUserSettings = GetGameUserSettings();
+
+	if (IsValid(GameUserSettings))
+	{
+		if (bConfirm)
+		{
+			// 현재 비디오 모드를 확정하고 영구 저장
+			GameUserSettings->ConfirmVideoMode();
+			GameUserSettings->SaveSettings();
+		}
+		else if (bHasVideoModeSnapshot)
+		{
+			// 엔진의 LastConfirmed 값 대신 VM이 저장한 변경 전 값으로 복구
+			GameUserSettings->SetScreenResolution(
+				ResolutionBeforePending
+			);
+
+			GameUserSettings->SetFullscreenMode(
+				static_cast<EWindowMode::Type>(
+					WindowModeBeforePending
+					)
+			);
+
+			GameUserSettings->ApplyResolutionSettings(false);
+
+			// 창 크기 변경 과정에서 자동 저장됐을 가능성까지 덮어쓰기 위해
+			// 복구된 값을 최종 확정하고 설정 파일에 저장
+			GameUserSettings->ConfirmVideoMode();
+			GameUserSettings->SaveSettings();
+		}
+		else
+		{
+			// 스냅샷이 없는 예외 상황에서는 엔진 기본 복구 사용
+			GameUserSettings->RevertVideoMode();
+			GameUserSettings->ApplyResolutionSettings(false);
+		}
+	}
+
+	ClearVideoModeSnapshot();
+
+	// 타임아웃에서만 WBP에 팝업 종료를 요청
+	if (bNotifyExpiration)
+	{
+		OnVideoModeConfirmationExpired.Broadcast();
+	}
+}
+
+void UCWSettingsViewModel::HandleVideoModeConfirmationExpired()
+{
+	FinishPendingVideoMode(false, true);
+}
+
+void UCWSettingsViewModel::ClearVideoModeConfirmationTimer()
+{
+	if (UWorld* World = BoundWorld.Get())
+	{
+		World->GetTimerManager().ClearTimer(
+			VideoModeConfirmationTimerHandle
+		);
+	}
+
+	VideoModeConfirmationTimerHandle.Invalidate();
 }
 
 #pragma endregion
@@ -249,21 +415,38 @@ UGameUserSettings* UCWSettingsViewModel::GetGameUserSettings() const
 	return GEngine ? GEngine->GetGameUserSettings() : nullptr;
 }
 
-void UCWSettingsViewModel::ApplyAndSave(
-	UGameUserSettings* GameUserSettings
-) const
-{
-	// ApplySettings 내부에서 해상도·창 모드를 적용하고 설정까지 저장한다
-	GameUserSettings->ApplySettings(false);
-}
-
-void UCWSettingsViewModel::ApplyQualityAndSave(
-	UGameUserSettings* GameUserSettings
-) const
+void UCWSettingsViewModel::ApplyQualityAndSave(UGameUserSettings* GameUserSettings) const
 {
 	// 품질만 적용해 해상도 적용과 분리한 뒤 저장
 	GameUserSettings->ApplyNonResolutionSettings();
 	GameUserSettings->SaveSettings();
+}
+
+void UCWSettingsViewModel::CaptureVideoModeSnapshot(
+	UGameUserSettings* GameUserSettings
+)
+{
+	if (!IsValid(GameUserSettings))
+	{
+		return;
+	}
+
+	ResolutionBeforePending =
+		GameUserSettings->GetScreenResolution();
+
+	WindowModeBeforePending =
+		static_cast<int32>(
+			GameUserSettings->GetFullscreenMode()
+			);
+
+	bHasVideoModeSnapshot = true;
+}
+
+void UCWSettingsViewModel::ClearVideoModeSnapshot()
+{
+	ResolutionBeforePending = FIntPoint::ZeroValue;
+	WindowModeBeforePending = 0;
+	bHasVideoModeSnapshot = false;
 }
 
 #pragma endregion
