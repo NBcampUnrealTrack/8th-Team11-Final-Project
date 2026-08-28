@@ -25,6 +25,8 @@ class USkeletalMeshComponent;
 class USoundBase;
 class USpringArmComponent;
 struct FInputActionValue;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
 
 /**
  * 쿼터뷰 협동 플레이어 캐릭터.
@@ -165,6 +167,9 @@ protected:
 	UFUNCTION()
 	void HandleParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
+	//체온이 바뀔 때, 머티리얼의 세기 갱신.
+	UFUNCTION()
+	void HandleTemperatureChanged(UCWTemperatureComponent* InTemperatureComponent, float Temperature, float HeatRatio);
 	/**
 	 * 도구가 아닌 상호작용 대상을 서버에 요청한다.
 	 *
@@ -349,6 +354,14 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
+
+	//체온 오라 머티리얼 지정. BP 캐릭터에서 머티리얼 인스턴스 지정해야 함. 체온 시스템 자체와는 무관함.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category= "Temperature|FX")
+	TObjectPtr<UMaterialInterface> HeatOverlayMaterial;
+
+	//HeatRatio 넣는 곳.
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HeatOverlayMID;
 
 	// 페인트 통 운반. (기획서 6-1 ~ 6-3, 6-6)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
