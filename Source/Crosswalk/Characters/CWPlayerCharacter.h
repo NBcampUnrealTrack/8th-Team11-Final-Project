@@ -11,6 +11,8 @@ class UAnimMontage;
 class UCameraComponent;
 class UNiagaraSystem;
 class UCWParryComponent;
+class UCWAsphaltGunnerComponent;
+class UCWSinkholeFallComponent;
 class UCWSupplyCarrierComponent;
 class UCWTemperatureComponent;
 class UCWToolHolderComponent;
@@ -154,6 +156,15 @@ protected:
 	void HandleHitLockChanged(UCWVehicleHitReactionComponent* HitReactionComponent, bool bHitLocked);
 
 	/**
+	 * 싱크홀 낙하 잠금이 걸리고 풀릴 때. 작업 중단을 여기서 처리한다.
+	 *
+	 * 도구 드롭은 여기서 하지 않는다. 흡입으로 위치가 바뀌기 "전" 자리에 떨어뜨려야 해서
+	 * 낙하 컴포넌트가 진입 지점을 기억한 채로 직접 처리한다.
+	 */
+	UFUNCTION()
+	void HandleFallLockChanged(UCWSinkholeFallComponent* FallComponent, bool bFallLocked);
+
+	/**
 	 * 다운 시간이 끝나 일어날 차례가 됐을 때. 서버에서만 들어온다.
 	 * 래그돌을 풀고 기상 모션을 뿌린 뒤, 모션이 끝나는 시점에 컴포넌트로 완료를 통보한다.
 	 */
@@ -195,8 +206,19 @@ private:
 	/** 상호작용을 실행한다. 서버면 바로, 클라이언트면 요청을 보낸다. */
 	void PerformInteractWith(AActor* Target);
 
-	/** 피격으로 쓰러져 있는 동안인지. 이동·작업·패링이 전부 막힌다. */
+	/** 피격으로 쓰러져 있는 동안인지. */
 	bool IsHitLocked() const;
+
+	/** 싱크홀에 빠져 있는 동안인지. */
+	bool IsFallLocked() const;
+
+	/**
+	 * 지금 조작을 받으면 안 되는 상태인지. 이동·작업·패링·사격이 전부 막힌다.
+	 *
+	 * 피격과 싱크홀은 원인이 다르지만 "조작이 막힌다" 는 결과가 같아서 한 곳으로 모은다.
+	 * 나중에 다른 잠금이 생겨도 호출부를 다시 훑을 필요가 없다.
+	 */
+	bool IsActionLocked() const;
 
 	/**
 	 * 커서 아래 월드 지점을 찾는다. 패링 방향의 기준점이 된다.
@@ -354,6 +376,14 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Temperature")
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;
+
+	// 싱크홀 낙하와 리스폰. (싱크홀 기획서 5~6절)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sinkhole")
+	TObjectPtr<UCWSinkholeFallComponent> SinkholeFallComponent;
+
+	// 아스팔트 건 사격. 도구가 클라이언트 소유가 아니라 RPC 는 이 컴포넌트에서 나간다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sinkhole")
+	TObjectPtr<UCWAsphaltGunnerComponent> AsphaltGunnerComponent;
 
 	/**
 	 * 체온 오라 머티리얼 오버라이드. 비워 두면 메시에 걸린 외곽선 머티리얼을 그대로 감싼다.

@@ -157,7 +157,15 @@ void UCWToolHolderComponent::DropHeldTool()
 	}
 
 	// 내려놓을 위치는 아직 HeldTool 이 살아 있는 동안 계산해야 한다. (트레이스에서 제외해야 하므로)
-	const FVector DropLocation = CalculateDropLocation();
+	DropHeldToolAt(CalculateDropLocation());
+}
+
+void UCWToolHolderComponent::DropHeldToolAt(const FVector& DropLocation)
+{
+	if (HeldTool == nullptr || GetOwner() == nullptr || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
 
 	ACWBaseTool* DroppedTool = HeldTool;
 	HeldTool = nullptr;

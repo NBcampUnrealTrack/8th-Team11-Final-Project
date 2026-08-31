@@ -33,6 +33,8 @@
 #include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Components/CWSupplyCarrierComponent.h"
 #include "Painting/Components/CWToolHolderComponent.h"
+#include "Sinkhole/Components/CWAsphaltGunnerComponent.h"
+#include "Sinkhole/Components/CWSinkholeFallComponent.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -77,6 +79,8 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
 	TemperatureComponent = CreateDefaultSubobject<UCWTemperatureComponent>(TEXT("TemperatureComponent"));
+	SinkholeFallComponent = CreateDefaultSubobject<UCWSinkholeFallComponent>(TEXT("SinkholeFallComponent"));
+	AsphaltGunnerComponent = CreateDefaultSubobject<UCWAsphaltGunnerComponent>(TEXT("AsphaltGunnerComponent"));
 	SupplyCarrierComponent = CreateDefaultSubobject<UCWSupplyCarrierComponent>(TEXT("SupplyCarrierComponent"));
 
 	/**
@@ -115,6 +119,7 @@ void ACWPlayerCharacter::BeginPlay()
 
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
+	SinkholeFallComponent->OnFallLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleFallLockChanged);
 
 	/**
 	 * 체온 오라. 서버 클라 양쪽다 각각 모든 캐릭터에 대해서 생성.
@@ -184,6 +189,15 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 
 	// 이미 쓰러져 있으면 컴포넌트가 알아서 무시한다. 넉백을 두 번 먹이지 않도록 여기서도 막는다.
 	if (HitReactionComponent->IsHitLocked())
+	{
+		return;
+	}
+
+	// 싱크홀에 빠져 있는 동안과 리스폰 직후 무적 구간에는 차에 치이지 않는다. (싱크홀 기획서 6-2)
+	//
+	// 무적이 없으면 스타트 지점에 차가 지나가는 순간 리스폰했을 때 연속으로 당해
+	// 플레이어가 손쓸 수 없는 상황이 된다.
+	if (SinkholeFallComponent->IsFallLocked() || SinkholeFallComponent->IsInvincible())
 	{
 		return;
 	}
@@ -665,6 +679,17 @@ FVector ACWPlayerCharacter::ResolveRecoverLocation() const
 	return GroundLocation + FVector(0.f, 0.f, CapsuleHalfHeight);
 }
 
+void ACWPlayerCharacter::HandleFallLockChanged(UCWSinkholeFallComponent* /*FallComponent*/, bool bFallLocked)
+{
+	// 작업 중단 상태는 복제되므로 서버에서만 바꾼다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	WorkerComponent->SetWorkBlocked(bFallLocked);
+}
+
 void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*HitReactionComp*/, bool bHitLocked)
 {
 	// 연출은 각 머신이 알아서 낸다. 아래 권한 검사보다 앞에 둬야 클라이언트에서도 들린다.
@@ -1050,6 +1075,16 @@ bool ACWPlayerCharacter::IsHitLocked() const
 	return HitReactionComponent->IsHitLocked();
 }
 
+bool ACWPlayerCharacter::IsFallLocked() const
+{
+	return SinkholeFallComponent->IsFallLocked();
+}
+
+bool ACWPlayerCharacter::IsActionLocked() const
+{
+	return IsHitLocked() || IsFallLocked();
+}
+
 bool ACWPlayerCharacter::IsUsingRagdollPose() const
 {
 	return bUsingRagdollPose;
@@ -1286,7 +1321,7 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 	}
 
 	// 기획서 6.2 - 쓰러져 있는 동안은 아무 행동도 할 수 없다.
-	if (IsHitLocked())
+	if (IsActionLocked())
 	{
 		return;
 	}
@@ -1307,7 +1342,7 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 
 void ACWPlayerCharacter::Interact()
 {
-	if (IsHitLocked())
+	if (IsActionLocked())
 	{
 		return;
 	}
@@ -1448,6 +1483,21 @@ void ACWPlayerCharacter::DropCan()
 
 void ACWPlayerCharacter::ChargePaint()
 {
+	if (IsActionLocked())
+	{
+		return;
+	}
+
+	// 아스팔트 건을 들고 있으면 같은 키가 수동 재장전이 된다. (싱크홀 기획서 7-5)
+	//
+	// R 은 "든 도구를 채운다" 는 자리다. 아스팔트 건은 페인트를 쓰지 않으므로
+	// 이 키가 놀고 있고, 채운다는 의미도 그대로 이어진다.
+	if (AsphaltGunnerComponent->GetHeldAsphaltGun() != nullptr)
+	{
+		AsphaltGunnerComponent->Reload();
+		return;
+	}
+
 	SupplyCarrierComponent->ChargeNearestTool();
 }
 
@@ -1458,8 +1508,19 @@ void ACWPlayerCharacter::CancelWork()
 
 void ACWPlayerCharacter::StartWork()
 {
-	if (IsHitLocked())
+	if (IsActionLocked())
 	{
+		return;
+	}
+
+	// 아스팔트 건을 들고 있으면 같은 키가 사격이 된다. (싱크홀 기획서 7-2)
+	//
+	// 별도 키를 두지 않는 이유: 좌클릭은 이미 "지금 든 도구를 쓴다" 는 자리다.
+	// 아스팔트 건은 작업 도구가 아니라 어차피 존 게이지를 올리지도 못하므로,
+	// 키를 나누면 손만 복잡해지고 얻는 게 없다.
+	if (AsphaltGunnerComponent->GetHeldAsphaltGun() != nullptr)
+	{
+		AsphaltGunnerComponent->Fire();
 		return;
 	}
 
@@ -1475,7 +1536,7 @@ void ACWPlayerCharacter::StopWork()
 
 void ACWPlayerCharacter::Parry()
 {
-	if (IsHitLocked())
+	if (IsActionLocked())
 	{
 		return;
 	}
