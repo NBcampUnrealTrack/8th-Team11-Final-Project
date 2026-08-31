@@ -7,8 +7,10 @@
 #include "CWBaseGameStateViewModel.generated.h"
 
 class AGameStateBase;
+class APlayerState;
 class APlayerController;
 class UWorld;
+struct FCWRoomPlayerInfo;
 
 UCLASS(Abstract)
 class CROSSWALK_API UCWBaseGameStateViewModel : public UMVVMViewModelBase
@@ -74,6 +76,22 @@ protected:
 private:
 	// GameState가 늦게 생성된 경우 다시 구독
 	void HandleGameStateSet(AGameStateBase* InGameState);
+
+#pragma endregion
+
+#pragma region PlayerInfoHelpers
+
+protected:
+	// 복제된 이름이 없으면 호출부가 전달한 순번으로 임시 표시 이름 생성
+	static FText MakePlayerDisplayName(
+		const APlayerState* PlayerState,
+		int32 FallbackPlayerNumber
+	);
+
+	// 플레이어 표시 목록을 PlayerId 오름차순으로 정렬
+	static void SortPlayerInfosByPlayerId(
+		TArray<FCWRoomPlayerInfo>& PlayerInfos
+	);
 
 #pragma endregion
 

@@ -105,28 +105,11 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 
 		++ValidPlayerIndex;
 
-		const FString PlayerName =
-			PlayerState->GetPlayerName();
-
-		FText DisplayName;
-
-		// 이름 복제가 아직 끝나지 않았으면 임시 이름 표시
-		if (PlayerName.IsEmpty())
-		{
-			DisplayName = FText::Format(
-				NSLOCTEXT(
-					"CWInGamePlayerUI",
-					"DefaultPlayerName",
-					"Player {0}"
-				),
-				FText::AsNumber(ValidPlayerIndex)
-			);
-		}
-		else
-		{
-			DisplayName =
-				FText::FromString(PlayerName);
-		}
+		// 이름 복제 전이면 목록 내 유효 순번으로 임시 이름 생성 (공용 헬퍼)
+		const FText DisplayName = MakePlayerDisplayName(
+			PlayerState,
+			ValidPlayerIndex
+		);
 
 		const APlayerController* PlayerController =
 			PlayerState->GetPlayerController();
@@ -171,14 +154,8 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		);
 	}
 
-	// PlayerArray 복제 도착 순서는 화면마다 다르므로 PlayerId로 정렬
-	NewRemotePlayers.Sort(
-		[](const FCWRoomPlayerInfo& Left,
-			const FCWRoomPlayerInfo& Right)
-		{
-			return Left.PlayerId < Right.PlayerId;
-		}
-	);
+	// PlayerArray 복제 도착 순서는 화면마다 다르므로 PlayerId로 정렬 (공용 헬퍼)
+	SortPlayerInfosByPlayerId(NewRemotePlayers);
 
 	SetLocalPlayerName(NewLocalPlayerName);
 	SetRemotePlayers(NewRemotePlayers);

@@ -118,28 +118,11 @@ void UCWRoomViewModel::RefreshRoomState()
 		PlayerInfo.PlayerId =
 			PlayerState->GetPlayerId();
 
-		const FString PlayerName =
-			PlayerState->GetPlayerName();
-
-		// 이름 복제가 아직 끝나지 않았으면 임시 플레이어 이름 사용
-		if (PlayerName.IsEmpty())
-		{
-			PlayerInfo.PlayerName = FText::Format(
-				NSLOCTEXT(
-					"CWRoomUI",
-					"DefaultPlayerName",
-					"Player {0}"
-				),
-				FText::AsNumber(
-					NewRoomPlayers.Num() + 1
-				)
-			);
-		}
-		else
-		{
-			PlayerInfo.PlayerName =
-				FText::FromString(PlayerName);
-		}
+		// 이름 복제 전이면 목록 내 유효 순번으로 임시 이름 생성 (공용 헬퍼)
+		PlayerInfo.PlayerName = MakePlayerDisplayName(
+			PlayerState,
+			NewRoomPlayers.Num() + 1
+		);
 
 		PlayerInfo.bIsReady =
 			CWPlayerState->IsReady();
@@ -163,14 +146,8 @@ void UCWRoomViewModel::RefreshRoomState()
 		);
 	}
 
-	// PlayerArray 복제 순서는 화면마다 다르므로 서버가 부여한 번호로 정렬
-	NewRoomPlayers.Sort(
-		[](const FCWRoomPlayerInfo& Left,
-			const FCWRoomPlayerInfo& Right)
-		{
-			return Left.PlayerId < Right.PlayerId;
-		}
-	);
+	// PlayerArray 복제 순서는 화면마다 다르므로 서버가 부여한 번호로 정렬 (공용 헬퍼)
+	SortPlayerInfosByPlayerId(NewRoomPlayers);
 
 	const int32 NewCurrentPlayerCount =
 		NewRoomPlayers.Num();

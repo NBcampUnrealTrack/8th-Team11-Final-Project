@@ -1,11 +1,12 @@
 ﻿// CWBaseGameStateViewModel.cpp
 
 #include "UI/ViewModel/CWBaseGameStateViewModel.h"
-
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
+#include "Data/Structs/CWRoomPlayerInfo.h"
+#include "GameFramework/PlayerState.h"
 
 #pragma region ViewModelLifecycle
 
@@ -148,6 +149,47 @@ void UCWBaseGameStateViewModel::HandleGameStateSet(AGameStateBase* InGameState)
 {
 	// 파생이 지정한 GameState 타입 확인과 바인딩을 공통 처리
 	BindGameState(InGameState);
+}
+
+#pragma endregion
+
+#pragma region PlayerInfoHelpers
+
+FText UCWBaseGameStateViewModel::MakePlayerDisplayName(
+	const APlayerState* PlayerState,
+	int32 FallbackPlayerNumber
+)
+{
+	if (IsValid(PlayerState))
+	{
+		const FString PlayerName = PlayerState->GetPlayerName();
+
+		// 이름 복제가 끝났으면 실제 이름을 사용
+		if (!PlayerName.IsEmpty())
+		{
+			return FText::FromString(PlayerName);
+		}
+	}
+
+	// 아직 이름 복제 전이면 호출부가 전달한 표시 순번으로 임시 이름 생성
+	return FText::Format(
+		NSLOCTEXT("CWPlayerUI", "DefaultPlayerName", "Player {0}"),
+		FText::AsNumber(FallbackPlayerNumber)
+	);
+}
+
+void UCWBaseGameStateViewModel::SortPlayerInfosByPlayerId(
+	TArray<FCWRoomPlayerInfo>& PlayerInfos
+)
+{
+	// PlayerArray 복제 순서는 화면마다 다르므로 서버가 부여한 번호로 정렬
+	PlayerInfos.Sort(
+		[](const FCWRoomPlayerInfo& Left,
+			const FCWRoomPlayerInfo& Right)
+		{
+			return Left.PlayerId < Right.PlayerId;
+		}
+	);
 }
 
 #pragma endregion
