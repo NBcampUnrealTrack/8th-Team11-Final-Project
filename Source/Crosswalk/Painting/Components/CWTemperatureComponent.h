@@ -109,7 +109,33 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Temperature")
 	bool IsResting() const { return bResting; }
 
+	/**
+	 * 체온과 무관한 외부 요인으로 이동속도에 하한을 건다. 서버에서만 유효하다.
+	 * (싱크홀 기획서 7-9 - 바닥에 깔린 아스팔트를 밟았을 때)
+	 *
+	 * 이 컴포넌트가 MaxWalkSpeed 의 단독 소유자라 외부에서 직접 넣으면 다음 틱에 덮인다.
+	 * 그래서 속도를 깎는 모든 요인은 이 입구를 통해 들어온다.
+	 *
+	 * 이미 슬로우가 걸려 있는 동안의 호출은 무시된다. 밟고 서 있는 내내 타이머가
+	 * 갱신되면 언제 풀리는지 예측할 수 없어서, 한 번 걸리면 그 구간은 끝까지 간다.
+	 * 지속시간이 끝난 뒤 다시 부르면 그때 새로 걸린다.
+	 *
+	 * @param SlowFactor 이동속도에 곱할 값. MinMoveSpeedFactor 를 넣으면 최저 이속이 된다.
+	 * @param Duration   지속시간(초)
+	 */
+	void ApplyExternalSlow(float SlowFactor, float Duration);
+
+	UFUNCTION(BlueprintPure, Category = "Temperature")
+	bool IsExternallySlowed() const { return bExternallySlowed; }
+
+	/** 최저 이속 계수. 외부 슬로우가 "최저 이속"을 걸 때 이 값을 넘겨받는다. */
+	UFUNCTION(BlueprintPure, Category = "Temperature")
+	float GetMinMoveSpeedFactor() const { return MinMoveSpeedFactor; }
+
 private:
+	/** 외부 슬로우 지속시간이 끝났을 때. 여기서부터 다시 걸릴 수 있다. */
+	void ClearExternalSlow();
+
 	/** 서버에서 체온을 굴린다. 상승은 AddWorkHeat 가 따로 넣고, 여기서는 하락만 한다. */
 	void SimulateTemperature(float DeltaTime);
 
@@ -205,7 +231,21 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Temperature")
 	bool bResting = false;
 
+	// 외부 요인으로 인한 슬로우가 걸려 있는가. (아스팔트 등)
+	//
+	// ApplyMoveSpeed 는 클라이언트에서도 각자 돌기 때문에 이 값을 리플리케이트하지 않으면
+	// 서버에서만 느려지고 클라이언트 화면에서는 평소 속도로 움직인다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Temperature")
+	bool bExternallySlowed = false;
+
+	// 외부 슬로우가 걸렸을 때 이동속도에 곱할 값. 슬로우가 없으면 1 이다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Temperature")
+	float ExternalSlowFactor = 1.f;
+
 private:
+	// 외부 슬로우 해제 타이머. 서버에서만 돈다.
+	FTimerHandle ExternalSlowTimerHandle;
+
 	// 이동속도의 기준값. BeginPlay 에서 무브먼트의 초기값을 읽어 둔다.
 	// 캐릭터 BP 에서 다른 값을 넣었어도 그 값이 기준이 된다.
 	float BaseWalkSpeed = 0.f;

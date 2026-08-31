@@ -18,6 +18,8 @@ void UCWTemperatureComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 	DOREPLIFETIME(UCWTemperatureComponent, CurrentTemperature);
 	DOREPLIFETIME(UCWTemperatureComponent, bResting);
+	DOREPLIFETIME(UCWTemperatureComponent, bExternallySlowed);
+	DOREPLIFETIME(UCWTemperatureComponent, ExternalSlowFactor);
 }
 
 void UCWTemperatureComponent::BeginPlay()
@@ -123,7 +125,49 @@ void UCWTemperatureComponent::ApplyMoveSpeed()
 		return;
 	}
 
-	MovementComponent->MaxWalkSpeed = BaseWalkSpeed * GetMoveSpeedFactor();
+	// 체온 계수와 외부 슬로우 계수 중 더 느린 쪽을 적용한다.
+	//
+	// 조건 분기 대신 Min 으로 두는 이유: 언제나 같은 식으로 계산되므로 밸런싱으로 체온
+	// 곡선이 바뀌어도 이 로직을 다시 손댈 필요가 없다. 또한 이미 과열로 최저 이속인
+	// 플레이어에게 슬로우가 중첩되지 않는다. ("최저 이속" 정의상 그 아래는 없다)
+	MovementComponent->MaxWalkSpeed = BaseWalkSpeed * FMath::Min(GetMoveSpeedFactor(), ExternalSlowFactor);
+}
+
+void UCWTemperatureComponent::ApplyExternalSlow(float SlowFactor, float Duration)
+{
+	const AActor* Owner = GetOwner();
+	if (Owner == nullptr || !Owner->HasAuthority())
+	{
+		return;
+	}
+
+	// 이미 걸려 있는 동안의 재요청은 무시한다. 밟고 서 있는 내내 갱신되면
+	// 해제 시점을 예측할 수 없어서, 한 번 걸린 구간은 끝까지 가게 둔다.
+	if (bExternallySlowed)
+	{
+		return;
+	}
+
+	if (Duration <= 0.f)
+	{
+		return;
+	}
+
+	bExternallySlowed = true;
+	ExternalSlowFactor = FMath::Clamp(SlowFactor, 0.f, 1.f);
+
+	GetWorld()->GetTimerManager().SetTimer(
+		ExternalSlowTimerHandle,
+		this,
+		&UCWTemperatureComponent::ClearExternalSlow,
+		Duration,
+		false);
+}
+
+void UCWTemperatureComponent::ClearExternalSlow()
+{
+	bExternallySlowed = false;
+	ExternalSlowFactor = 1.f;
 }
 
 void UCWTemperatureComponent::BroadcastIfChanged()

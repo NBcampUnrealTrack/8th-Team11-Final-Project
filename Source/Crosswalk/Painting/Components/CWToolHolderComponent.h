@@ -60,6 +60,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tool")
 	void DropHeldTool();
 
+	/**
+	 * 들고 있는 도구를 지정한 위치에 내려놓는다. 서버에서만 유효하다.
+	 *
+	 * 캐릭터가 이미 옮겨진 뒤에 떨어뜨려야 하는 경우에 쓴다. 싱크홀에 빠질 때가 그렇다.
+	 * 구멍 중앙으로 끌려간 다음 앞쪽 바닥에 놓으면 도구가 구멍 안에 들어가 회수할 수 없다.
+	 * 그래서 빠지기 직전 위치를 기억해 두었다가 여기로 넘긴다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Tool")
+	void DropHeldToolAt(const FVector& DropLocation);
+
 	UFUNCTION(BlueprintPure, Category = "Tool")
 	ACWBaseTool* GetHeldTool() const { return HeldTool; }
 
