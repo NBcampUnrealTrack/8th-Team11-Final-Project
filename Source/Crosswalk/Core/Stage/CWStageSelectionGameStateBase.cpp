@@ -5,28 +5,18 @@
 
 #pragma region GameStateLifecycle
 
-void ACWStageSelectionGameStateBase::GetLifetimeReplicatedProps(
-	TArray<FLifetimeProperty>& OutLifetimeProps
-) const
+void ACWStageSelectionGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	// AGameStateBase가 등록하는 기본 복제 프로퍼티를 먼저 유지함
 	// RoomGameState와 CWGameState도 각자의 override에서 Super를 호출하므로
 	// 공용 선택 상태와 파생 클래스 상태가 모두 복제됨
-	Super::GetLifetimeReplicatedProps(
-		OutLifetimeProps
-	);
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	// 서버가 결정한 선택창 열림 상태를 모든 클라이언트에 공유함
-	DOREPLIFETIME(
-		ACWStageSelectionGameStateBase,
-		bIsStageSelectionOpen
-	);
+	DOREPLIFETIME(ACWStageSelectionGameStateBase, bIsStageSelectionOpen);
 
 	// 호스트가 현재 선택한 StageId를 모든 클라이언트에 공유함
-	DOREPLIFETIME(
-		ACWStageSelectionGameStateBase,
-		SelectedStageId
-	);
+	DOREPLIFETIME(ACWStageSelectionGameStateBase, SelectedStageId);
 }
 
 #pragma endregion

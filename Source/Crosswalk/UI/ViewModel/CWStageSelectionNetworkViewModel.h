@@ -15,8 +15,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(
 );
 
 UCLASS(BlueprintType)
-class CROSSWALK_API UCWStageSelectionNetworkViewModel
-	: public UCWBaseGameStateViewModel
+class CROSSWALK_API UCWStageSelectionNetworkViewModel : public UCWBaseGameStateViewModel
 {
 	GENERATED_BODY()
 
@@ -100,14 +99,10 @@ protected:
 	virtual UClass* GetGameStateClass() const override;
 
 	// 공용 GameState의 선택 상태 변경 이벤트를 구독함
-	virtual void SubscribeToGameState(
-		AGameStateBase* InGameState
-	) override;
+	virtual void SubscribeToGameState(AGameStateBase* InGameState) override;
 
 	// 공용 GameState의 선택 상태 변경 이벤트 구독을 해제함
-	virtual void UnsubscribeFromGameState(
-		AGameStateBase* InGameState
-	) override;
+	virtual void UnsubscribeFromGameState(AGameStateBase* InGameState) override;
 
 	// 바인딩 직후 현재 선택 상태를 즉시 반영함
 	virtual void RefreshFromGameState() override;
@@ -170,8 +165,7 @@ public:
 		BlueprintAssignable,
 		Category = "CW|UI|StageSelection"
 	)
-	FCWOnStageSelectionNetworkChangedSignature
-		OnStageSelectionChanged;
+	FCWOnStageSelectionNetworkChangedSignature OnStageSelectionChanged;
 
 #pragma endregion
 };

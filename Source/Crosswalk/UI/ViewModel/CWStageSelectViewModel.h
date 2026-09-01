@@ -60,17 +60,6 @@ public:
 
 #pragma endregion
 
-#pragma region Events
-
-public:
-	// 선택 확정 시 발행
-	// 로컬 단계: 위젯이 팝업 닫기
-	// 서버 단계: 위젯이 Owning PlayerController의 스테이지 선택 요청 API 호출
-	UPROPERTY(BlueprintAssignable, Category = "CW|UI|Stage")
-	FCWOnStageConfirmedSignature OnStageConfirmed;
-
-#pragma endregion
-
 #pragma region State
 
 private:
@@ -91,6 +80,17 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	int32 SelectedIndex = INDEX_NONE;
+
+#pragma endregion
+
+#pragma region Events
+
+public:
+	// 선택 확정 시 발행
+	// 로컬 단계: 위젯이 팝업 닫기
+	// 서버 단계: 위젯이 Owning PlayerController의 스테이지 선택 요청 API 호출
+	UPROPERTY(BlueprintAssignable, Category = "CW|UI|Stage")
+	FCWOnStageConfirmedSignature OnStageConfirmed;
 
 #pragma endregion
 };

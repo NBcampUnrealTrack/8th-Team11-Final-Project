@@ -7,6 +7,8 @@
 #include "Data/Structs/CWStageInfo.h"
 #include "CWStageCatalog.generated.h"
 
+class FDataValidationContext;
+
 // 선택 가능한 스테이지 전체 목록 (DataAsset 저작)
 // UI(스테이지 선택 팝업)와 서버(ServerTravel 대상 맵 조회)가 같은 애셋을 참조함
 // 배열 순서가 곧 목록 표시 순서임. 선택값은 배열 인덱스가 아니라 StageId 로 주고받으므로
@@ -21,9 +23,7 @@ class CROSSWALK_API UCWStageCatalog : public UPrimaryDataAsset
 public:
 #if WITH_EDITOR
 	// 저장 시 빈/중복 StageId 와 GameplayMap 누락을 검출함
-	virtual EDataValidationResult IsDataValid(
-		class FDataValidationContext& Context
-	) const override;
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif
 
 #pragma endregion

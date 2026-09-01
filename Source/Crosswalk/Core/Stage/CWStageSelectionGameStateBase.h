@@ -17,9 +17,7 @@ class CROSSWALK_API ACWStageSelectionGameStateBase : public AGameStateBase
 #pragma region GameStateLifecycle
 
 public:
-	virtual void GetLifetimeReplicatedProps(
-		TArray<FLifetimeProperty>& OutLifetimeProps
-	) const override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 #pragma endregion
 
@@ -67,8 +65,7 @@ private:
 #pragma region StageSelectionEvents
 
 public:
-	FCWOnStageSelectionStateChangedSignature
-		OnStageSelectionStateChanged;
+	FCWOnStageSelectionStateChangedSignature OnStageSelectionStateChanged;
 
 #pragma endregion
 };

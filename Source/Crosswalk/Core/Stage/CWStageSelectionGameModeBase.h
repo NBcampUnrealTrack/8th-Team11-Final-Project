@@ -10,8 +10,7 @@ class ACWStageSelectionGameStateBase;
 class UCWStageCatalog;
 
 UCLASS(Abstract)
-class CROSSWALK_API ACWStageSelectionGameModeBase
-	: public AGameModeBase
+class CROSSWALK_API ACWStageSelectionGameModeBase : public AGameModeBase
 {
 	GENERATED_BODY()
 
@@ -54,8 +53,7 @@ protected:
 
 private:
 	// 현재 월드의 공용 스테이지 선택 GameState를 반환함
-	ACWStageSelectionGameStateBase*
-		GetStageSelectionGameState() const;
+	ACWStageSelectionGameStateBase* GetStageSelectionGameState() const;
 
 #pragma endregion
 

@@ -25,9 +25,7 @@ const FCWStageInfo* UCWStageCatalog::FindStageById(FName StageId) const
 }
 
 #if WITH_EDITOR
-EDataValidationResult UCWStageCatalog::IsDataValid(
-	FDataValidationContext& Context
-) const
+EDataValidationResult UCWStageCatalog::IsDataValid(FDataValidationContext& Context) const
 {
 	EDataValidationResult Result = Super::IsDataValid(Context);
 

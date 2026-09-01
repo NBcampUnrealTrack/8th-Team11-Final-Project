@@ -10,9 +10,6 @@
 class ACWRoomGameState;
 class AGameStateBase;
 
-// 스테이지 선택창 상태 변경을 위젯에 알림 (로컬 팝업 생성·닫기용)
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWOnRoomStageSelectionChangedSignature);
-
 UCLASS(BlueprintType)
 class CROSSWALK_API UCWRoomViewModel : public UCWBaseGameStateViewModel
 {
@@ -24,22 +21,6 @@ public:
 	// 로컬 플레이어의 준비 상태를 반대로 변경
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
 	void RequestToggleReady();
-
-	// 호스트가 전원에게 스테이지 선택창 열기를 요청
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	bool RequestOpenStageSelection();
-
-	// 호스트가 선택한 스테이지로 최종 시작을 요청
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	bool RequestStartSelectedStage(FName StageId);
-
-	// 호스트가 현재 선택 스테이지를 변경 요청 (실시간 공유)
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	bool RequestSelectStage(FName StageId);
-
-	// 호스트가 확정 없이 선택창 닫기를 요청
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	bool RequestCloseStageSelection();
 
 #pragma endregion
 
@@ -116,26 +97,9 @@ public:
 		return bShouldShowStartCondition;
 	}
 
-	// 전원에게 스테이지 선택창을 표시해야 하는지 반환
-	UFUNCTION(BlueprintPure, Category = "CW|UI|Room")
-	bool GetIsStageSelectionOpen() const
-	{
-		return bIsStageSelectionOpen;
-	}
-
-	// 서버가 확정한 스테이지 식별자 반환 (없으면 NAME_None)
-	UFUNCTION(BlueprintPure, Category = "CW|UI|Room")
-	FName GetSelectedStageId() const
-	{
-		return SelectedStageId;
-	}
-
 private:
 	// 현재 GameState의 플레이어 상태를 MVVM 프로퍼티로 변환
 	void RefreshRoomState();
-
-	// 현재 RoomGameState 의 선택창 상태를 두 값 함께 반영
-	void RefreshStageSelectionState();
 
 #pragma endregion
 
@@ -162,19 +126,13 @@ private:
 	UFUNCTION()
 	void HandleRoomPlayersChanged();
 
-	// 스테이지 선택 상태(열림·확정) 변경 처리
-	UFUNCTION()
-	void HandleStageSelectionStateChanged();
-
 #pragma endregion
 
 #pragma region ViewModelSetters
 
 private:
 	// 플레이어 표시 목록 저장 후 FieldNotify 발생
-	void SetRoomPlayers(
-		const TArray<FCWRoomPlayerInfo>& InRoomPlayers
-	);
+	void SetRoomPlayers(const TArray<FCWRoomPlayerInfo>& InRoomPlayers);
 
 	// 현재 방 플레이어 수 저장 후 FieldNotify 발생
 	void SetCurrentPlayerCount(int32 InPlayerCount);
@@ -202,12 +160,6 @@ private:
 
 	// 최소 인원 안내 문구 표시 여부 저장 후 FieldNotify 발생
 	void SetShouldShowStartCondition(bool bInShouldShow);
-
-	// 스테이지 선택창 열림 여부 저장 후 FieldNotify 발생
-	void SetIsStageSelectionOpen(bool bInOpen);
-
-	// 확정 스테이지 식별자 저장 후 FieldNotify 발생
-	void SetSelectedStageId(FName InStageId);
 
 #pragma endregion
 
@@ -303,33 +255,6 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	bool bShouldShowStartCondition = false;
-
-	// 전원에게 스테이지 선택창을 표시해야 하는지
-	UPROPERTY(
-		BlueprintReadOnly,
-		FieldNotify,
-		Category = "CW|UI|Room",
-		meta = (AllowPrivateAccess = "true")
-	)
-	bool bIsStageSelectionOpen = false;
-
-	// 서버가 확정한 스테이지 식별자
-	UPROPERTY(
-		BlueprintReadOnly,
-		FieldNotify,
-		Category = "CW|UI|Room",
-		meta = (AllowPrivateAccess = "true")
-	)
-	FName SelectedStageId = NAME_None;
-
-#pragma endregion
-
-#pragma region RoomUIEvents
-
-public:
-	// 선택창 열림·확정 상태가 바뀌면 위젯이 팝업을 생성·닫도록 알림
-	UPROPERTY(BlueprintAssignable, Category = "CW|UI|Room")
-	FCWOnRoomStageSelectionChangedSignature OnStageSelectionChanged;
 
 #pragma endregion
 };

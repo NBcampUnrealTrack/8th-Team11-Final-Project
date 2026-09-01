@@ -19,9 +19,7 @@ bool UCWStageSelectionNetworkViewModel::RequestOpenStageSelection()
 
 	// GameMode는 서버에만 존재하므로 Listen Server 호스트에서만 유효함
 	ACWStageSelectionGameModeBase* StageSelectionGameMode =
-		World->GetAuthGameMode<
-		ACWStageSelectionGameModeBase
-		>();
+		World->GetAuthGameMode<ACWStageSelectionGameModeBase>();
 
 	if (!IsValid(StageSelectionGameMode))
 	{
@@ -31,9 +29,7 @@ bool UCWStageSelectionNetworkViewModel::RequestOpenStageSelection()
 	return StageSelectionGameMode->BeginStageSelection();
 }
 
-bool UCWStageSelectionNetworkViewModel::RequestSelectStage(
-	FName StageId
-)
+bool UCWStageSelectionNetworkViewModel::RequestSelectStage(FName StageId)
 {
 	UWorld* World = GetBoundWorld();
 
@@ -43,9 +39,7 @@ bool UCWStageSelectionNetworkViewModel::RequestSelectStage(
 	}
 
 	ACWStageSelectionGameModeBase* StageSelectionGameMode =
-		World->GetAuthGameMode<
-		ACWStageSelectionGameModeBase
-		>();
+		World->GetAuthGameMode<ACWStageSelectionGameModeBase>();
 
 	if (!IsValid(StageSelectionGameMode))
 	{
@@ -65,9 +59,7 @@ bool UCWStageSelectionNetworkViewModel::RequestCloseStageSelection()
 	}
 
 	ACWStageSelectionGameModeBase* StageSelectionGameMode =
-		World->GetAuthGameMode<
-		ACWStageSelectionGameModeBase
-		>();
+		World->GetAuthGameMode<ACWStageSelectionGameModeBase>();
 
 	if (!IsValid(StageSelectionGameMode))
 	{
@@ -77,9 +69,7 @@ bool UCWStageSelectionNetworkViewModel::RequestCloseStageSelection()
 	return StageSelectionGameMode->CancelStageSelection();
 }
 
-bool UCWStageSelectionNetworkViewModel::RequestStartSelectedStage(
-	FName StageId
-)
+bool UCWStageSelectionNetworkViewModel::RequestStartSelectedStage(FName StageId)
 {
 	UWorld* World = GetBoundWorld();
 
@@ -89,9 +79,7 @@ bool UCWStageSelectionNetworkViewModel::RequestStartSelectedStage(
 	}
 
 	ACWStageSelectionGameModeBase* StageSelectionGameMode =
-		World->GetAuthGameMode<
-		ACWStageSelectionGameModeBase
-		>();
+		World->GetAuthGameMode<ACWStageSelectionGameModeBase>();
 
 	if (!IsValid(StageSelectionGameMode))
 	{
@@ -107,11 +95,8 @@ bool UCWStageSelectionNetworkViewModel::RequestStartSelectedStage(
 
 void UCWStageSelectionNetworkViewModel::RefreshStageSelectionState()
 {
-	const ACWStageSelectionGameStateBase*
-		StageSelectionGameState =
-		Cast<ACWStageSelectionGameStateBase>(
-			GetBoundGameState()
-		);
+	const ACWStageSelectionGameStateBase* StageSelectionGameState =
+		Cast<ACWStageSelectionGameStateBase>(GetBoundGameState());
 
 	if (IsValid(StageSelectionGameState))
 	{
@@ -152,11 +137,8 @@ UClass* UCWStageSelectionNetworkViewModel::GetGameStateClass() const
 
 void UCWStageSelectionNetworkViewModel::SubscribeToGameState(AGameStateBase* InGameState)
 {
-	ACWStageSelectionGameStateBase*
-		StageSelectionGameState =
-		Cast<ACWStageSelectionGameStateBase>(
-			InGameState
-		);
+	ACWStageSelectionGameStateBase* StageSelectionGameState =
+		Cast<ACWStageSelectionGameStateBase>(InGameState);
 
 	if (!IsValid(StageSelectionGameState))
 	{
@@ -164,31 +146,23 @@ void UCWStageSelectionNetworkViewModel::SubscribeToGameState(AGameStateBase* InG
 	}
 
 	// GameState의 네이티브 이벤트를 구독함
-	StageSelectionGameState
-		->OnStageSelectionStateChanged
-		.AddUObject(
-			this,
-			&UCWStageSelectionNetworkViewModel::
-			HandleStageSelectionStateChanged
-		);
+	StageSelectionGameState->OnStageSelectionStateChanged.AddUObject(
+		this,
+		&UCWStageSelectionNetworkViewModel::HandleStageSelectionStateChanged
+	);
 }
 
 void UCWStageSelectionNetworkViewModel::UnsubscribeFromGameState(AGameStateBase* InGameState)
 {
-	ACWStageSelectionGameStateBase*
-		StageSelectionGameState =
-		Cast<ACWStageSelectionGameStateBase>(
-			InGameState
-		);
+	ACWStageSelectionGameStateBase* StageSelectionGameState =
+		Cast<ACWStageSelectionGameStateBase>(InGameState);
 
 	if (!IsValid(StageSelectionGameState))
 	{
 		return;
 	}
 
-	StageSelectionGameState
-		->OnStageSelectionStateChanged
-		.RemoveAll(this);
+	StageSelectionGameState->OnStageSelectionStateChanged.RemoveAll(this);
 }
 
 void UCWStageSelectionNetworkViewModel::RefreshFromGameState()

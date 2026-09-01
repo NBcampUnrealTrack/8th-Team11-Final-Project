@@ -83,9 +83,7 @@ bool ACWStageSelectionGameModeBase::BeginStageSelection()
 	return true;
 }
 
-bool ACWStageSelectionGameModeBase::SelectStage(
-	FName StageId
-)
+bool ACWStageSelectionGameModeBase::SelectStage(FName StageId)
 {
 	// 현재 선택은 서버에서만 변경할 수 있음
 	if (!HasAuthority())
@@ -175,9 +173,7 @@ bool ACWStageSelectionGameModeBase::CancelStageSelection()
 	return true;
 }
 
-bool ACWStageSelectionGameModeBase::TryStartGame(
-	FName StageId
-)
+bool ACWStageSelectionGameModeBase::TryStartGame(FName StageId)
 {
 	// 실제 맵 이동은 서버에서만 실행할 수 있음
 	if (!HasAuthority())
