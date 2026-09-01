@@ -4,7 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameStateBase.h"
+#include "Core/Stage/CWStageSelectionGameStateBase.h"
 #include "Data/Enums/CWStageTypes.h"
 #include "Data/Structs/CWStageObjective.h"
 #include "CWGameState.generated.h"
@@ -32,7 +32,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWOnPlayerListChangedSignature);
  * (게임모드는 서버에만 존재해서 클라이언트 HUD 가 참조할 수 없다)
  */
 UCLASS()
-class CROSSWALK_API ACWGameState : public AGameStateBase
+class CROSSWALK_API ACWGameState : public ACWStageSelectionGameStateBase
 {
 	GENERATED_BODY()
 

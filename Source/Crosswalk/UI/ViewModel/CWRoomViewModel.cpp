@@ -37,7 +37,7 @@ void UCWRoomViewModel::RequestToggleReady()
 	);
 }
 
-bool UCWRoomViewModel::RequestStartGame()
+bool UCWRoomViewModel::RequestOpenStageSelection()
 {
 	UWorld* World = GetBoundWorld();
 
@@ -46,7 +46,7 @@ bool UCWRoomViewModel::RequestStartGame()
 		return false;
 	}
 
-	// RoomGameMode는 서버에만 존재하므로 클라이언트에서는 null 반환
+	// RoomGameMode 는 서버에만 존재 → 호스트에서만 성공
 	ACWRoomGameMode* RoomGameMode =
 		World->GetAuthGameMode<ACWRoomGameMode>();
 
@@ -55,8 +55,72 @@ bool UCWRoomViewModel::RequestStartGame()
 		return false;
 	}
 
-	// 최종 시작 조건과 중복 트래블 검사는 GameMode에서 수행
-	return RoomGameMode->TryStartGame();
+	// 전원에게 스테이지 선택창을 여는 요청
+	return RoomGameMode->BeginStageSelection();
+}
+
+bool UCWRoomViewModel::RequestStartSelectedStage(FName StageId)
+{
+	UWorld* World = GetBoundWorld();
+
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	// RoomGameMode 는 서버에만 존재 → 호스트에서만 성공
+	ACWRoomGameMode* RoomGameMode =
+		World->GetAuthGameMode<ACWRoomGameMode>();
+
+	if (!IsValid(RoomGameMode))
+	{
+		return false;
+	}
+
+	// 호스트가 선택한 스테이지로 서버에 최종 시작 요청
+	return RoomGameMode->TryStartGame(StageId);
+}
+
+bool UCWRoomViewModel::RequestSelectStage(FName StageId)
+{
+	UWorld* World = GetBoundWorld();
+
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	ACWRoomGameMode* RoomGameMode =
+		World->GetAuthGameMode<ACWRoomGameMode>();
+
+	if (!IsValid(RoomGameMode))
+	{
+		return false;
+	}
+
+	// 서버에 현재 선택 변경 요청 (클라는 GameMode 없어 무효 = 호스트 전용)
+	return RoomGameMode->SelectStage(StageId);
+}
+
+bool UCWRoomViewModel::RequestCloseStageSelection()
+{
+	UWorld* World = GetBoundWorld();
+
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	ACWRoomGameMode* RoomGameMode =
+		World->GetAuthGameMode<ACWRoomGameMode>();
+
+	if (!IsValid(RoomGameMode))
+	{
+		return false;
+	}
+
+	// 서버에 선택창 닫기 요청
+	return RoomGameMode->CancelStageSelection();
 }
 
 #pragma endregion
@@ -228,6 +292,12 @@ void UCWRoomViewModel::SubscribeToGameState(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
+
+	// 스테이지 선택창 열림·확정 상태 변경 알림 구독
+	RoomGameState->OnStageSelectionStateChanged.AddUObject(
+		this,
+		&UCWRoomViewModel::HandleStageSelectionStateChanged
+	);
 }
 
 void UCWRoomViewModel::UnsubscribeFromGameState(
@@ -247,12 +317,17 @@ void UCWRoomViewModel::UnsubscribeFromGameState(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
+
+	RoomGameState->OnStageSelectionStateChanged.RemoveAll(this);
 }
 
 void UCWRoomViewModel::RefreshFromGameState()
 {
 	// OnRep 또는 AddPlayerState 알림이 지난 경우를 위해 즉시 한 번 읽음
 	RefreshRoomState();
+
+	// 바인딩·재접속 시점의 선택창 상태도 즉시 반영 (OnRep 이 구독 전 지난 경우 방어)
+	RefreshStageSelectionState();
 }
 
 void UCWRoomViewModel::ResetViewModelState()
@@ -268,12 +343,44 @@ void UCWRoomViewModel::ResetViewModelState()
 	SetReadyCountText(FText::GetEmpty());
 	SetStartConditionText(FText::GetEmpty());
 	SetShouldShowStartCondition(false);
+
+	// 선택창 상태도 초기화 (이전 방 상태가 다음 화면에 남지 않도록)
+	SetIsStageSelectionOpen(false);
+	SetSelectedStageId(NAME_None);
 }
 
 void UCWRoomViewModel::HandleRoomPlayersChanged()
 {
 	// 준비 상태나 플레이어 목록이 바뀌면 화면 데이터를 다시 계산
 	RefreshRoomState();
+}
+
+void UCWRoomViewModel::HandleStageSelectionStateChanged()
+{
+	// 열림·확정 중 무엇이 바뀌든 두 값을 통째로 다시 읽음 (알림 2회에도 일관)
+	RefreshStageSelectionState();
+}
+
+void UCWRoomViewModel::RefreshStageSelectionState()
+{
+	const ACWRoomGameState* RoomGameState =
+		Cast<ACWRoomGameState>(GetBoundGameState());
+
+	if (IsValid(RoomGameState))
+	{
+		// 두 값을 항상 함께 재조회
+		SetIsStageSelectionOpen(RoomGameState->IsStageSelectionOpen());
+		SetSelectedStageId(RoomGameState->GetSelectedStageId());
+	}
+	else
+	{
+		// GameState 없으면 닫힘·선택없음으로
+		SetIsStageSelectionOpen(false);
+		SetSelectedStageId(NAME_None);
+	}
+
+	// 두 값 반영 후, 위젯이 팝업 생성·닫기를 처리하도록 한 번 알림
+	OnStageSelectionChanged.Broadcast();
 }
 
 #pragma endregion
@@ -395,6 +502,22 @@ void UCWRoomViewModel::SetShouldShowStartCondition(
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bShouldShowStartCondition,
 		bInShouldShow
+	);
+}
+
+void UCWRoomViewModel::SetIsStageSelectionOpen(bool bInOpen)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		bIsStageSelectionOpen,
+		bInOpen
+	);
+}
+
+void UCWRoomViewModel::SetSelectedStageId(FName InStageId)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		SelectedStageId,
+		InStageId
 	);
 }
 

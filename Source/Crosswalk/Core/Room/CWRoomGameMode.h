@@ -1,13 +1,13 @@
-// CWRoomGameMode.h
+﻿// CWRoomGameMode.h
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameModeBase.h"
+#include "Core/Stage/CWStageSelectionGameModeBase.h"
 #include "CWRoomGameMode.generated.h"
 
 UCLASS()
-class CROSSWALK_API ACWRoomGameMode : public AGameModeBase
+class CROSSWALK_API ACWRoomGameMode : public ACWStageSelectionGameModeBase
 {
 	GENERATED_BODY()
 
@@ -22,22 +22,20 @@ public:
 
 #pragma endregion
 
-#pragma region GameStart
+#pragma region StageSelectionValidation
 
-public:
-	// 시작 조건을 만족하면 연결된 플레이어와 함께 인게임 맵으로 이동
-	UFUNCTION(BlueprintCallable, Category = "CW|Room")
-	bool TryStartGame();
+protected:
+	// 최소 인원과 전원 준비 조건을 만족해야 선택창을 열 수 있음
+	virtual bool CanOpenStageSelection() const override;
+
+	// 선택 확정 순간에도 인원과 준비 조건을 다시 검사함
+	virtual bool CanStartSelectedStage() const override;
 
 #pragma endregion
 
 #pragma region GameConfiguration
 
 protected:
-	// 준비 완료 후 이동할 실제 인게임 맵
-	UPROPERTY(EditDefaultsOnly, Category = "CW|Room")
-	TSoftObjectPtr<UWorld> GameplayMap;
-
 	// 게임 시작에 필요한 최소 방 인원
 	UPROPERTY(
 		EditDefaultsOnly,
