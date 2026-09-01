@@ -97,19 +97,29 @@ void UCWSinkholeFallComponent::OnRep_FallLocked()
 {
 	SetComponentTickEnabled(bFallLocked);
 
-	ACharacter* Character = Cast<ACharacter>(GetOwner());
-	USkeletalMeshComponent* Mesh = Character != nullptr ? Character->GetMesh() : nullptr;
-
-	if (Mesh != nullptr)
-	{
-		// 지면 아래로 내려가도 그림자가 도로 위에 남아 있으면 트릭이 바로 드러난다.
-		Mesh->SetCastShadow(!bFallLocked);
-	}
-
 	if (bFallLocked)
 	{
 		ElapsedFallTime = 0.f;
+
+		// 지면 아래로 내려가도 그림자가 도로 위에 남아 있으면 트릭이 바로 드러난다.
+		if (const ACharacter* Character = Cast<ACharacter>(GetOwner()))
+		{
+			if (USkeletalMeshComponent* Mesh = Character->GetMesh())
+			{
+				Mesh->SetCastShadow(false);
+			}
+		}
+
 		OnFallStarted();
+	}
+	else
+	{
+		// 연출 원복은 모든 머신이 각자 해야 한다.
+		//
+		// 가라앉히는 것은 각 머신이 자기 시계로 돌린 결과라, 서버에서만 되돌리면
+		// 클라이언트의 메쉬는 잠긴 위치(스케일 축소 + Z -SunkMeshDepth)에 그대로 남는다.
+		// 리스폰은 됐는데 캐릭터가 도로 아래에 있어 보이지 않게 된다.
+		ResetSinkVisual();
 	}
 
 	OnFallLockChanged.Broadcast(this, bFallLocked);
@@ -203,12 +213,9 @@ void UCWSinkholeFallComponent::Respawn()
 		}
 	}
 
+	// 연출 원복은 OnRep_FallLocked 가 맡는다. 서버는 OnRep 이 자동으로 오지 않으므로 직접 부른다.
 	bFallLocked = false;
 	OnRep_FallLocked();
-
-	// 연출 되돌리기는 각 머신이 해야 하지만, OnRep 은 값이 바뀔 때만 온다.
-	// 서버에서도 직접 불러 준다. (클라이언트는 OnRep_FallLocked 경로로 들어온다)
-	ResetSinkVisual();
 
 	bInvincible = true;
 	OnRespawned();
