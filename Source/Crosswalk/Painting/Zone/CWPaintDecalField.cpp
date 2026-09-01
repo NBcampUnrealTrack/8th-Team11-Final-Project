@@ -128,8 +128,15 @@ void ACWPaintDecalField::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wo
 		Decal.Remaining -= Applied;
 		TotalScrubbed += Applied;
 
-		if (Decal.Remaining <= KINDA_SMALL_NUMBER)
+		// 완전히 0 이 될 때까지 기다리지 않고 임계치에서 끊는다.
+		// 끝까지 기다리면 눈에 안 보일 만큼 작아진 자국이 남아, 다 치운 것처럼 보이는데
+		// 진행도는 오르지 않는 상태가 생긴다.
+		if (Decal.Remaining <= FMath::Max(RemoveRemainingThreshold, KINDA_SMALL_NUMBER))
 		{
+			// 남은 몫도 문지른 것으로 센다. 자국 하나를 지우는 비용을
+			// PaintCostPerDecal 그대로 유지하기 위함이다. (임계치에서 끊어도 총액은 같다)
+			TotalScrubbed += Decal.Remaining;
+
 			Decals.RemoveAt(Index);
 			bAnyRemoved = true;
 		}
@@ -270,8 +277,11 @@ void ACWPaintDecalField::RefreshDecalComponents()
 		Component->SetWorldLocation(Decal.Location);
 
 		// 문지를수록 작아진다. 전용 머티리얼이 없어도 지워지는 것이 눈에 보이게 하기 위함이다.
+		// 다만 MinVisibleScale 밑으로는 줄이지 않는다. 0 까지 줄이면 사라지기 직전의 자국이
+		// 보이지 않아, 남아 있는데도 다 지웠다고 착각하게 된다.
 		// (DecalSize 의 X 가 투영 깊이, Y/Z 가 평면 크기다)
-		const float VisibleRadius = Decal.Radius * Decal.Remaining;
+		const float VisibleScale = FMath::Lerp(MinVisibleScale, 1.f, FMath::Clamp(Decal.Remaining, 0.f, 1.f));
+		const float VisibleRadius = Decal.Radius * VisibleScale;
 		Component->DecalSize = FVector(DecalProjectionDepth, VisibleRadius, VisibleRadius);
 		Component->MarkRenderStateDirty();
 	}

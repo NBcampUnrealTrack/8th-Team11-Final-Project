@@ -102,6 +102,28 @@ public:
 	TObjectPtr<UMaterialInterface> DecalMaterial;
 
 	/**
+	 * 자국을 없애는 남은 양의 임계치. 이 값 이하로 내려가면 다 지운 것으로 처리한다.
+	 *
+	 * 0 까지 문지르게 두면 마지막 몇 %가 눈에 보이지 않을 만큼 작아진 상태로 남아,
+	 * 플레이어는 다 치웠다고 보는데 진행도만 오르지 않는다. 그 구간을 잘라낸다.
+	 *
+	 * 임계치에서 끊어도 남은 몫을 소모한 것으로 세기 때문에 페인트 총 소모량은 변하지 않는다.
+	 * 0 으로 두면 예전처럼 끝까지 문질러야 한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float RemoveRemainingThreshold = 0.15f;
+
+	/**
+	 * 자국이 그려지는 최소 크기 비율. 남은 양이 아무리 적어도 이 비율보다 작게는 안 그린다.
+	 *
+	 * 임계치와 짝이다. 임계치가 자국을 언제 없앨지 정하고, 이 값이 없어지기 직전까지
+	 * 자국이 보이도록 유지한다. 그래서 "작아지다 툭 사라진다" 가 되고, 사라지는 순간이
+	 * 자국 하나를 끝냈다는 신호로 읽힌다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinVisibleScale = 0.35f;
+
+	/**
 	 * 자국 하나의 반경(cm).
 	 *
 	 * 붓 반경(ACWWorkZone_Cells::BrushRadius, 기본 20)과 비슷하게 잡는다.
