@@ -64,7 +64,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	bool ControlsLane(const ACWTrafficLane* Lane) const;
 
-	/** 이 차선이 지금 통행 가능한지. 황색은 적색과 같이 취급한다. */
+	/**
+	 * 이 차선이 지금 통행 가능한지. **황색은 초록과 같이 통행으로 본다.**
+	 *
+	 * 차를 세울지 말지는 색이 아니라 이 함수로 판정한다. 색 그대로가 필요한 곳
+	 * (신호등 연출)은 GetGroupState 나 IsLaneGreen 을 쓴다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
+	bool IsLanePassable(const ACWTrafficLane* Lane) const;
+
+	/**
+	 * 이 차선의 색이 초록인지. **황색은 false 다** - 색을 그대로 묻는 함수다.
+	 *
+	 * 차량 정지 판정에는 쓰지 않는다. 그건 IsLanePassable 이다.
+	 * 예전에는 이 함수가 정지 판정까지 겸하고 있어서 황색에 차가 섰다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	bool IsLaneGreen(const ACWTrafficLane* Lane) const;
 
@@ -160,11 +174,22 @@ private:
 	UFUNCTION()
 	void OnRep_GroupStates();
 
+	/**
+	 * 그룹 색이 바뀐 사건을 서버·클라이언트가 각자 찍는다. 진단 전용이고 게임플레이는 안 본다.
+	 *
+	 * 두 로그의 시각을 비교하면 신호가 클라이언트에 **언제** 도착했는지가 나온다.
+	 * 클라이언트 쪽 줄이 아예 없으면 관련성 컬링에 걸려 복제가 안 되고 있다는 뜻이다.
+	 */
+	void LogSyncSignalChange(FName GroupName, ECWTrafficSignalState NewState, ECWTrafficSignalState OldState) const;
+
 	/** 이름으로 그룹을 찾는다. 없으면 INDEX_NONE. */
 	int32 FindGroupIndex(FName GroupName) const;
 
 	/** 인덱스로 색을 읽는다. 아직 초기화 전이면 그룹의 기본색으로 답한다. */
 	ECWTrafficSignalState ResolveGroupState(int32 GroupIndex) const;
+
+	/** 이 차선을 담당하는 그룹의 색. 담당 그룹이 없으면 꺼짐. */
+	ECWTrafficSignalState ResolveLaneState(const ACWTrafficLane* Lane) const;
 
 	/** 두 그룹의 경로가 교차하는지. 검증에만 쓴다. */
 	static bool DoGroupsConflict(const FCWTrafficSignalGroup& A, const FCWTrafficSignalGroup& B);

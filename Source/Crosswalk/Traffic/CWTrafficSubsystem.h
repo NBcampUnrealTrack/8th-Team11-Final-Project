@@ -27,6 +27,21 @@ public:
 	/** WorldContext로부터 서브시스템을 얻는다. 월드가 없으면 nullptr. */
 	static UCWTrafficSubsystem* Get(const UObject* WorldContextObject);
 
+	/**
+	 * 정지선·신호 동기화 진단 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogSync 0` 으로 끈다.
+	 *
+	 * 서버와 클라이언트가 같은 사건을 각자 찍으므로, 두 로그를 나란히 놓으면
+	 * "서버는 세웠는데 클라는 그냥 지나갔다" 가 줄 단위로 드러난다.
+	 * 두 화면을 눈으로 비교해서는 이 판정을 낼 수 없다 - 카메라와 시점이 다르기 때문이다.
+	 */
+	static bool IsSyncLoggingEnabled();
+
+	/** 진단 로그의 역할 표시. 두 로그를 섞어 놓아도 어느 쪽 것인지 알아야 한다. */
+	static const TCHAR* GetNetRoleTag(const AActor* Actor);
+
+	/** 진단 로그의 액터 식별자. 서버와 클라이언트에서 같은 값이 나오는 것을 고른다. */
+	static FString GetNetIdTag(const AActor* Actor);
+
 	void RegisterVehicle(ACWBaseVehicle* Vehicle);
 	void UnregisterVehicle(ACWBaseVehicle* Vehicle);
 
