@@ -688,6 +688,16 @@ void ACWPlayerCharacter::HandleFallLockChanged(UCWSinkholeFallComponent* /*FallC
 	}
 
 	WorkerComponent->SetWorkBlocked(bFallLocked);
+
+	// 들고 있던 페인트 통이 전부 소실된다.
+	//
+	// 차량 피격(BreakCansAndSpill)과 달리 오염을 만들지 않는다. 통은 플레이어와 함께
+	// 구멍 안으로 떨어진 것이라, 도로 위에 페인트가 쏟아져 있으면 그림이 맞지 않는다.
+	// 정리할 오염이 남지 않는 대신 통을 다시 받으러 가는 시간이 페널티가 된다.
+	if (bFallLocked)
+	{
+		SupplyCarrierComponent->BreakAllCans();
+	}
 }
 
 void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*HitReactionComp*/, bool bHitLocked)
