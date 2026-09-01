@@ -208,6 +208,22 @@ void ACWTrafficDirector::PostInitializeComponents()
 	 * ControlsLane 이 제 답을 낸다.
 	 */
 	ResetGroupStatesToDefault();
+
+	/**
+	 * 관련성을 여기서 다시 못박는다. **생성자에서 켠 것만으로는 실제로 안 켜졌다.**
+	 *
+	 * 블루프린트 CDO 는 부모 C++ 기본값을 실시간으로 따라가지 않고 에셋에 굳은 값을 쓴다.
+	 * 그래서 생성자의 bAlwaysRelevant = true 가 BP 에 저장된 옛날 값(꺼짐)으로 덮이고,
+	 * 컴파일은 통과하는데 런타임에는 꺼진 채로 돈다. 2026-09-01 2인 테스트에서 실제로
+	 * 그랬다 - 서버는 색을 바꿨는데 클라이언트 신호등은 끝까지 초록이었다.
+	 *
+	 * BP 의 체크박스를 켜서 고칠 수도 있지만 그러면 수정이 uasset 안에 숨는다. grep 도
+	 * 리뷰도 안 되고, 새로 만드는 제어기 BP 마다 같은 실수가 반복된다.
+	 *
+	 * 이 값은 배치로 정할 성질이 아니다. 관련성 컬링에 걸리면 클라이언트가 신호를 영영
+	 * 못 받아 정지선이 없는 것처럼 주행하므로, 끌 수 있는 값으로 두면 안 된다.
+	 */
+	bAlwaysRelevant = true;
 }
 
 void ACWTrafficDirector::BeginPlay()
