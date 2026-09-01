@@ -264,18 +264,49 @@ private:
 	void TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHitResult& SweepResult);
 
 	/**
-	 * 위험한 속도인지 다시 보고, 하한을 넘어서는 순간에 겹쳐 있던 대상을 다시 판정한다.
+	 * 이 피격이 대상의 화면에서도 실제로 닿았는지 본다. 통과하면 지금 쳐도 되는 피격이다.
+	 *
+	 * 서버는 "지금 차 위치"로 겹침을 잡지만, 대상의 화면 속 차는 그 사람 핑만큼 뒤에 있다.
+	 * 차를 그만큼 되돌렸을 때 아직 대상에 닿지 않았다면, 화면에서는 피한 것이므로 흘려보낸다.
+	 *
+	 * 판정식: (차가 대상을 파고든 깊이) < (핑 동안 차가 이동한 거리) 이면 보류한다.
+	 *   되돌린 차 앞면이 아직 대상 뒤에 있다는 뜻이라, 그 사람 화면에선 차가 안 왔다.
+	 *
+	 * 가만히 선 대상은 차가 계속 파고들어 깊이가 이동 거리를 넘는 순간 통과한다. 그래서
+	 * 매 틱 재검사가 필요하다. (RetryPendingHits) 보류를 한 번만 하고 끝내면 그 사람은
+	 * 핑이 높을수록 안 맞는 무적이 되어 버린다.
+	 *
+	 * 되돌릴 양이 0 인 대상(호스트 조종/랜)은 깊이가 음수 미만이 될 수 없어 항상 통과한다.
+	 * 즉 보정 이전과 동일하게 동작한다.
+	 */
+	bool PassesHitLagCompensation(const AActor* Target) const;
+
+	/**
+	 * 이 대상의 화면이 서버보다 얼마나 뒤처져 있는가(초). 차를 되돌릴 양이다.
+	 *
+	 * 패링의 UCWParryComponent::ResolveViewRewindSeconds 와 같은 근거(그 사람 핑 전체)를
+	 * 쓴다. 판정 주체가 쳐내는 사람이 아니라 맞는 사람이라 여기서 대상 폰을 보고 다시 구한다.
+	 * 호스트가 직접 조종하는 대상은 0 이다. 자기가 보는 것이 곧 서버 상황이다.
+	 */
+	float ResolveTargetViewRewindSeconds(const AActor* Target) const;
+
+	/**
+	 * 겹쳐 있지만 아직 못 친 대상을 서버 틱마다 다시 판정한다. (서버 전용)
 	 *
 	 * 왜 필요한가
-	 *   MinHitSpeed 아래에서는 오버랩이 들어와도 치지 않고 기록도 남기지 않는다.
-	 *   그런데 오버랩 이벤트는 겹치기 시작할 때 한 번만 온다. 그래서 멈춰 있는 차에
-	 *   걸어 들어간 사람은, 그 차가 다시 출발해도 새 이벤트가 없어서 영영 맞지 않는다.
-	 *   "차 안에 서 있으면 안전" 이 되어 버린다.
+	 *   오버랩 이벤트는 겹치기 시작할 때 한 번만 온다. 그래서 그 순간에 조건이 안 맞아
+	 *   흘려보낸 피격은, 나중에 조건이 갖춰져도 새 이벤트가 없어서 영영 판정되지 않는다.
+	 *   흘려보내는 경로가 둘이라 둘 다 여기서 다시 본다.
 	 *
-	 *   그래서 속도가 하한을 넘어서는 순간에 지금 겹쳐 있는 대상을 다시 훑는다.
-	 *   전환은 차가 다시 출발할 때 한 번뿐이라 매 프레임 도는 비용이 아니다.
+	 *   1. 속도가 MinHitSpeed 아래 - 멈춰 있는 차에 걸어 들어간 사람이 그 차가 다시
+	 *      출발해도 맞지 않는다. "차 안에 서 있으면 안전" 이 되어 버린다.
+	 *   2. 랙 보정으로 보류 - 그 사람 화면에서 아직 차가 안 닿았다. 몸을 빼면 그대로
+	 *      피한 것이고, 가만히 있으면 화면에서 차가 닿는 순간 여기서 성립해야 한다.
+	 *
+	 * 매 틱 도는 비용은 겹쳐 있는 대상 수만큼이다. 대부분의 차량은 이 집합이 비어 있어
+	 * 곧바로 빠져나간다.
 	 */
-	void RefreshDangerState();
+	void RetryPendingHits();
 
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
@@ -327,6 +358,24 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float MinHitSpeed = 100.f;
+
+	/**
+	 * 피격 랙 보정으로 차량을 되돌릴 수 있는 상한(초). 0 이면 보정을 아예 끈다.
+	 *
+	 * 피격 판정은 서버의 "지금 차 위치"로 하지만, 그 사람 화면의 차는 왕복 시간(핑)만큼
+	 * 뒤처져 있다. 보정을 하지 않으면 화면에서 분명히 피한 사람이 서버에서는 맞는다.
+	 * 그래서 판정 직전에 차를 그 사람이 본 위치까지 되돌려, 화면에서 아직 닿지 않았던
+	 * 피격은 흘려보낸다. (TryApplyHit 의 랙 보정 게이트)
+	 *
+	 * 패링의 MaxViewRewindSeconds 와 같은 0.2 로 맞춘다. 두 판정이 다른 상한을 쓰면
+	 * "패링은 됐는데 그대로 맞는다" 처럼 같은 순간을 서로 다르게 보는 엇갈림이 생긴다.
+	 * 되돌리는 근거(그 사람 핑)와 되돌리는 대상(같은 차량)이 같으므로 상한도 같아야 한다.
+	 *
+	 * 이 값을 넘게 늦은 사람은 그만큼은 서버의 지금 상황으로 판정된다. 무제한으로 되돌리면
+	 * 남들 화면에서 한참 전에 지나간 차에 뒤늦게 맞는 것으로 보이기 때문이다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxHitRewindSeconds = 0.2f;
 
 	/** 앞차 뒤범퍼와 유지할 최소 여유 거리(cm). 차 길이에 더해서 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
@@ -468,8 +517,14 @@ private:
 	/** 같은 액터를 중복으로 치지 않도록 이미 판정한 대상을 기록. */
 	TSet<TWeakObjectPtr<AActor>> HitActors;
 
-	/** 직전 프레임에 MinHitSpeed 를 넘고 있었는지. 넘어서는 순간을 잡는 데만 쓴다. */
-	bool bWasAboveMinHitSpeed = false;
+	/**
+	 * 지금 몸에 겹쳐 있는 피격 대상. 랙 보정으로 보류됐거나 아직 속도가 하한을 못 넘어
+	 * 못 친 대상을 매 틱 다시 보기 위해 들고 있는다. (RetryPendingHits)
+	 *
+	 * 오버랩 이벤트는 겹치기 시작할 때 한 번뿐이라, 이 집합이 없으면 나중에 조건이
+	 * 갖춰진 피격을 다시 판정할 길이 없다. 떨어지면 HandleEndOverlap 이 지운다.
+	 */
+	TSet<TWeakObjectPtr<AActor>> OverlappingReceivers;
 
 	FTimerHandle ParriedDespawnTimerHandle;
 };

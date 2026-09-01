@@ -5,6 +5,8 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
@@ -63,13 +65,14 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	/**
-	 * 지난 프레임 속도로 위험 상태를 다시 본다.
+	 * 겹쳐 있는데 아직 못 친 대상을 지난 프레임 속도·위치로 다시 본다.
+	 * 랙 보정으로 보류됐거나 속도가 하한을 넘어선 대상이 여기서 뒤늦게 성립한다.
 	 *
 	 * 이번 프레임 이동을 반영하려면 아래 두 경로(튕겨나가는 중 / 차선 주행)가 각자
 	 * 속도를 채운 뒤에 불러야 하는데, 그러면 호출 지점이 둘로 갈라져 한쪽을 빼먹기 쉽다.
-	 * 전환 시점이 한 프레임 늦는 것이 전부라 여기서 한 번만 부른다.
+	 * 판정이 한 프레임 늦는 것이 전부이고, 그 어긋남은 보정량(핑)에 비하면 무시할 만하다.
 	 */
-	RefreshDangerState();
+	RetryPendingHits();
 
 	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
 	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다. (서버 전용)
@@ -134,6 +137,7 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 
 	// 풀링으로 재사용될 때 지난 주행의 피격 기록이 남아 있으면 안 된다.
 	HitActors.Reset();
+	OverlappingReceivers.Reset();
 
 	UpdateTransformOnLane();
 }
@@ -543,40 +547,123 @@ void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
 void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
 {
+	// 겹치는 동안 다시 볼 수 있게 기록해 둔다. 인터페이스를 구현한 대상만 담는다.
+	// (겹침 자체는 서버·클라 양쪽에서 일어나지만, 재검사는 서버만 하므로 서버에서만 채운다)
+	if (HasAuthority() && OtherActor && OtherActor != this
+		&& OtherActor->Implements<UInterface_VehicleHitReceiver>())
+	{
+		OverlappingReceivers.Add(OtherActor);
+	}
+
 	TryApplyHit(OtherActor, bFromSweep, SweepResult);
 }
 
-void ACWBaseVehicle::RefreshDangerState()
+void ACWBaseVehicle::RetryPendingHits()
 {
 	// 피격은 서버만 확정한다.
-	if (!HasAuthority())
+	if (!HasAuthority() || OverlappingReceivers.IsEmpty())
 	{
 		return;
 	}
 
-	const bool bAboveMinHitSpeed = GetCurrentSpeed() >= MinHitSpeed;
-	if (bAboveMinHitSpeed == bWasAboveMinHitSpeed)
+	/**
+	 * 순회 중에 TryApplyHit 가 피격을 넣고, 그 수신 측이 넉백으로 대상을 차 밖으로 밀어내
+	 * HandleEndOverlap 이 이 집합을 건드릴 수 있다. 사본으로 돌아야 안전하다.
+	 */
+	TArray<TWeakObjectPtr<AActor>> PendingReceivers = OverlappingReceivers.Array();
+
+	for (const TWeakObjectPtr<AActor>& ReceiverPtr : PendingReceivers)
 	{
-		return;
-	}
+		AActor* Receiver = ReceiverPtr.Get();
+		if (!Receiver)
+		{
+			// 겹친 채로 사라진 대상. EndOverlap 이 오지 않으므로 여기서 지운다.
+			OverlappingReceivers.Remove(ReceiverPtr);
+			continue;
+		}
 
-	bWasAboveMinHitSpeed = bAboveMinHitSpeed;
-
-	// 느려진 방향은 볼 것이 없다. 이미 맞은 사람을 되돌리지는 않는다.
-	if (!bAboveMinHitSpeed || CollisionBox == nullptr)
-	{
-		return;
-	}
-
-	// 느릴 때 그냥 통과시킨 대상이 아직 몸에 겹쳐 있다. 이제 위험해졌으므로 다시 본다.
-	TArray<AActor*> OverlappingActors;
-	CollisionBox->GetOverlappingActors(OverlappingActors);
-
-	for (AActor* OverlappingActor : OverlappingActors)
-	{
+		// 이미 친 대상은 TryApplyHit 이 기록으로 걸러낸다. 여기서 다시 볼 것은
+		// 아직 못 친 대상뿐이라, 조건이 갖춰지는 순간 그 프레임에 성립한다.
+		//
 		// 스윕 정보가 없으므로 피격 지점은 최근접점으로 대체된다. (ResolveHitLocation)
-		TryApplyHit(OverlappingActor, false, FHitResult());
+		TryApplyHit(Receiver, false, FHitResult());
 	}
+}
+
+float ACWBaseVehicle::ResolveTargetViewRewindSeconds(const AActor* Target) const
+{
+	// 보정을 끈 설정이면 되돌릴 것이 없다.
+	if (MaxHitRewindSeconds <= 0.f)
+	{
+		return 0.f;
+	}
+
+	/**
+	 * 호스트가 직접 조종하는 대상은 되돌리지 않는다. 자기가 보는 것이 곧 서버 상황이라
+	 * 어긋남 자체가 없고, 되돌리면 오히려 맞아야 할 피격을 흘려보낸다.
+	 */
+	const APawn* TargetPawn = Cast<APawn>(Target);
+	if (TargetPawn == nullptr || TargetPawn->IsLocallyControlled())
+	{
+		return 0.f;
+	}
+
+	const APlayerState* TargetPlayerState = TargetPawn->GetPlayerState();
+	if (TargetPlayerState == nullptr)
+	{
+		return 0.f;
+	}
+
+	/**
+	 * 되돌릴 시간은 왕복 시간(ping) 전체다. 절반이 아니다.
+	 * 근거는 패링 쪽과 같다. (UCWParryComponent::ResolveViewRewindSeconds 주석)
+	 *
+	 * 그 사람 화면의 차량은 서버가 보낸 값을 받아 그린 것이라 편도만큼 뒤처져 있고,
+	 * 그 화면을 보고 피한 결과가 서버에 닿는 데 다시 편도가 걸린다.
+	 */
+	const float PingSeconds = TargetPlayerState->GetPingInMilliseconds() * 0.001f;
+
+	return FMath::Clamp(PingSeconds, 0.f, MaxHitRewindSeconds);
+}
+
+bool ACWBaseVehicle::PassesHitLagCompensation(const AActor* Target) const
+{
+	const float RewindSeconds = ResolveTargetViewRewindSeconds(Target);
+	if (RewindSeconds <= 0.f)
+	{
+		return true;
+	}
+
+	/**
+	 * 되돌릴 거리. 차량은 진행 방향으로 등속 직진하므로, RewindSeconds 전의 차량은
+	 * 지금 위치에서 정확히 이만큼 뒤에 있었다. (PredictTimeToImpact 의 랙 보정과 같은 가정)
+	 *
+	 * 희망 속도가 아니라 실제 속도를 쓴다. 앞차에 막혀 느리게 굴러온 차를 제 속도로
+	 * 되돌리면 있지도 않았던 위치까지 물러나 맞아야 할 피격을 흘려보낸다.
+	 */
+	const float RewindDistance = GetCurrentSpeed() * RewindSeconds;
+	if (RewindDistance <= KINDA_SMALL_NUMBER)
+	{
+		return true;
+	}
+
+	/**
+	 * 차가 대상을 얼마나 파고들었는가. 앞면이 대상에 막 닿은 순간이 0 이고,
+	 * 더 지나갈수록 커진다. 기준은 GetVehicleLength 와 같은 스케일 적용 후 크기다.
+	 */
+	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
+	const float ForwardDistance = FVector::DotProduct(ToTarget, GetActorForwardVector());
+	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
+	const float PenetrationDepth = FrontOffset - ForwardDistance;
+
+	/**
+	 * 파고든 깊이가 되돌릴 거리보다 얕으면, 되돌린 차의 앞면은 아직 대상 뒤에 있다.
+	 * 그 사람 화면에서는 차가 안 왔다는 뜻이라 이번 판정은 흘려보낸다.
+	 *
+	 * 몸을 빼면 겹침이 끝나면서 영영 안 맞고(피한 것이 맞다), 가만히 있으면 차가 계속
+	 * 파고들어 이 조건을 넘는 순간 맞는다. 그 순간이 곧 그 사람 화면에서 차가 닿는 때다.
+	 */
+	return PenetrationDepth >= RewindDistance;
 }
 
 void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHitResult& SweepResult)
@@ -592,8 +679,8 @@ void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHit
 	 * 너무 느린 차는 치지 않는다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우다.
 	 *
 	 * 여기서 기록(HitActors)을 남기지 않는 것이 중요하다. 남기면 그 차가 다시 출발해도
-	 * 이미 판정한 대상으로 걸러져서 영영 맞지 않는다. 대신 RefreshDangerState 가
-	 * 속도가 하한을 넘어서는 순간에 겹쳐 있는 대상을 다시 본다.
+	 * 이미 판정한 대상으로 걸러져서 영영 맞지 않는다. 대신 RetryPendingHits 가
+	 * 겹쳐 있는 동안 매 틱 다시 보므로, 속도가 하한을 넘는 프레임에 그대로 성립한다.
 	 */
 	if (GetCurrentSpeed() < MinHitSpeed)
 	{
@@ -603,6 +690,18 @@ void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHit
 	// 피격 인터페이스를 구현한 액터만 대상으로 본다.
 	// ACWPlayerCharacter 가 이 인터페이스를 구현하므로 폰을 따로 받아줄 이유가 없다.
 	if (!OtherActor->Implements<UInterface_VehicleHitReceiver>())
+	{
+		return;
+	}
+
+	/**
+	 * 이 사람의 화면에서도 실제로 닿았는지 본다. 아직이면 이번 판정은 흘려보낸다.
+	 *
+	 * 기록(HitActors)을 남기지 않는 것이 핵심이다. 남기면 화면에서 곧 닿을 사람도
+	 * 이미 판정한 대상으로 걸러져 영영 안 맞는다. 대신 겹쳐 있는 동안 RetryPendingHits 가
+	 * 매 틱 다시 보므로, 파고든 깊이가 보정 거리를 넘는 순간에 정상 피격이 성립한다.
+	 */
+	if (!PassesHitLagCompensation(OtherActor))
 	{
 		return;
 	}
@@ -639,6 +738,10 @@ void ACWBaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent
 	}
 
 	HitActors.Remove(OtherActor);
+
+	// 겹침이 끝났으니 재검사 대상에서도 뺀다. 랙 보정으로 보류된 채 몸을 뺀 대상은
+	// 여기서 빠지면서 영영 안 맞게 된다 - 화면에서 피한 것이므로 그게 맞다.
+	OverlappingReceivers.Remove(OtherActor);
 }
 
 FVector ACWBaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
