@@ -132,6 +132,38 @@ bool ACWGameMode::ReturnToRoom()
 	return true;
 }
 
+#pragma region StageSelectionValidation
+
+bool ACWGameMode::CanOpenStageSelection() const
+{
+	const ACWGameState* CWGameState =
+		GetGameState<ACWGameState>();
+
+	if (!IsValid(CWGameState))
+	{
+		return false;
+	}
+
+	// Result가 표시된 클리어 상태에서만 선택창을 염
+	return CWGameState->IsStageCleared();
+}
+
+bool ACWGameMode::CanStartSelectedStage() const
+{
+	const ACWGameState* CWGameState =
+		GetGameState<ACWGameState>();
+
+	if (!IsValid(CWGameState))
+	{
+		return false;
+	}
+
+	// 선택창이 열린 사이 상태가 바뀌었을 경우를 방어함
+	return CWGameState->IsStageCleared();
+}
+
+#pragma endregion
+
 void ACWGameMode::HandleZoneRegistered(ACWBaseWorkZone* Zone)
 {
 	if (Zone == nullptr || WorkZones.Contains(Zone))

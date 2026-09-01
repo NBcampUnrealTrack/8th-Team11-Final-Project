@@ -4,7 +4,6 @@
 #include "CoreMinimal.h"
 #include "Core/CWPlayerState.h"
 #include "Core/Room/CWRoomGameState.h"
-#include "Engine/World.h"
 
 #pragma region GameModeLifecycle
 
@@ -47,126 +46,34 @@ void ACWRoomGameMode::InitGameState()
 
 #pragma endregion
 
-#pragma region GameStart
+#pragma region StageSelectionValidation
 
-bool ACWRoomGameMode::TryStartGame()
+bool ACWRoomGameMode::CanOpenStageSelection() const
 {
-	// 실제 맵 이동은 서버에서만 처리
-	if (!HasAuthority())
-	{
-		UE_LOG(
-			LogTemp,
-			Warning,
-			TEXT("RoomGameMode: game start was requested without authority.")
-		);
-
-		return false;
-	}
-
 	const ACWRoomGameState* RoomGameState =
 		GetGameState<ACWRoomGameState>();
 
 	if (!IsValid(RoomGameState))
 	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("RoomGameMode: RoomGameState is invalid.")
-		);
-
 		return false;
 	}
 
-	// 최소 인원과 전원 준비 조건을 확인
-	if (!RoomGameState->CanStartGame())
+	// 최소 인원과 전원 준비 조건을 만족해야 선택창을 열 수 있음
+	return RoomGameState->CanStartGame();
+}
+
+bool ACWRoomGameMode::CanStartSelectedStage() const
+{
+	const ACWRoomGameState* RoomGameState =
+		GetGameState<ACWRoomGameState>();
+
+	if (!IsValid(RoomGameState))
 	{
-		UE_LOG(
-			LogTemp,
-			Warning,
-			TEXT("RoomGameMode: game start conditions are not satisfied.")
-		);
-
 		return false;
 	}
 
-	if (GameplayMap.IsNull())
-	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("RoomGameMode: GameplayMap is not configured.")
-		);
-
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-
-	if (!IsValid(World))
-	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("RoomGameMode: World is invalid.")
-		);
-
-		return false;
-	}
-
-	// 이미 트래블이 예약됐다면 중복 시작 요청을 무시
-	if (!World->NextURL.IsEmpty())
-	{
-		UE_LOG(
-			LogTemp,
-			Warning,
-			TEXT("RoomGameMode: travel is already pending.")
-		);
-
-		return false;
-	}
-
-	const FString GameplayMapPath =
-		GameplayMap
-		.ToSoftObjectPath()
-		.GetLongPackageName();
-
-	if (GameplayMapPath.IsEmpty())
-	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("RoomGameMode: GameplayMap path is empty.")
-		);
-
-		return false;
-	}
-
-	// Listen Server에 연결된 모든 플레이어와 함께 인게임 맵으로 이동
-	const bool bTravelStarted =
-		World->ServerTravel(
-			GameplayMapPath
-		);
-
-	if (!bTravelStarted)
-	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("RoomGameMode: failed to start ServerTravel. Map=%s"),
-			*GameplayMapPath
-		);
-
-		return false;
-	}
-
-	UE_LOG(
-		LogTemp,
-		Log,
-		TEXT("RoomGameMode: ServerTravel started. Map=%s"),
-		*GameplayMapPath
-	);
-
-	return true;
+	// 선택창이 열린 사이 준비 상태가 바뀔 수 있으므로 확정 시 다시 검사함
+	return RoomGameState->CanStartGame();
 }
 
 #pragma endregion

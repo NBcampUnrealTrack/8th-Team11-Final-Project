@@ -3,9 +3,7 @@
 #include "UI/ViewModel/CWRoomViewModel.h"
 #include "CoreMinimal.h"
 #include "Core/CWPlayerState.h"
-#include "Core/Room/CWRoomGameMode.h"
 #include "Core/Room/CWRoomGameState.h"
-#include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/GameStateBase.h"
@@ -35,28 +33,6 @@ void UCWRoomViewModel::RequestToggleReady()
 	CWPlayerState->ServerSetReady(
 		!CWPlayerState->IsReady()
 	);
-}
-
-bool UCWRoomViewModel::RequestStartGame()
-{
-	UWorld* World = GetBoundWorld();
-
-	if (!IsValid(World))
-	{
-		return false;
-	}
-
-	// RoomGameMode는 서버에만 존재하므로 클라이언트에서는 null 반환
-	ACWRoomGameMode* RoomGameMode =
-		World->GetAuthGameMode<ACWRoomGameMode>();
-
-	if (!IsValid(RoomGameMode))
-	{
-		return false;
-	}
-
-	// 최종 시작 조건과 중복 트래블 검사는 GameMode에서 수행
-	return RoomGameMode->TryStartGame();
 }
 
 #pragma endregion
@@ -118,28 +94,11 @@ void UCWRoomViewModel::RefreshRoomState()
 		PlayerInfo.PlayerId =
 			PlayerState->GetPlayerId();
 
-		const FString PlayerName =
-			PlayerState->GetPlayerName();
-
-		// 이름 복제가 아직 끝나지 않았으면 임시 플레이어 이름 사용
-		if (PlayerName.IsEmpty())
-		{
-			PlayerInfo.PlayerName = FText::Format(
-				NSLOCTEXT(
-					"CWRoomUI",
-					"DefaultPlayerName",
-					"Player {0}"
-				),
-				FText::AsNumber(
-					NewRoomPlayers.Num() + 1
-				)
-			);
-		}
-		else
-		{
-			PlayerInfo.PlayerName =
-				FText::FromString(PlayerName);
-		}
+		// 이름 복제 전이면 목록 내 유효 순번으로 임시 이름 생성 (공용 헬퍼)
+		PlayerInfo.PlayerName = MakePlayerDisplayName(
+			PlayerState,
+			NewRoomPlayers.Num() + 1
+		);
 
 		PlayerInfo.bIsReady =
 			CWPlayerState->IsReady();
@@ -163,14 +122,8 @@ void UCWRoomViewModel::RefreshRoomState()
 		);
 	}
 
-	// PlayerArray 복제 순서는 화면마다 다르므로 서버가 부여한 번호로 정렬
-	NewRoomPlayers.Sort(
-		[](const FCWRoomPlayerInfo& Left,
-			const FCWRoomPlayerInfo& Right)
-		{
-			return Left.PlayerId < Right.PlayerId;
-		}
-	);
+	// PlayerArray 복제 순서는 화면마다 다르므로 서버가 부여한 번호로 정렬 (공용 헬퍼)
+	SortPlayerInfosByPlayerId(NewRoomPlayers);
 
 	const int32 NewCurrentPlayerCount =
 		NewRoomPlayers.Num();
@@ -234,9 +187,7 @@ UClass* UCWRoomViewModel::GetGameStateClass() const
 	return ACWRoomGameState::StaticClass();
 }
 
-void UCWRoomViewModel::SubscribeToGameState(
-	AGameStateBase* InGameState
-)
+void UCWRoomViewModel::SubscribeToGameState(AGameStateBase* InGameState)
 {
 	ACWRoomGameState* RoomGameState =
 		Cast<ACWRoomGameState>(InGameState);
@@ -251,11 +202,10 @@ void UCWRoomViewModel::SubscribeToGameState(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
+
 }
 
-void UCWRoomViewModel::UnsubscribeFromGameState(
-	AGameStateBase* InGameState
-)
+void UCWRoomViewModel::UnsubscribeFromGameState(AGameStateBase* InGameState)
 {
 	// 바인딩 시 등록한 방 플레이어 변경 delegate 를 해제
 	ACWRoomGameState* RoomGameState =
@@ -270,6 +220,7 @@ void UCWRoomViewModel::UnsubscribeFromGameState(
 		this,
 		&UCWRoomViewModel::HandleRoomPlayersChanged
 	);
+
 }
 
 void UCWRoomViewModel::RefreshFromGameState()
@@ -304,9 +255,7 @@ void UCWRoomViewModel::HandleRoomPlayersChanged()
 
 #pragma region ViewModelSetters
 
-void UCWRoomViewModel::SetRoomPlayers(
-	const TArray<FCWRoomPlayerInfo>& InRoomPlayers
-)
+void UCWRoomViewModel::SetRoomPlayers(const TArray<FCWRoomPlayerInfo>& InRoomPlayers)
 {
 	// 구조체 비교 연산자를 사용해 실제 배열 변경 시에만 알림
 	UE_MVVM_SET_PROPERTY_VALUE(
@@ -315,9 +264,7 @@ void UCWRoomViewModel::SetRoomPlayers(
 	);
 }
 
-void UCWRoomViewModel::SetCurrentPlayerCount(
-	int32 InPlayerCount
-)
+void UCWRoomViewModel::SetCurrentPlayerCount(int32 InPlayerCount)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		CurrentPlayerCount,
@@ -325,9 +272,7 @@ void UCWRoomViewModel::SetCurrentPlayerCount(
 	);
 }
 
-void UCWRoomViewModel::SetReadyPlayerCount(
-	int32 InReadyCount
-)
+void UCWRoomViewModel::SetReadyPlayerCount(int32 InReadyCount)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		ReadyPlayerCount,
@@ -335,9 +280,7 @@ void UCWRoomViewModel::SetReadyPlayerCount(
 	);
 }
 
-void UCWRoomViewModel::SetMinimumPlayersToStart(
-	int32 InMinimumPlayers
-)
+void UCWRoomViewModel::SetMinimumPlayersToStart(int32 InMinimumPlayers)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		MinimumPlayersToStart,
@@ -345,9 +288,7 @@ void UCWRoomViewModel::SetMinimumPlayersToStart(
 	);
 }
 
-void UCWRoomViewModel::SetCanStartGame(
-	bool bInCanStartGame
-)
+void UCWRoomViewModel::SetCanStartGame(bool bInCanStartGame)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bCanStartGame,
@@ -355,9 +296,7 @@ void UCWRoomViewModel::SetCanStartGame(
 	);
 }
 
-void UCWRoomViewModel::SetIsHost(
-	bool bInIsHost
-)
+void UCWRoomViewModel::SetIsHost(bool bInIsHost)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bIsHost,
@@ -365,9 +304,7 @@ void UCWRoomViewModel::SetIsHost(
 	);
 }
 
-void UCWRoomViewModel::SetIsLocalPlayerReady(
-	bool bInIsReady
-)
+void UCWRoomViewModel::SetIsLocalPlayerReady(bool bInIsReady)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bIsLocalPlayerReady,
@@ -375,9 +312,7 @@ void UCWRoomViewModel::SetIsLocalPlayerReady(
 	);
 }
 
-void UCWRoomViewModel::SetReadyCountText(
-	const FText& InText
-)
+void UCWRoomViewModel::SetReadyCountText(const FText& InText)
 {
 	// FText는 내부 히스토리가 아니라 실제 표시 문자열로 비교
 	if (ReadyCountText.EqualTo(InText))
@@ -393,9 +328,7 @@ void UCWRoomViewModel::SetReadyCountText(
 	);
 }
 
-void UCWRoomViewModel::SetStartConditionText(
-	const FText& InText
-)
+void UCWRoomViewModel::SetStartConditionText(const FText& InText)
 {
 	// FText::Format이 만든 새 히스토리 때문에 중복 알림이 발생하지 않도록 표시 문자열 비교
 	if (StartConditionText.EqualTo(InText))
@@ -411,9 +344,7 @@ void UCWRoomViewModel::SetStartConditionText(
 	);
 }
 
-void UCWRoomViewModel::SetShouldShowStartCondition(
-	bool bInShouldShow
-)
+void UCWRoomViewModel::SetShouldShowStartCondition(bool bInShouldShow)
 {
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bShouldShowStartCondition,

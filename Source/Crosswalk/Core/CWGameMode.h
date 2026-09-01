@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameModeBase.h"
+#include "Core/Stage/CWStageSelectionGameModeBase.h"
 #include "CWGameMode.generated.h"
 
 class ACWBaseWorkZone;
@@ -25,7 +25,7 @@ class ACWGameState;
  *   (ACWBaseWorkZone::SetProgress 주석 참고) 카운터를 올리는 방식이면 그 순간 어긋난다.
  */
 UCLASS()
-class CROSSWALK_API ACWGameMode : public AGameModeBase
+class CROSSWALK_API ACWGameMode : public ACWStageSelectionGameModeBase
 {
 	GENERATED_BODY()
 
@@ -38,6 +38,17 @@ public:
 	// Listen Server 서버에서만 실행 가능
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Stage")
 	bool ReturnToRoom();
+
+#pragma region StageSelectionValidation
+
+protected:
+	// 스테이지를 클리어한 후에만 Result에서 선택창을 열 수 있음
+	virtual bool CanOpenStageSelection() const override;
+
+	// 선택 후 이동 시점에도 클리어 상태를 다시 검증함
+	virtual bool CanStartSelectedStage() const override;
+
+#pragma endregion
 
 private:
 	/** 완료된 존 수를 다시 세어 게임 상태에 반영하고, 전부 끝났으면 클리어로 넘긴다. */

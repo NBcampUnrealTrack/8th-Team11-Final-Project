@@ -22,10 +22,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
 	void RequestToggleReady();
 
-	// 호스트가 게임 시작 조건을 확인하고 인게임 이동 요청
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
-	bool RequestStartGame();
-
 #pragma endregion
 
 #pragma region RoomData
@@ -136,9 +132,7 @@ private:
 
 private:
 	// 플레이어 표시 목록 저장 후 FieldNotify 발생
-	void SetRoomPlayers(
-		const TArray<FCWRoomPlayerInfo>& InRoomPlayers
-	);
+	void SetRoomPlayers(const TArray<FCWRoomPlayerInfo>& InRoomPlayers);
 
 	// 현재 방 플레이어 수 저장 후 FieldNotify 발생
 	void SetCurrentPlayerCount(int32 InPlayerCount);

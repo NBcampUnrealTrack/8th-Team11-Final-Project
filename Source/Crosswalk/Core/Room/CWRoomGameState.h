@@ -1,9 +1,9 @@
-// CWRoomGameState.h
+﻿// CWRoomGameState.h
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameStateBase.h"
+#include "Core/Stage/CWStageSelectionGameStateBase.h"
 #include "CWRoomGameState.generated.h"
 
 // 방 플레이어 목록 또는 표시 정보가 변경됐음을 알리는 이벤트
@@ -12,7 +12,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(
 );
 
 UCLASS()
-class CROSSWALK_API ACWRoomGameState : public AGameStateBase
+class CROSSWALK_API ACWRoomGameState : public ACWStageSelectionGameStateBase
 {
 	GENERATED_BODY()
 
