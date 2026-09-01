@@ -90,7 +90,9 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 
 	// 클라이언트도 같은 계산을 돈다. 속도를 정하는 값이 양쪽에 모두 있어서 결과가 같고,
 	// 서버 값이 도착하면 DistanceAlongLane 이 그 값으로 덮이면서 어긋난 만큼만 맞춰진다.
-	const float StepSpeed = ResolveStepSpeed();
+	bool bStopLineLimited = false;
+	float RemainingToStop = 0.f;
+	const float StepSpeed = ResolveStepSpeed(&bStopLineLimited, &RemainingToStop);
 	DistanceAlongLane += StepSpeed * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
@@ -107,6 +109,8 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	}
 
 	UpdateTransformOnLane(StepSpeed);
+
+	LogStopLineSync(bStopLineLimited, StepSpeed, RemainingToStop);
 }
 
 float ACWBaseVehicle::GetVehicleLength() const
@@ -438,7 +442,7 @@ void ACWBaseVehicle::OnReachedLaneEnd()
 	Destroy();
 }
 
-float ACWBaseVehicle::ResolveStepSpeed() const
+float ACWBaseVehicle::ResolveStepSpeed(bool* OutStopLineLimited, float* OutRemainingToStop) const
 {
 	const float DesiredSpeed = GetEffectiveSpeed();
 
@@ -476,10 +480,59 @@ float ACWBaseVehicle::ResolveStepSpeed() const
 		// 앞범퍼에서 정지선까지. 여기서 StopLineGap 을 빼면 실제로 서야 하는 자리까지의 거리다.
 		const float ToStopLine = StopLineDistance - DistanceAlongLane - (GetVehicleLength() * 0.5f);
 
-		StepSpeed = FMath::Min(StepSpeed, ResolveApproachSpeed(ToStopLine - StopLineGap, StopLineBrakeDistance, DesiredSpeed));
+		const float RemainingToStop = ToStopLine - StopLineGap;
+		const float StopLineSpeed = ResolveApproachSpeed(RemainingToStop, StopLineBrakeDistance, DesiredSpeed);
+
+		if (OutRemainingToStop)
+		{
+			*OutRemainingToStop = RemainingToStop;
+		}
+
+		// 정지선이 앞차보다 더 느리게 만들었을 때만 정지선 탓이다. 둘을 뭉치면 로그가
+		// "정지선 앞에 섰다" 라고 말하는데 실제로는 앞차에 막힌 상황이 섞여 들어온다.
+		if (OutStopLineLimited)
+		{
+			*OutStopLineLimited = StopLineSpeed <= StepSpeed;
+		}
+
+		StepSpeed = FMath::Min(StepSpeed, StopLineSpeed);
 	}
 
 	return StepSpeed;
+}
+
+void ACWBaseVehicle::LogStopLineSync(bool bStopLineLimited, float StepSpeed, float RemainingToStop)
+{
+	const bool bNowStopped = bStopLineLimited && StepSpeed <= KINDA_SMALL_NUMBER;
+	if (bNowStopped == bStoppedAtStopLine)
+	{
+		return;
+	}
+
+	// 로그를 꺼 두었어도 상태는 따라간다. 도중에 켰을 때 지나간 사건이 한꺼번에 쏟아지지 않게 한다.
+	bStoppedAtStopLine = bNowStopped;
+
+	if (!UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	{
+		return;
+	}
+
+	if (bNowStopped)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선 앞 정지 - 차선 %s / 진행거리 %.1fcm / 서야 할 자리까지 %.1fcm"),
+			UCWTrafficSubsystem::GetNetRoleTag(this),
+			*UCWTrafficSubsystem::GetNetIdTag(this),
+			CurrentLane ? *CurrentLane->GetName() : TEXT("(없음)"),
+			DistanceAlongLane,
+			RemainingToStop);
+
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선에서 출발 - 진행거리 %.1fcm"),
+		UCWTrafficSubsystem::GetNetRoleTag(this),
+		*UCWTrafficSubsystem::GetNetIdTag(this),
+		DistanceAlongLane);
 }
 
 float ACWBaseVehicle::ResolveApproachSpeed(float Remaining, float BrakeDistance, float DesiredSpeed)

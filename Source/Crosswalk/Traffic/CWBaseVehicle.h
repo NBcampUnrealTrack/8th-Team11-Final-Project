@@ -193,8 +193,12 @@ private:
 	 *
 	 * 프레임 시간을 받지 않는다. 앞차와의 거리만 보고 정해야 프레임 간격이 흔들려도 속도가
 	 * 같이 흔들리지 않고, 서버와 클라이언트가 같은 상황에서 같은 값을 낸다.
+	 *
+	 * @param OutStopLineLimited 이번 속도를 정한 것이 정지선인지. 진단 로그가 "앞차에 막힌 것"과
+	 *                           구분하는 데 쓴다. 게임플레이는 보지 않으므로 nullptr 이어도 된다.
+	 * @param OutRemainingToStop 서야 하는 자리까지 남은 거리(cm). 정지선이 없으면 건드리지 않는다.
 	 */
-	float ResolveStepSpeed() const;
+	float ResolveStepSpeed(bool* OutStopLineLimited = nullptr, float* OutRemainingToStop = nullptr) const;
 
 	/**
 	 * 멈춰야 할 지점까지 Remaining 만큼 남았을 때 낼 속도. 앞차와 정지선이 각자 부른다.
@@ -307,6 +311,14 @@ private:
 	 * 곧바로 빠져나간다.
 	 */
 	void RetryPendingHits();
+
+	/**
+	 * 정지선 앞에서 서고 다시 출발하는 순간을 서버·클라이언트가 각자 찍는다. 진단 전용이다.
+	 *
+	 * 두 로그의 진행거리를 빼면 그 차가 양쪽에서 몇 cm 어긋난 자리에 섰는지가 바로 나온다.
+	 * 클라이언트 쪽 줄이 아예 없으면 그 화면에서는 차가 서지 않았다는 뜻이다.
+	 */
+	void LogStopLineSync(bool bStopLineLimited, float StepSpeed, float RemainingToStop);
 
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
@@ -525,6 +537,14 @@ private:
 	 * 갖춰진 피격을 다시 판정할 길이 없다. 떨어지면 HandleEndOverlap 이 지운다.
 	 */
 	TSet<TWeakObjectPtr<AActor>> OverlappingReceivers;
+
+	/**
+	 * 지금 정지선 때문에 서 있는지. 진단 로그를 사건이 일어난 순간에만 찍기 위한 기억이다.
+	 *
+	 * 매 틱 찍으면 로그가 흘러가서 두 사람이 같은 사건을 짚을 수가 없다.
+	 * 앞차에 막혀 선 것은 여기 들어오지 않는다 - 정지선 판정과 섞이면 로그가 거짓말을 한다.
+	 */
+	bool bStoppedAtStopLine = false;
 
 	FTimerHandle ParriedDespawnTimerHandle;
 };

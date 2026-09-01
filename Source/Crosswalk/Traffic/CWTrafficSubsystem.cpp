@@ -9,6 +9,73 @@
 #include "CWTrafficStopLine.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
+#include "Engine/NetDriver.h"
+#include "Engine/PackageMapClient.h"
+#include "GameFramework/Actor.h"
+#include "HAL/IConsoleManager.h"
+
+namespace
+{
+	/**
+	 * 동기화 진단 로그. **기본값이 켜짐인 것은 의도다.**
+	 *
+	 * 이 로그는 다른 팀원과 2인 테스트를 할 때 쓰는데, 받는 사람이 설정을 먼저 해야 하면
+	 * 그 단계에서 테스트가 끊긴다. 켜는 쪽이 아니라 끄는 쪽이 한 줄이어야 한다.
+	 *
+	 * 사건이 일어난 순간에만 찍으므로(정지·출발·색 변경) 켜 두어도 로그가 흐르지 않는다.
+	 */
+	TAutoConsoleVariable<bool> CVarTrafficLogSync(
+		TEXT("cw.Traffic.LogSync"),
+		true,
+		TEXT("정지선·신호 동기화 진단 로그를 찍는다. 0 이면 끈다."),
+		ECVF_Default);
+}
+
+bool UCWTrafficSubsystem::IsSyncLoggingEnabled()
+{
+	return CVarTrafficLogSync.GetValueOnAnyThread();
+}
+
+const TCHAR* UCWTrafficSubsystem::GetNetRoleTag(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return TEXT("?");
+	}
+
+	return Actor->HasAuthority() ? TEXT("서버") : TEXT("클라");
+}
+
+FString UCWTrafficSubsystem::GetNetIdTag(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return TEXT("(없음)");
+	}
+
+	/**
+	 * 액터 이름이 아니라 네트워크 GUID 를 쓴다.
+	 *
+	 * 런타임에 스폰된 차량은 서버와 클라이언트에서 이름이 다르게 붙는다. 이름으로 찍으면
+	 * 두 로그를 나란히 놓아도 **어느 줄이 같은 차인지 짚을 수가 없어서**, 이 로그의 목적
+	 * 자체가 사라진다. GUID 는 양쪽이 같은 값을 갖는다.
+	 */
+	if (UNetDriver* NetDriver = Actor->GetNetDriver())
+	{
+		if (NetDriver->GuidCache.IsValid())
+		{
+			const FNetworkGUID NetGuid = NetDriver->GuidCache->GetNetGUID(Actor);
+			if (NetGuid.IsValid())
+			{
+				return FString::Printf(TEXT("#%s"), *NetGuid.ToString());
+			}
+		}
+	}
+
+	// 네트워크가 없으면(싱글 PIE) 이름으로 충분하다. 맞춰 볼 상대 로그가 없다.
+	return Actor->GetName();
+}
+
 UCWTrafficSubsystem* UCWTrafficSubsystem::Get(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject)
@@ -268,8 +335,8 @@ bool UCWTrafficSubsystem::FindActiveStopLine(const ACWTrafficLane* Lane, float F
 			continue;
 		}
 
-		// 통제 중인데 초록이면 세우지 않는다. 제어기가 둘이면 하나라도 초록이면 통행이다.
-		if (Director->IsLaneGreen(Lane))
+		// 통행 신호(초록·황색)면 세우지 않는다. 제어기가 둘이면 하나라도 통행이면 지나간다.
+		if (Director->IsLanePassable(Lane))
 		{
 			return false;
 		}

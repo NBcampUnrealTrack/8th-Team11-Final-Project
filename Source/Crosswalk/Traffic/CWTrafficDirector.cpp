@@ -37,6 +37,22 @@ ACWTrafficDirector::ACWTrafficDirector()
 
 	// 그룹 색을 클라이언트도 알아야 한다. 정지선 판정을 양쪽이 각자 하기 때문이다.
 	bReplicates = true;
+
+	/**
+	 * 관련성 컬링에서 뺀다. 이걸 안 하면 참가자 화면에서 차가 정지선을 그냥 지나간다.
+	 *
+	 * 이 액터는 보이는 물건이 아니라 레벨 전체의 신호 상태를 들고 있는 논리 액터인데,
+	 * 기본 관련성은 액터 위치와 플레이어 거리로 판정한다. 루트 컴포넌트가 없어 위치가
+	 * 월드 원점으로 잡히고, 플레이 구역이 원점에서 기본 컬링 거리(150m) 밖이면
+	 * 클라이언트에는 GroupStates 가 영영 도착하지 않는다.
+	 *
+	 * 그러면 ResolveGroupState 가 복제값 대신 그룹의 기본색(보통 초록)으로 답하고,
+	 * FindActiveStopLine 이 "초록이니 안 세운다" 로 빠져나간다. 호스트만 서고 참가자는
+	 * 그대로 지나가는 것이 이 경로다. 주행 자체는 멀쩡해서 원인이 안 보인다.
+	 *
+	 * 비용은 무시할 만하다. 흐르는 것은 그룹 수만큼의 uint8 배열 하나이고, 색이 바뀔 때만이다.
+	 */
+	bAlwaysRelevant = true;
 }
 
 void ACWTrafficDirector::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -48,41 +64,52 @@ void ACWTrafficDirector::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 bool ACWTrafficDirector::ControlsLane(const ACWTrafficLane* Lane) const
 {
-	if (!Lane)
-	{
-		return false;
-	}
-
-	for (int32 Index = 0; Index < Groups.Num(); ++Index)
-	{
-		if (!Groups[Index].Lanes.Contains(Lane))
-		{
-			continue;
-		}
-
-		// 꺼진 그룹은 통제하지 않는 것으로 본다. 신호를 잠시 없애는 연출이 가능해야 한다.
-		return ResolveGroupState(Index) != ECWTrafficSignalState::Off;
-	}
-
-	return false;
+	// 꺼진 그룹은 통제하지 않는 것으로 본다. 신호를 잠시 없애는 연출이 가능해야 한다.
+	return ResolveLaneState(Lane) != ECWTrafficSignalState::Off;
 }
 
 bool ACWTrafficDirector::IsLaneGreen(const ACWTrafficLane* Lane) const
 {
+	return ResolveLaneState(Lane) == ECWTrafficSignalState::Green;
+}
+
+bool ACWTrafficDirector::IsLanePassable(const ACWTrafficLane* Lane) const
+{
+	/**
+	 * 황색을 통행으로 본다.
+	 *
+	 * 황색은 "곧 적색이 된다" 는 예고이지 정지 지시가 아니다. 여기서 세우면 정지선을 막 지난
+	 * 차가 교차로 한가운데에서 급정거하고, 그대로 적색이 되어 다음 방향 차들이 지나갈 자리를
+	 * 막는다. 실제 도로에서 황색에 이미 진입한 차를 보내는 이유와 같다.
+	 *
+	 * 단계 사이의 ClearanceDuration 이 그 차들이 빠져나갈 시간을 이미 벌어 준다.
+	 * 황색에 세우면 그 시간이 하는 일이 없어진다.
+	 *
+	 * 꺼짐은 여기서 통행으로 치지 않는다. 신호가 없는 차선은 ControlsLane 이 먼저 걸러내므로
+	 * 이 함수까지 오지 않고, 제어기가 둘일 때의 판정을 바꾸지 않기 위해서다.
+	 */
+	const ECWTrafficSignalState State = ResolveLaneState(Lane);
+
+	return State == ECWTrafficSignalState::Green || State == ECWTrafficSignalState::Yellow;
+}
+
+ECWTrafficSignalState ACWTrafficDirector::ResolveLaneState(const ACWTrafficLane* Lane) const
+{
 	if (!Lane)
 	{
-		return false;
+		return ECWTrafficSignalState::Off;
 	}
 
+	// 같은 차선이 여러 그룹에 들어 있으면 먼저 찾은 그룹이 이긴다. 배치 실수라 여기서 뭉개지 않는다.
 	for (int32 Index = 0; Index < Groups.Num(); ++Index)
 	{
 		if (Groups[Index].Lanes.Contains(Lane))
 		{
-			return ResolveGroupState(Index) == ECWTrafficSignalState::Green;
+			return ResolveGroupState(Index);
 		}
 	}
 
-	return false;
+	return ECWTrafficSignalState::Off;
 }
 
 ECWTrafficSignalState ACWTrafficDirector::GetGroupState(FName GroupName) const
@@ -362,7 +389,27 @@ void ACWTrafficDirector::SetGroupStateAt(int32 GroupIndex, ECWTrafficSignalState
 		NotifiedStates[GroupIndex] = NewState;
 	}
 
+	LogSyncSignalChange(Groups[GroupIndex].GroupName, NewState, OldState);
+
 	OnGroupStateChanged.Broadcast(this, Groups[GroupIndex].GroupName, NewState, OldState);
+}
+
+void ACWTrafficDirector::LogSyncSignalChange(FName GroupName, ECWTrafficSignalState NewState, ECWTrafficSignalState OldState) const
+{
+	if (!UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	{
+		return;
+	}
+
+	// 색 이름은 열거형의 표시 이름을 그대로 쓴다. 여기에 표를 하나 더 두면 둘이 갈라진다.
+	const UEnum* StateEnum = StaticEnum<ECWTrafficSignalState>();
+
+	UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] %s 그룹 '%s' %s <- %s"),
+		UCWTrafficSubsystem::GetNetRoleTag(this),
+		*GetName(),
+		*GroupName.ToString(),
+		*StateEnum->GetDisplayNameTextByValue(static_cast<int64>(NewState)).ToString(),
+		*StateEnum->GetDisplayNameTextByValue(static_cast<int64>(OldState)).ToString());
 }
 
 void ACWTrafficDirector::ScheduleRule(int32 RuleIndex)
@@ -484,6 +531,8 @@ void ACWTrafficDirector::OnRep_GroupStates()
 		NotifiedStates[Index] = GroupStates[Index];
 
 		const FName GroupName = Groups.IsValidIndex(Index) ? Groups[Index].GroupName : NAME_None;
+		LogSyncSignalChange(GroupName, GroupStates[Index], OldState);
+
 		OnGroupStateChanged.Broadcast(this, GroupName, GroupStates[Index], OldState);
 	}
 }
