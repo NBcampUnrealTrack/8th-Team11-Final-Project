@@ -1,0 +1,208 @@
+﻿// CWClipboardPresenterSubsystem.cpp
+
+#include "UI/Clipboard/CWClipboardPresenterSubsystem.h"
+
+#include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+
+#pragma region SubsystemOverrides
+
+void UCWClipboardPresenterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	ClipboardState = ECWClipboardState::Hidden;
+}
+
+void UCWClipboardPresenterSubsystem::Deinitialize()
+{
+	if (IsValid(PropActor))
+	{
+		PropActor->OnRaiseFinished.RemoveAll(this);
+		PropActor->OnLowerFinished.RemoveAll(this);
+		PropActor->Destroy();
+	}
+
+	PropActor = nullptr;
+	ClipboardState = ECWClipboardState::Hidden;
+
+	Super::Deinitialize();
+}
+
+#pragma endregion
+
+#pragma region PublicFunctions
+
+void UCWClipboardPresenterSubsystem::PlayRaise()
+{
+	ReconcileLostProp();
+
+	if (ClipboardState == ECWClipboardState::Raised ||
+		ClipboardState == ECWClipboardState::Raising)
+	{
+		return;
+	}
+
+	if (!EnsurePropSpawned())
+	{
+		// 계약: 연출이 실패해도 완료 통보는 반드시 간다
+		// 안 쏘면 UI 가 TileView 를 영영 HitTestInvisible 로 두어 스테이지 선택이 잠긴다
+		UE_LOG(
+			LogCWClipboard,
+			Warning,
+			TEXT("[Clipboard] 프롭 준비 실패. 연출을 건너뛰고 즉시 Raise 완료를 통보한다")
+		);
+
+		ClipboardState = ECWClipboardState::Raised;
+		OnRaiseFinished.Broadcast();
+		return;
+	}
+
+	ClipboardState = ECWClipboardState::Raising;
+	PropActor->StartRaise();
+}
+
+void UCWClipboardPresenterSubsystem::PlayLower()
+{
+	ReconcileLostProp();
+
+	if (ClipboardState == ECWClipboardState::Hidden ||
+		ClipboardState == ECWClipboardState::Lowering)
+	{
+		return;
+	}
+
+	if (!IsValid(PropActor))
+	{
+		// 프롭 없이 Raised 로 넘어와 있던 경우 (연출을 건너뛴 상태)
+		UE_LOG(
+			LogCWClipboard,
+			Warning,
+			TEXT("[Clipboard] 프롭이 없다. 연출을 건너뛰고 즉시 Lower 완료를 통보한다")
+		);
+
+		ClipboardState = ECWClipboardState::Hidden;
+		OnLowerFinished.Broadcast();
+		return;
+	}
+
+	ClipboardState = ECWClipboardState::Lowering;
+	PropActor->StartLower();
+}
+
+#pragma endregion
+
+#pragma region PrivateFunctions
+
+void UCWClipboardPresenterSubsystem::ReconcileLostProp()
+{
+	// Subsystem 은 맵 이동을 견디지만 프롭 액터는 월드와 함께 사라진다
+	// 그 경우 상태가 Raising 에 멈춰 다음 호출이 통째로 무시되는 걸 막는다
+	if (!IsValid(PropActor) && ClipboardState != ECWClipboardState::Hidden)
+	{
+		UE_LOG(
+			LogCWClipboard,
+			Verbose,
+			TEXT("[Clipboard] 프롭이 사라져 상태를 Hidden 으로 되돌린다")
+		);
+
+		ClipboardState = ECWClipboardState::Hidden;
+	}
+}
+
+bool UCWClipboardPresenterSubsystem::EnsurePropSpawned()
+{
+	if (IsValid(PropActor))
+	{
+		return true;
+	}
+
+	ULocalPlayer* LocalPlayer = ResolveLocalPlayer();
+	if (!LocalPlayer)
+	{
+		return false;
+	}
+
+	UWorld* World = LocalPlayer->GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	APlayerController* PlayerController = LocalPlayer->GetPlayerController(World);
+	if (!IsValid(PlayerController))
+	{
+		return false;
+	}
+
+	UClass* SpawnClass = ACWClipboardPropActor::StaticClass();
+	if (!PropActorClass.IsNull())
+	{
+		if (UClass* LoadedClass = PropActorClass.LoadSynchronous())
+		{
+			SpawnClass = LoadedClass;
+		}
+		else
+		{
+			UE_LOG(
+				LogCWClipboard,
+				Warning,
+				TEXT("[Clipboard] PropActorClass 로드 실패. 기본 클래스로 대체한다: %s"),
+				*PropActorClass.ToString()
+			);
+		}
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = PlayerController;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParameters.ObjectFlags |= RF_Transient;
+
+	PropActor = World->SpawnActor<ACWClipboardPropActor>(
+		SpawnClass,
+		FTransform::Identity,
+		SpawnParameters
+	);
+
+	if (!IsValid(PropActor))
+	{
+		return false;
+	}
+
+	PropActor->SetOwningPlayerController(PlayerController);
+
+	PropActor->OnRaiseFinished.AddUObject(
+		this,
+		&UCWClipboardPresenterSubsystem::HandleRaiseFinished
+	);
+
+	PropActor->OnLowerFinished.AddUObject(
+		this,
+		&UCWClipboardPresenterSubsystem::HandleLowerFinished
+	);
+
+	return true;
+}
+
+ULocalPlayer* UCWClipboardPresenterSubsystem::ResolveLocalPlayer() const
+{
+	return Cast<ULocalPlayer>(GetOuter());
+}
+
+void UCWClipboardPresenterSubsystem::HandleRaiseFinished()
+{
+	ClipboardState = ECWClipboardState::Raised;
+
+	OnRaiseFinished.Broadcast();
+}
+
+void UCWClipboardPresenterSubsystem::HandleLowerFinished()
+{
+	ClipboardState = ECWClipboardState::Hidden;
+
+	OnLowerFinished.Broadcast();
+}
+
+#pragma endregion
