@@ -6,6 +6,7 @@
 #include "Characters/Wearables/CWWearableItem.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Core/CWDecalStatics.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
@@ -445,6 +446,9 @@ UMeshComponent* UCWWearableComponent::EnsureSlotComponent(int32 SlotIndex, const
 
 	// 시각 전용이라 복제하지 않는다. 모든 머신이 같은 데이터를 보고 각자 만든다.
 	NewSlot->SetIsReplicated(false);
+
+	// 몸과 같이 바닥 데칼을 받지 않는다. 캐릭터 BeginPlay 이후에 갈아입는 착용물은 여기서만 잡힌다.
+	UCWDecalStatics::DisableDecalReceiveOnComponent(NewSlot);
 
 	NewSlot->RegisterComponent();
 

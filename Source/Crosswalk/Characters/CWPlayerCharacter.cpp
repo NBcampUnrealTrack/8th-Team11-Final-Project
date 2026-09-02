@@ -27,6 +27,7 @@
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Characters/Components/CWWearableComponent.h"
 #include "Characters/Wearables/CWWearableItem.h"
+#include "Core/CWDecalStatics.h"
 #include "Interfaces/Interface_Interactable.h"
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
@@ -116,6 +117,15 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 void ACWPlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	/**
+	 * 캐릭터는 바닥 데칼을 받지 않는다.
+	 *
+	 * 안 끄면 싱크홀 균열이나 아스팔트 끈끈이 데칼 위에 서 있는 동안 그 무늬가
+	 * 몸과 착용물에 그대로 씌워진다. Super 를 지난 뒤라 착용물 컴포넌트가
+	 * BeginPlay 에서 만든 슬롯 메시까지 여기서 함께 잡힌다.
+	 */
+	UCWDecalStatics::DisableDecalReceiveOnActor(this);
 
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);

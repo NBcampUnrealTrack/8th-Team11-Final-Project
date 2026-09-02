@@ -1,5 +1,6 @@
 #include "Painting/CWWorkTruck.h"
 
+#include "Core/CWDecalStatics.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -46,6 +47,10 @@ void ACWWorkTruck::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 void ACWWorkTruck::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 외형은 모든 머신에서 맞춰야 하므로 권한 검사보다 먼저 끈다.
+	// 바닥 데칼이 차체에 씌워지는 것을 막는다.
+	UCWDecalStatics::DisableDecalReceiveOnActor(this);
 
 	// 도구를 트렁크에 넣는 것은 서버만 한다. 클라이언트는 리플리케이트된 목록을 받는다.
 	if (!HasAuthority())

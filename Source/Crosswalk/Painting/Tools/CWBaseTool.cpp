@@ -2,6 +2,7 @@
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Core/CWDecalStatics.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
 #include "Painting/Components/CWToolHolderComponent.h"
@@ -42,6 +43,9 @@ void ACWBaseTool::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 void ACWBaseTool::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 도구는 바닥 데칼을 받지 않는다. 데칼 위에 내려놨거나 그 위에서 들고 있어도 무늬가 옮지 않는다.
+	UCWDecalStatics::DisableDecalReceiveOnActor(this);
 
 	// 스테이지 시작 시 모든 도구는 가득 찬 상태다. (기획서 8절)
 	// 서버에서만 채우고 클라이언트는 리플리케이션으로 받는다.
