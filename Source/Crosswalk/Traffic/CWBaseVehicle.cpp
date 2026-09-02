@@ -11,6 +11,7 @@
 #include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficSubsystem.h"
+#include "Core/CWDecalStatics.h"
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
 
@@ -411,6 +412,14 @@ void ACWBaseVehicle::OnRep_ParryLaunch()
 void ACWBaseVehicle::BeginPlay()
 {
 	Super::BeginPlay();
+
+	/**
+	 * 차량은 바닥 데칼을 받지 않는다.
+	 *
+	 * 안 끄면 싱크홀에 못 맞춘 아스팔트 끈끈이 데칼 위를 지날 때 그 무늬가 차체에 씌워진다.
+	 * BP 에서 부속 메시를 더 달아도 액터 단위로 훑으므로 함께 꺼진다.
+	 */
+	UCWDecalStatics::DisableDecalReceiveOnActor(this);
 
 	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ACWBaseVehicle::HandleBeginOverlap);
 	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ACWBaseVehicle::HandleEndOverlap);

@@ -8,6 +8,7 @@
 #include "CWSinkhole.generated.h"
 
 class ACWSinkhole;
+class UStaticMeshComponent;
 class UDecalComponent;
 class USphereComponent;
 
@@ -123,6 +124,18 @@ private:
 	/** 진행도와 상태에 맞춰 데칼 크기와 콜리전 반경을 다시 맞춘다. 모든 머신이 각자 부른다. */
 	void RefreshVisualAndCollision();
 
+	/**
+	 * 구멍 평면을 "화면에 보이는" 지면 높이에 맞춘다. 모든 머신이 각자 부른다.
+	 *
+	 * 액터 원점을 그냥 믿으면 안 된다. 스폰 볼륨은 ECC_Visibility 라인 트레이스로 자리를 잡는데,
+	 * 프로토타입 맵의 도로 콜리전은 눈에 보이는 아스팔트보다 20cm 위에 뜬 bHiddenInGame 브러시다.
+	 * 그래서 평면은 브러시 위(=공중)에 얹히고 데칼만 보이는 아스팔트에 붙어, 쿼터뷰에서 검은 원과
+	 * 균열이 따로 떠 있는 것처럼 보인다.
+	 *
+	 * 데칼은 렌더 지오메트리에만 찍히므로, 평면도 같은 기준(렌더되는 첫 표면)을 쓰면 둘이 겹친다.
+	 */
+	void AlignVoidPlaneToVisibleGround();
+
 	UFUNCTION()
 	void HandleFallOverlap(
 		UPrimitiveComponent* OverlappedComponent,
@@ -133,7 +146,17 @@ private:
 		const FHitResult& SweepResult);
 
 public:
-	// 구멍 본체. 검은 원이다.
+	// 구멍 본체. 순수한 검정이어야 하므로 데칼이 아니라 평면 메시다.
+	//
+	// 데칼은 바닥의 알베도만 갈아끼우고 조명 계산은 바닥 평면 그대로 들어간다. 그래서
+	// BaseColor 를 0 으로 깎아도 하늘광이 얹혀 짙은 회색이 되고, 구멍이 아니라 바닥 얼룩으로 읽힌다.
+	// Unlit 머티리얼을 물린 메시는 조명을 아예 건너뛰므로 화면에 실제로 검정이 찍힌다.
+	//
+	// 지형을 함몰시키는 것은 아니다. 여전히 액터를 지우면 원상복구가 끝난다. (기획서 3~4절)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sinkhole")
+	TObjectPtr<UStaticMeshComponent> VoidPlane;
+
+	// 구멍 가장자리의 부서진 아스팔트 테. 바닥 요철을 따라가야 해서 이쪽은 데칼로 둔다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sinkhole")
 	TObjectPtr<UDecalComponent> HoleDecal;
 
@@ -162,6 +185,24 @@ protected:
 	// 균열이 번지고 나서 구멍이 열리기까지의 시간(초). (기획서 3-2)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole", meta = (ClampMin = "0.0"))
 	float WarningDuration = 1.2f;
+
+	// 구멍 평면을 보이는 지면에서 얼마나 띄울지(cm).
+	//
+	// 0 으로 두면 도로 표면과 같은 높이라 지글거린다(z-fighting). 그것만 피하면 1cm 로 충분하지만,
+	// 도로에 깔린 납작한 연출물(작업 존 흙자국 2cm, 셀/테두리 메시 0~1cm)보다는 위에 있어야 한다.
+	// 구멍이 그것들 아래로 깔리면 흙자국이 구멍 위에 떠 있는 그림이 된다. 싱크홀은 지면을 파낸
+	// 것이므로 도로 위 연출물은 전부 구멍에 가려지는 쪽이 맞다.
+	//
+	// 5cm 는 그 연출물 대역을 넘기면서도 쿼터뷰 거리에서 한 픽셀이 안 되는 값이다. 앞서 문제였던
+	// 20cm 짜리 들뜸과는 규모가 다르다. 도로에 더 두꺼운 연출물이 생기면 이 값을 올린다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole", meta = (ClampMin = "0.0"))
+	float VoidPlaneHeight = 5.f;
+
+	// 보이는 지면을 찾을 때 액터 원점 아래로 훑는 거리(cm).
+	// 도로 콜리전이 보이는 표면과 어긋난 만큼은 덮어야 한다. 너무 크게 잡으면 도로가 끊긴 곳에서
+	// 한참 아래의 엉뚱한 바닥을 집는다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole", meta = (ClampMin = "0.0"))
+	float GroundProbeDistance = 200.f;
 
 	// 복구 완료 후 액터가 실제로 사라지기까지의 유예(초).
 	// 마지막 연출이 클라이언트에 전달될 시간을 벌기 위한 것이라 짧게 둔다.

@@ -20,6 +20,9 @@ ACWAsphaltProjectileVisual::ACWAsphaltProjectileVisual()
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProjectileMesh->SetCastShadow(false);
 
+	// 낮게 날 때 바닥 데칼 무늬가 탄에 씌워지는 것을 막는다.
+	ProjectileMesh->bReceivesDecals = false;
+
 	// 애셋을 만들기 전에도 눈으로 확인할 수 있도록 엔진 기본 구체를 물려 둔다.
 	// BP 자식에서 실제 메시로 갈아끼우면 된다.
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaceholderMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
