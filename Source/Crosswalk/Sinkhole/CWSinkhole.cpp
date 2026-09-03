@@ -9,6 +9,21 @@
 #include "Net/UnrealNetwork.h"
 #include "Sinkhole/Components/CWSinkholeFallComponent.h"
 
+namespace
+{
+	/**
+	 * 바닥 데칼끼리의 층 순서. 값이 크면 위에 그려진다.
+	 *
+	 *   먼지 존 -10  →  페인트 자국 0(기본)  →  싱크홀 균열 10  →  구멍 테 20
+	 *
+	 * 싱크홀이 가장 위인 이유는 지면이 갈라진 사건이 도로 위 연출물보다 나중에, 그리고
+	 * 더 근본적으로 일어난 일이기 때문이다. 균열이 먼지나 페인트에 가려지면 이미 갈라진
+	 * 바닥이 멀쩡해 보인다.
+	 */
+	constexpr int32 CrackSortOrder = 10;
+	constexpr int32 HoleRimSortOrder = 20;
+}
+
 ACWSinkhole::ACWSinkhole()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -41,10 +56,12 @@ ACWSinkhole::ACWSinkhole()
 	HoleDecal = CreateDefaultSubobject<UDecalComponent>(TEXT("HoleDecal"));
 	HoleDecal->SetupAttachment(FallTrigger);
 	HoleDecal->SetRelativeRotation(DecalProjection);
+	HoleDecal->SortOrder = HoleRimSortOrder;
 
 	CrackDecal = CreateDefaultSubobject<UDecalComponent>(TEXT("CrackDecal"));
 	CrackDecal->SetupAttachment(FallTrigger);
 	CrackDecal->SetRelativeRotation(DecalProjection);
+	CrackDecal->SortOrder = CrackSortOrder;
 }
 
 void ACWSinkhole::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -67,6 +84,18 @@ void ACWSinkhole::BeginPlay()
 	if (CrackDecal != nullptr)
 	{
 		CrackDecal->SetRelativeRotation(FRotator(-90.f, FMath::FRandRange(0.f, 360.f), 0.f));
+	}
+
+	// 층 순서를 런타임에 한 번 더 못 박는다. BP 에셋에 예전 값이 직렬화되어 있으면
+	// 생성자에서 넣은 기본값이 덮인다. (#109 와 같은 함정)
+	if (HoleDecal != nullptr)
+	{
+		HoleDecal->SetSortOrder(HoleRimSortOrder);
+	}
+
+	if (CrackDecal != nullptr)
+	{
+		CrackDecal->SetSortOrder(CrackSortOrder);
 	}
 
 	FallTrigger->OnComponentBeginOverlap.AddDynamic(this, &ACWSinkhole::HandleFallOverlap);
