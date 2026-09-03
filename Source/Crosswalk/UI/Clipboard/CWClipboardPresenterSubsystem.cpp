@@ -38,9 +38,18 @@ void UCWClipboardPresenterSubsystem::PlayRaise()
 {
 	ReconcileLostProp();
 
-	if (ClipboardState == ECWClipboardState::Raised ||
-		ClipboardState == ECWClipboardState::Raising)
+	// 이미 올라오는 중이면 진행 중인 연출이 곧 한 번 통보한다
+	// 여기서 또 쏘면 한 번의 열기에 완료가 두 번 간다
+	if (ClipboardState == ECWClipboardState::Raising)
 	{
+		return;
+	}
+
+	// 이미 올라와 있으면 움직일 게 없다. 그래도 호출당 한 번은 통보해야 한다
+	// 안 쏘면 UI 가 입력을 끈 채로 완료를 기다려 스테이지 선택이 영영 잠긴다
+	if (ClipboardState == ECWClipboardState::Raised)
+	{
+		OnRaiseFinished.Broadcast();
 		return;
 	}
 
@@ -67,9 +76,17 @@ void UCWClipboardPresenterSubsystem::PlayLower()
 {
 	ReconcileLostProp();
 
-	if (ClipboardState == ECWClipboardState::Hidden ||
-		ClipboardState == ECWClipboardState::Lowering)
+	// 이미 내려가는 중이면 진행 중인 연출이 곧 한 번 통보한다
+	if (ClipboardState == ECWClipboardState::Lowering)
 	{
+		return;
+	}
+
+	// 이미 내려가 있어도 호출당 한 번은 통보한다 (PlayRaise 와 대칭)
+	// 안 쏘면 닫기 완료를 기다리는 UI 가 팝업을 영영 못 걷어낸다
+	if (ClipboardState == ECWClipboardState::Hidden)
+	{
+		OnLowerFinished.Broadcast();
 		return;
 	}
 
