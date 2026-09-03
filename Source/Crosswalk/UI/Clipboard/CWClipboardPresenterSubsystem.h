@@ -10,11 +10,13 @@
 class ULocalPlayer;
 
 // 클립보드가 완전히 올라와 멎은 순간
-// 계약: 연출 성공 여부와 무관하게 반드시 한 번 발행된다
+// 계약: PlayRaise 호출당 반드시 한 번 발행된다
+// 연출에 실패한 경우도, 이미 올라와 있어 건너뛴 경우도 예외가 아니다
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWClipboardRaiseFinishedSignature);
 
 // 클립보드가 완전히 내려간 순간
-// 계약: 연출 성공 여부와 무관하게 반드시 한 번 발행된다
+// 계약: PlayLower 호출당 반드시 한 번 발행된다
+// 연출에 실패한 경우도, 이미 내려가 있어 건너뛴 경우도 예외가 아니다
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWClipboardLowerFinishedSignature);
 
 // 스테이지 선택 화면의 클립보드 연출을 담당
@@ -36,13 +38,15 @@ public:
 #pragma region PublicFunctions
 
 public:
-	// 클립보드를 화면 안으로 올린다. 이미 올라와 있으면 무시
-	// 연출이 불가능한 상황이면 건너뛰고 즉시 OnRaiseFinished 를 발행한다
+	// 클립보드를 화면 안으로 올린다
+	// 이미 올라와 있거나 연출이 불가능하면 건너뛰고 즉시 OnRaiseFinished 를 발행한다
+	// 올라오는 중이면 진행 중인 연출의 완료 통보에 맡기고 아무것도 하지 않는다
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Clipboard")
 	void PlayRaise();
 
-	// 클립보드를 내린다. 이미 내려가 있으면 무시
-	// 연출이 불가능한 상황이면 건너뛰고 즉시 OnLowerFinished 를 발행한다
+	// 클립보드를 내린다
+	// 이미 내려가 있거나 연출이 불가능하면 건너뛰고 즉시 OnLowerFinished 를 발행한다
+	// 내려가는 중이면 진행 중인 연출의 완료 통보에 맡기고 아무것도 하지 않는다
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Clipboard")
 	void PlayLower();
 
