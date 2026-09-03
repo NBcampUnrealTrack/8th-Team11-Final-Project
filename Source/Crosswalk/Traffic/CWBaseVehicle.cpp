@@ -4,6 +4,7 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
@@ -54,6 +55,7 @@ void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 	DOREPLIFETIME(ACWBaseVehicle, DistanceAlongLane);
 	DOREPLIFETIME(ACWBaseVehicle, SpeedMultiplier);
 	DOREPLIFETIME(ACWBaseVehicle, LaneLateralOffset);
+	DOREPLIFETIME(ACWBaseVehicle, MeshVariantIndex);
 
 	DOREPLIFETIME(ACWBaseVehicle, bParried);
 	DOREPLIFETIME(ACWBaseVehicle, ParryLaunchSerial);
@@ -140,11 +142,53 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
 
+	// 외형 변형은 서버가 골라 복제한다. 클라이언트가 각자 굴리면 화면마다 다른 차가 보인다.
+	if (HasAuthority() && MeshVariants.Num() > 0)
+	{
+		MeshVariantIndex = FMath::RandHelper(MeshVariants.Num());
+		ApplyMeshVariant();
+	}
+
 	// 풀링으로 재사용될 때 지난 주행의 피격 기록이 남아 있으면 안 된다.
 	HitActors.Reset();
 	OverlappingReceivers.Reset();
 
 	UpdateTransformOnLane();
+}
+
+void ACWBaseVehicle::ApplyMeshVariant()
+{
+	if (!MeshVariants.IsValidIndex(MeshVariantIndex))
+	{
+		return;
+	}
+
+	const FCWVehicleMeshVariant& Variant = MeshVariants[MeshVariantIndex];
+
+	// 배열에 빈 칸이 섞여 있으면 그 칸을 뽑은 차량은 BP 기본 메쉬 그대로 달린다.
+	if (Variant.Mesh)
+	{
+		VehicleMesh->SetStaticMesh(Variant.Mesh);
+	}
+
+	/**
+	 * 콜리전도 같이 바꾼다.
+	 *
+	 * 같은 승용차 팩 안에서도 폭이 178~253cm 로 벌어져서, 박스를 하나로 고정하면
+	 * 넓은 차는 옆구리 판정이 비고 좁은 차는 스치기만 해도 맞는다.
+	 *
+	 * 이 값은 GetVehicleLength 를 통해 스포너의 간격 계산에도 들어간다. 다만 스폰 주기가
+	 * 차 길이에 비해 훨씬 길어서(8초면 6000cm 이동) 실제로 간격 제한에 걸리는 일은 없다.
+	 */
+	if (!Variant.BoxExtent.IsNearlyZero())
+	{
+		CollisionBox->SetBoxExtent(Variant.BoxExtent);
+	}
+}
+
+void ACWBaseVehicle::OnRep_MeshVariantIndex()
+{
+	ApplyMeshVariant();
 }
 
 bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds) const
