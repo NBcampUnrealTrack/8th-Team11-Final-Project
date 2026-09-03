@@ -16,6 +16,23 @@ class UStaticMesh;
 class UStaticMeshComponent;
 
 /**
+ * 차량이 정지선 앞에 서거나 다시 출발한 순간. 서버·클라이언트 양쪽에서 각자 뜬다.
+ *
+ * 정지 구간은 DistanceAlongLane 이 변하지 않아서 복제가 흐르지 않는 구간이다.
+ * 보정이 필요한 쪽은 이 알림으로 "지금 이 차는 서 있고, 서야 할 자리는 여기다" 를 받는다.
+ * 매 틱 값을 비교할 필요가 없도록 전이하는 순간에만 나간다.
+ *
+ * 앞차에 막혀 선 것은 여기 들어오지 않는다. 그쪽은 앞차가 움직이면 따라 풀리므로
+ * 복제가 계속 흐르고, 정지선처럼 값이 얼어붙지 않는다.
+ *
+ * @param Vehicle             상태가 바뀐 차량.
+ * @param bStoppedAtStopLine  섰으면 true, 다시 출발했으면 false.
+ * @param StopTargetDistance  서야 하는 차선 위 진행 거리(cm). 출발 알림에서는 -1 이다.
+ *                            (통행이 허가돼서 풀린 것이라 그 시점엔 볼 정지선이 없다)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleStopStateChangedSignature, ACWBaseVehicle*, Vehicle, bool, bStoppedAtStopLine, float, StopTargetDistance);
+
+/**
  * 차선 스플라인을 따라 직선 주행하는 차량의 공통 베이스.
  * 승용차 / 오토바이 / 트럭 등 차종은 이 클래스를 상속한 BP로 만든다.
  *
@@ -134,6 +151,30 @@ public:
 	float GetDistanceAlongLane() const { return DistanceAlongLane; }
 
 	/**
+	 * 지금 정지선 때문에 서 있는가. 서버·클라이언트 각자의 판단이라 두 값이 다를 수 있고,
+	 * 다른 것 자체가 어긋남의 신호다.
+	 *
+	 * 앞차에 막혀 선 것은 false 다. 두 정지는 풀리는 방식이 달라서 섞으면 안 된다.
+	 * 앞차는 앞이 움직이면 따라 풀리지만, 정지선은 신호가 바뀔 때까지 값이 얼어붙는다.
+	 *
+	 * 바뀌는 순간을 잡으려면 매 틱 비교하지 말고 OnStopStateChanged 를 쓴다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	bool IsStoppedAtStopLine() const { return bStoppedAtStopLine; }
+
+	/**
+	 * 이 차가 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1.
+	 *
+	 * DistanceAlongLane 과 같은 좌표계라 그대로 대입하면 정확히 서야 할 자리에 놓인다.
+	 * 정지 구간의 보정은 서버가 보낸 값을 기다리지 말고 이 값을 목표로 삼는 편이 낫다.
+	 * 정지선 위치도 차체 길이도 양쪽이 같은 값을 갖고 있어서, 계산 결과가 애초에 같다.
+	 *
+	 * 감속을 시작하기 전에도 값이 나온다. 서 있는지까지 물으려면 IsStoppedAtStopLine 을 같이 본다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetStopTargetDistance() const { return StopTargetDistance; }
+
+	/**
 	 * Target이 이 차량의 진행 경로 위에 있을 때 충돌까지 남은 시간(초)을 낸다.
 	 * 경로 밖이거나 이미 지나쳤으면 false.
 	 *
@@ -196,11 +237,13 @@ private:
 	 * 프레임 시간을 받지 않는다. 앞차와의 거리만 보고 정해야 프레임 간격이 흔들려도 속도가
 	 * 같이 흔들리지 않고, 서버와 클라이언트가 같은 상황에서 같은 값을 낸다.
 	 *
-	 * @param OutStopLineLimited 이번 속도를 정한 것이 정지선인지. 진단 로그가 "앞차에 막힌 것"과
-	 *                           구분하는 데 쓴다. 게임플레이는 보지 않으므로 nullptr 이어도 된다.
-	 * @param OutRemainingToStop 서야 하는 자리까지 남은 거리(cm). 정지선이 없으면 건드리지 않는다.
+	 * @param OutStopLineLimited     이번 속도를 정한 것이 정지선인지. 정지 상태 판정이 "앞차에 막힌 것"과
+	 *                               구분하는 데 쓴다. 속도 자체는 이 값과 무관하므로 nullptr 이어도 된다.
+	 * @param OutStopTargetDistance  서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1.
+	 *                               남은 거리가 아니라 목표 지점이다. 남은 거리는 진행 거리를 빼면 나오는데,
+	 *                               목표 지점은 이 차가 어디까지 왔든 같은 값이라 보정의 기준으로 쓸 수 있다.
 	 */
-	float ResolveStepSpeed(bool* OutStopLineLimited = nullptr, float* OutRemainingToStop = nullptr) const;
+	float ResolveStepSpeed(bool* OutStopLineLimited = nullptr, float* OutStopTargetDistance = nullptr) const;
 
 	/**
 	 * 멈춰야 할 지점까지 Remaining 만큼 남았을 때 낼 속도. 앞차와 정지선이 각자 부른다.
@@ -322,12 +365,16 @@ private:
 	void RetryPendingHits();
 
 	/**
-	 * 정지선 앞에서 서고 다시 출발하는 순간을 서버·클라이언트가 각자 찍는다. 진단 전용이다.
+	 * 정지 상태 전이를 확정한다. 값이 바뀐 순간에만 델리게이트와 진단 로그가 나간다.
 	 *
-	 * 두 로그의 진행거리를 빼면 그 차가 양쪽에서 몇 cm 어긋난 자리에 섰는지가 바로 나온다.
-	 * 클라이언트 쪽 줄이 아예 없으면 그 화면에서는 차가 서지 않았다는 뜻이다.
+	 * 서버·클라이언트가 각자 부른다. 두 로그의 진행거리를 빼면 그 차가 양쪽에서 몇 cm
+	 * 어긋난 자리에 섰는지가 바로 나오고, 클라이언트 쪽 줄이 아예 없으면 그 화면에서는
+	 * 차가 서지 않았다는 뜻이다.
+	 *
+	 * 로그를 꺼 두었어도 상태와 델리게이트는 그대로 돈다. 진단 스위치가 보정 동작을
+	 * 바꾸면 "로그를 켜니까 증상이 사라진다" 가 되어서 실측 자체가 성립하지 않는다.
 	 */
-	void LogStopLineSync(bool bStopLineLimited, float StepSpeed, float RemainingToStop);
+	void UpdateStopState(bool bNowStopped);
 
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
@@ -601,12 +648,30 @@ private:
 	TSet<TWeakObjectPtr<AActor>> OverlappingReceivers;
 
 	/**
-	 * 지금 정지선 때문에 서 있는지. 진단 로그를 사건이 일어난 순간에만 찍기 위한 기억이다.
+	 * 지금 정지선 때문에 서 있는지. 전이하는 순간에만 알리기 위한 기억이다.
 	 *
-	 * 매 틱 찍으면 로그가 흘러가서 두 사람이 같은 사건을 짚을 수가 없다.
+	 * 매 틱 알리면 로그가 흘러가서 두 사람이 같은 사건을 짚을 수가 없고, 받는 쪽도
+	 * 이미 하고 있는 보정을 매 틱 다시 시작하게 된다.
 	 * 앞차에 막혀 선 것은 여기 들어오지 않는다 - 정지선 판정과 섞이면 로그가 거짓말을 한다.
+	 *
+	 * 복제하지 않는다. 양쪽이 각자 판단해야 두 값의 차이가 어긋남의 증거가 된다.
+	 * 서버 값을 받아서 쓰면 클라이언트가 실제로 섰는지를 물을 방법이 없어진다.
 	 */
 	bool bStoppedAtStopLine = false;
 
+	/**
+	 * 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1. 매 틱 ResolveStepSpeed 가 채운다.
+	 *
+	 * 복제하지 않는다. 정지선 위치도 차체 길이도 이미 양쪽에 다 있어서 계산 결과가 같고,
+	 * 값이 갈리는 유일한 경우는 신호색이 아직 도착하지 않은 순간뿐이다.
+	 * 그건 이 값을 보내서 될 일이 아니라 신호 쪽에서 풀 문제다.
+	 */
+	float StopTargetDistance = -1.f;
+
 	FTimerHandle ParriedDespawnTimerHandle;
+
+	// 델리게이트는 최하단에 배치
+public:
+	UPROPERTY(BlueprintAssignable, Category = "Traffic|Vehicle")
+	FCWOnVehicleStopStateChangedSignature OnStopStateChanged;
 };
