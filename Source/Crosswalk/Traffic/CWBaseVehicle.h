@@ -5,12 +5,14 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/CWTrafficVehicleSpawnParams.h"
+#include "Data/CWVehicleMeshVariant.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 #include "CWBaseVehicle.generated.h"
 
 class ACWBaseVehicle;
 class ACWTrafficLane;
 class UBoxComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 
 /**
@@ -214,6 +216,13 @@ private:
 	 */
 	void UpdateTransformOnLane(float StepSpeed = 0.f);
 
+	/** 고른 변형의 메쉬와 콜리전 크기를 반영한다. 인덱스가 범위 밖이면 아무것도 하지 않는다. */
+	void ApplyMeshVariant();
+
+	/** 서버가 고른 변형이 클라이언트에 도착했을 때. */
+	UFUNCTION()
+	void OnRep_MeshVariantIndex();
+
 	/**
 	 * 튕겨나간 지점과 방향이 클라이언트에 도착했을 때. 차선 추종을 끊고 그 자세로 맞춘다.
 	 *
@@ -340,6 +349,19 @@ protected:
 	/** 플레이스홀더 메쉬(직육면체 Box). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TObjectPtr<UStaticMeshComponent> VehicleMesh;
+
+	/**
+	 * 외형만 다른 변형 목록. 스폰할 때 서버가 하나를 골라 씌운다.
+	 *
+	 * 같은 차종 안에서 눈에 보이는 차만 갈아 끼우는 용도다. 속도나 피격 프로파일이 다른 차는
+	 * 여기 넣지 말고 별도 차종 BP로 만든다.
+	 *
+	 * 메쉬마다 콜리전 크기를 따로 들고 있다. 이유는 FCWVehicleMeshVariant 주석 참고.
+	 *
+	 * 비워 두면 아무것도 하지 않는다. BP에서 VehicleMesh에 직접 지정한 메쉬가 그대로 남는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TArray<FCWVehicleMeshVariant> MeshVariants;
 
 	/** 차종 기본 주행 속도(cm/s). 플레이어 기본 이동속도 500의 1.5배. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
@@ -498,6 +520,22 @@ protected:
 	/** 스포너가 굴린 차선 중심선 대비 좌우 오프셋(cm). 위치 계산에 들어가므로 복제한다. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
 	float LaneLateralOffset = 0.f;
+
+	/**
+	 * 서버가 고른 MeshVariants 인덱스. 음수면 아직 고르지 않았다는 뜻이다.
+	 *
+	 * 모든 화면에 같은 차가 보여야 하므로 클라이언트가 각자 굴리면 안 된다.
+	 *
+	 * 기본값을 0이 아니라 음수로 두는 이유
+	 *   초기 복제에서는 CDO 기본값과 같은 값이 아예 전송되지 않고, 전송이 없으면 RepNotify도 없다.
+	 *   기본값이 0이면 0번 변형이 뽑힌 차량만 클라이언트에서 메쉬가 바뀌지 않는다.
+	 *   어떤 유효 인덱스와도 다른 값을 기본값으로 두면 전송과 알림이 항상 보장된다.
+	 *
+	 * 풀링을 붙이면 반납 시점에 이 값을 INDEX_NONE으로 되돌려야 한다.
+	 * 재사용된 차량이 직전과 같은 인덱스를 다시 뽑으면 값이 안 바뀌어 전송이 생략된다.
+	 */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_MeshVariantIndex, Category = "Traffic|Vehicle")
+	int32 MeshVariantIndex = INDEX_NONE;
 
 	/** 패링당해 튕겨나가는 중인 상태. 차선을 벗어나 직진한다. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Parry")

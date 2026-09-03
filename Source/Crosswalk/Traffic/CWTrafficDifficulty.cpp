@@ -132,6 +132,16 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 		// 비어 있으면 건드리지 않는다. 차선마다 다른 차종을 굴리는 배치를 지우지 않기 위해서다.
 		if (Step.VehicleMix.Num() > 0)
 		{
+			/**
+			 * 덮어쓴다는 사실을 남긴다.
+			 *
+			 * 스포너 인스턴스에 차종을 넣어 두고 왜 그 차가 안 나오는지 찾는 일이 실제로 있었다.
+			 * 레벨 배치만 보면 스포너에 값이 멀쩡히 들어 있어서, 여기가 조용하면 원인을
+			 * 짚을 방법이 없다. 배치를 지우는 쪽이 로그를 남겨야 한다.
+			 */
+			UE_LOG(LogTemp, Log, TEXT("[%s] %s 의 VehicleMix 를 단계 '%s' 값(%d종)으로 덮어쓴다. 스포너에 배치한 차종 목록은 무시된다."),
+				*GetName(), *Spawner->GetName(), *Step.StepName.ToString(), Step.VehicleMix.Num());
+
 			Spawner->SetVehicleMix(Step.VehicleMix);
 		}
 	}
