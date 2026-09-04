@@ -9,10 +9,15 @@
 #include "CWTrafficStopLine.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
+#include "Components/StaticMeshComponent.h"
 #include "Engine/NetDriver.h"
 #include "Engine/PackageMapClient.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -29,11 +34,140 @@ namespace
 		true,
 		TEXT("정지선·신호 동기화 진단 로그를 찍는다. 0 이면 끈다."),
 		ECVF_Default);
+
+	/**
+	 * 차량 대수 대조 로그. LogSync 와 같은 이유로 기본값이 켜짐이다.
+	 *
+	 * 이쪽은 사건이 아니라 상태라서 1초에 한 줄씩 계속 흐른다. 그래도 켜 두는 것은,
+	 * **어긋난 뒤에 켜서는 아무것도 못 보기 때문**이다. 이 버그는 언제 누구에게 터질지
+	 * 모르는 채로 4인이 붙어야 재현되고, 그 판을 다시 잡는 비용이 로그 한 줄보다 비싸다.
+	 *
+	 * 조용한 구간이 길게 이어지는 것도 산출물이다. 어긋난 줄은 같은 숫자가 반복되던
+	 * 흐름에서 튀기 때문에 오히려 눈에 잘 띈다.
+	 */
+	TAutoConsoleVariable<bool> CVarTrafficLogNetCensus(
+		TEXT("cw.Traffic.LogNetCensus"),
+		true,
+		TEXT("차량 대수 대조 로그를 1초마다 찍는다. 0 이면 끈다."),
+		ECVF_Default);
+
+	TAutoConsoleVariable<bool> CVarTrafficLogNetRelevancy(
+		TEXT("cw.Traffic.LogNetRelevancy"),
+		true,
+		TEXT("스폰 순간의 커넥션별 관련성을 찍는다(서버 전용). 0 이면 끈다."),
+		ECVF_Default);
+
+	/**
+	 * 대수 대조 주기. 값을 노출하지 않는다.
+	 *
+	 * 4대의 로그를 시각으로 맞춰 읽는 것이 이 로그의 용도라, 주기가 사람마다 다르면
+	 * 맞춰 볼 수가 없다. 조절할 수 있어야 하는 것은 주기가 아니라 켜짐 여부다.
+	 */
+	constexpr float TrafficNetCensusInterval = 1.f;
 }
 
 bool UCWTrafficSubsystem::IsSyncLoggingEnabled()
 {
 	return CVarTrafficLogSync.GetValueOnAnyThread();
+}
+
+bool UCWTrafficSubsystem::IsNetRelevancyLoggingEnabled()
+{
+	return CVarTrafficLogNetRelevancy.GetValueOnAnyThread();
+}
+
+void UCWTrafficSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+
+	/**
+	 * 콘솔 변수를 여기서 읽지 않고 타이머는 무조건 건다.
+	 *
+	 * 시작할 때 한 번 읽어 버리면 판이 도는 도중에 끌 수가 없다. 진단 로그는 필요할 때
+	 * 켜고 시끄러우면 끄는 물건이라, 켜짐 판정은 매번 안에서 한다. 꺼져 있을 때 드는
+	 * 비용은 1초에 콘솔 변수 한 번 읽는 것이 전부다.
+	 */
+	InWorld.GetTimerManager().SetTimer(
+		CensusTimerHandle,
+		FTimerDelegate::CreateUObject(this, &UCWTrafficSubsystem::LogVehicleCensus),
+		TrafficNetCensusInterval,
+		true);
+}
+
+void UCWTrafficSubsystem::Deinitialize()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CensusTimerHandle);
+	}
+
+	Super::Deinitialize();
+}
+
+void UCWTrafficSubsystem::LogVehicleCensus() const
+{
+	if (!CVarTrafficLogNetCensus.GetValueOnGameThread())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	int32 VehicleCount = 0;
+	int32 LanedCount = 0;
+	int32 MeshedCount = 0;
+
+	for (const TWeakObjectPtr<ACWBaseVehicle>& WeakVehicle : ActiveVehicles)
+	{
+		const ACWBaseVehicle* Vehicle = WeakVehicle.Get();
+		if (!Vehicle)
+		{
+			continue;
+		}
+
+		++VehicleCount;
+
+		if (Vehicle->GetCurrentLane())
+		{
+			++LanedCount;
+		}
+
+		/**
+		 * 차량에 메쉬 게터를 새로 열지 않고 컴포넌트로 집는다.
+		 *
+		 * 이 세 번째 숫자는 버그를 잡는 동안만 필요한 값이다. 그걸 위해 차량의 공개 면을
+		 * 넓혀 두면, 진단이 끝난 뒤에도 아무나 메쉬를 만질 수 있는 통로가 남는다.
+		 * C++ 이 만드는 UStaticMeshComponent 는 VehicleMesh 하나뿐이라 이걸로 충분하다.
+		 */
+		const UStaticMeshComponent* Mesh = Vehicle->FindComponentByClass<UStaticMeshComponent>();
+		if (Mesh && Mesh->GetStaticMesh())
+		{
+			++MeshedCount;
+		}
+	}
+
+	/**
+	 * 로컬 플레이어 이름을 같이 찍는다.
+	 *
+	 * 4대의 로그를 모아 놓으면 역할 표시(서버/클라)만으로는 클라 셋을 구분할 수 없다.
+	 * 구분이 안 되면 "돌아가면서 한 명" 이라는 증상 자체를 로그로 확인할 수가 없다.
+	 */
+	FString LocalPlayerTag(TEXT("(이름없음)"));
+	if (const APlayerController* LocalController = World->GetFirstPlayerController())
+	{
+		if (const APlayerState* LocalState = LocalController->PlayerState)
+		{
+			LocalPlayerTag = LocalState->GetPlayerName();
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s] 차량 %d / 차선연결 %d / 메쉬 %d"),
+		World->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
+		*LocalPlayerTag, VehicleCount, LanedCount, MeshedCount);
 }
 
 const TCHAR* UCWTrafficSubsystem::GetNetRoleTag(const AActor* Actor)

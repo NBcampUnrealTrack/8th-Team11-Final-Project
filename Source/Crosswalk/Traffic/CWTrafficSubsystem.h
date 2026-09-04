@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/TimerHandle.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/Structs/CWParryAttemptContext.h"
 #include "CWTrafficSubsystem.generated.h"
@@ -27,6 +28,9 @@ public:
 	/** WorldContext로부터 서브시스템을 얻는다. 월드가 없으면 nullptr. */
 	static UCWTrafficSubsystem* Get(const UObject* WorldContextObject);
 
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+	virtual void Deinitialize() override;
+
 	/**
 	 * 정지선·신호 동기화 진단 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogSync 0` 으로 끈다.
 	 *
@@ -35,6 +39,14 @@ public:
 	 * 두 화면을 눈으로 비교해서는 이 판정을 낼 수 없다 - 카메라와 시점이 다르기 때문이다.
 	 */
 	static bool IsSyncLoggingEnabled();
+
+	/**
+	 * 스폰 순간의 커넥션별 관련성 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogNetRelevancy 0` 으로 끈다.
+	 *
+	 * 서버에서만 찍는다. 클라이언트는 자기가 왜 그 차를 못 받았는지 알 방법이 없다 -
+	 * 관련성 판정은 서버가 커넥션마다 따로 내리고, 탈락한 액터는 아예 보내지지 않는다.
+	 */
+	static bool IsNetRelevancyLoggingEnabled();
 
 	/** 진단 로그의 역할 표시. 두 로그를 섞어 놓아도 어느 쪽 것인지 알아야 한다. */
 	static const TCHAR* GetNetRoleTag(const AActor* Actor);
@@ -100,8 +112,27 @@ private:
 	 */
 	bool PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext, float& OutTimeToImpact) const;
 
+	/**
+	 * 이 화면의 차량 대수를 세 갈래로 나눠 찍는다. 서버·클라이언트 양쪽에서 돈다.
+	 *
+	 * 트랜스폼을 복제하지 않는 구조라(ACWBaseVehicle 의 네트워크 주석 참고) 클라이언트 화면에
+	 * 차가 보이려면 **세 가지가 전부** 성립해야 하고, 셋 중 무엇이 깨져도 증상은 똑같이
+	 * "차가 안 보인다" 로 나온다. 눈으로는 갈래를 가를 수 없어서 숫자로 가른다.
+	 *
+	 *   차량      액터 채널이 이 커넥션에 열렸는가. 서버보다 적으면 관련성이나 대역폭이다
+	 *   차선연결  CurrentLane 이 해결됐는가. 적으면 Tick 이 매 프레임 빠져나가 차가 얼어붙는다
+	 *   메쉬      MeshVariantIndex 의 OnRep 이 돌았는가. 적으면 차는 있는데 투명하다
+	 *
+	 * 세 숫자가 서버와 모두 같은데도 안 보인다면 네트워크 문제가 아니다. 그 판정 자체가
+	 * 이 로그의 산출물이다 - 아니라는 것을 확인하는 데 드는 시간이 제일 아깝다.
+	 */
+	void LogVehicleCensus() const;
+
 private:
 	TArray<TWeakObjectPtr<ACWBaseVehicle>> ActiveVehicles;
+
+	/** 대수 대조 로그의 타이머. 주기는 1초 고정이고, 켜고 끄는 것은 콘솔 변수가 한다. */
+	FTimerHandle CensusTimerHandle;
 
 	/** 레벨에 배치된 신호 제어기들. 클라이언트에도 등록된다 - 정지선 판정을 양쪽이 하기 때문이다. */
 	TArray<TWeakObjectPtr<ACWTrafficDirector>> SignalDirectors;
