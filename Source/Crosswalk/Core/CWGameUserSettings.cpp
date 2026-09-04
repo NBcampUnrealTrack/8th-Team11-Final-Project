@@ -1,0 +1,79 @@
+﻿// CWGameUserSettings.cpp
+
+#include "Core/CWGameUserSettings.h"
+
+#include "Engine/Engine.h"
+
+#pragma region GameUserSettingsOverrides
+
+void UCWGameUserSettings::SetToDefaults()
+{
+	// 해상도·품질 등 부모의 기본값을 먼저 채운 뒤 볼륨을 덮어씀
+	// 순서가 바뀌면 부모 구현이 볼륨까지 초기화할 여지가 있음
+	Super::SetToDefaults();
+
+	// 설정 초기화 시에도 음소거 상태로 시작하지 않도록 최대값으로 복구
+	MasterVolume = 1.0f;
+	BGMVolume = 1.0f;
+	SFXVolume = 1.0f;
+}
+
+#pragma endregion
+
+#pragma region Accessors
+
+UCWGameUserSettings* UCWGameUserSettings::GetCWGameUserSettings()
+{
+	// 엔진 초기화 이전이나 종료 중에는 GEngine 이 없음
+	if (!GEngine)
+	{
+		return nullptr;
+	}
+
+	// DefaultEngine.ini 의 GameUserSettingsClassName 등록이 누락되면
+	// 엔진 기본 UGameUserSettings 가 반환되어 Cast 가 실패함
+	// 즉 여기서 nullptr 이면 저장 로직이 아니라 ini 등록을 먼저 확인할 것
+	return Cast<UCWGameUserSettings>(GEngine->GetGameUserSettings());
+}
+
+bool UCWGameUserSettings::SetMasterVolume(float InVolume)
+{
+	return ApplyVolume(MasterVolume, InVolume);
+}
+
+bool UCWGameUserSettings::SetBGMVolume(float InVolume)
+{
+	return ApplyVolume(BGMVolume, InVolume);
+}
+
+bool UCWGameUserSettings::SetSFXVolume(float InVolume)
+{
+	return ApplyVolume(SFXVolume, InVolume);
+}
+
+#pragma endregion
+
+#pragma region PrivateFunctions
+
+bool UCWGameUserSettings::ApplyVolume(float& OutStored, float InVolume)
+{
+	// ini 를 직접 편집한 경우를 포함해 저장값이 항상 유효 범위 안에 있도록 보정
+	const float ClampedVolume = FMath::Clamp(InVolume, 0.0f, 1.0f);
+
+	// 슬라이더는 드래그 중 같은 값으로 여러 번 들어올 수 있음
+	// 부동소수 오차를 감안해 비교하고, 변화가 없으면 저장 대상에서 제외
+	if (FMath::IsNearlyEqual(OutStored, ClampedVolume))
+	{
+		return false;
+	}
+
+	OutStored = ClampedVolume;
+
+	// 여기서 SaveSettings 를 부르지 않는 이유
+	// OnValueChanged 마다 디스크에 기록되면 드래그 한 번에 수십 번 쓰기가 발생함
+	// 실제 저장은 슬라이더를 놓는 시점(CaptureEnd)이나 화면 종료 시 호출자가 수행
+	// 반환한 true 는 호출자가 "저장할 변경분이 있다"고 판단하는 근거임
+	return true;
+}
+
+#pragma endregion
