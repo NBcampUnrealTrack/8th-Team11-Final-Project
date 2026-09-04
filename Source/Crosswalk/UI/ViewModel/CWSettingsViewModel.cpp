@@ -1,6 +1,9 @@
 ﻿// CWSettingsViewModel.cpp
 
 #include "UI/ViewModel/CWSettingsViewModel.h"
+#include "Core/CWGameUserSettings.h"
+#include "Audio/CWAudioSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -40,6 +43,9 @@ void UCWSettingsViewModel::Initialize(UObject* WorldContextObject)
 
 void UCWSettingsViewModel::Uninitialize()
 {
+	// 슬라이더 놓기 이벤트를 놓치고 화면이 닫히는 경로를 대비한 백업 저장
+	SaveVolumeSettingsIfDirty();
+
 	// 화면이 사라질 때 미확정 비디오 모드를 변경 전 값으로 복구
 	FinishPendingVideoMode(false, false);
 
@@ -138,6 +144,16 @@ void UCWSettingsViewModel::RefreshSettingsData()
 	}
 
 	SetSelectedQualityIndex(NewSelectedQualityIndex);
+
+	// 저장된 채널 볼륨을 슬라이더 초기값으로 반영
+	// ini 미등록이면 nullptr 이므로 볼륨만 건너뛰고 나머지 설정은 정상 표시
+	if (UCWGameUserSettings* CWGameUserSettings =
+		UCWGameUserSettings::GetCWGameUserSettings())
+	{
+		SetMasterVolume(CWGameUserSettings->GetMasterVolume());
+		SetBGMVolume(CWGameUserSettings->GetBGMVolume());
+		SetSFXVolume(CWGameUserSettings->GetSFXVolume());
+	}
 }
 
 bool UCWSettingsViewModel::RequestSetResolutionByIndex(int32 Index)
@@ -370,6 +386,146 @@ void UCWSettingsViewModel::ClearVideoModeConfirmationTimer()
 
 #pragma endregion
 
+#pragma region AudioSettings
+
+bool UCWSettingsViewModel::RequestSetMasterVolume(float InVolume)
+{
+	// 볼륨은 비디오 모드와 무관하므로 확인 대기 중에도 조절 가능
+	// 기존 Request 들과 달리 bIsVideoModeConfirmationPending 을 검사하지 않음
+	if (!bIsInitialized)
+	{
+		return false;
+	}
+
+	UCWGameUserSettings* GameUserSettings =
+		UCWGameUserSettings::GetCWGameUserSettings();
+
+	if (!IsValid(GameUserSettings))
+	{
+		return false;
+	}
+
+	// 저장값이 실제로 바뀐 경우에만 저장 대기 상태로 표시
+	if (GameUserSettings->SetMasterVolume(InVolume))
+	{
+		bHasUnsavedVolumeChanges = true;
+	}
+
+	// 표시값은 Clamp 를 거친 저장값을 따라감
+	SetMasterVolume(GameUserSettings->GetMasterVolume());
+
+	// 저장값 기준으로 즉시 소리에 반영
+	// 서브시스템이 없으면 저장과 표시만 되고 소리는 이전 상태를 유지함
+	if (UCWAudioSubsystem* AudioSubsystem = GetAudioSubsystem())
+	{
+		AudioSubsystem->SetChannelVolume(
+			ECWAudioChannel::Master,
+			GameUserSettings->GetMasterVolume()
+		);
+	}
+
+	return true;
+}
+
+bool UCWSettingsViewModel::RequestSetBGMVolume(float InVolume)
+{
+	// 볼륨은 비디오 모드와 무관하므로 확인 대기 중에도 조절 가능
+	if (!bIsInitialized)
+	{
+		return false;
+	}
+
+	UCWGameUserSettings* GameUserSettings =
+		UCWGameUserSettings::GetCWGameUserSettings();
+
+	if (!IsValid(GameUserSettings))
+	{
+		return false;
+	}
+
+	// 저장값이 실제로 바뀐 경우에만 저장 대기 상태로 표시
+	if (GameUserSettings->SetBGMVolume(InVolume))
+	{
+		bHasUnsavedVolumeChanges = true;
+	}
+
+	// 표시값은 Clamp 를 거친 저장값을 따라감
+	SetBGMVolume(GameUserSettings->GetBGMVolume());
+
+	// 저장값 기준으로 즉시 소리에 반영
+	// 서브시스템이 없으면 저장과 표시만 되고 소리는 이전 상태를 유지함
+	if (UCWAudioSubsystem* AudioSubsystem = GetAudioSubsystem())
+	{
+		AudioSubsystem->SetChannelVolume(
+			ECWAudioChannel::BGM,
+			GameUserSettings->GetBGMVolume()
+		);
+	}
+
+	return true;
+}
+
+bool UCWSettingsViewModel::RequestSetSFXVolume(float InVolume)
+{
+	// 볼륨은 비디오 모드와 무관하므로 확인 대기 중에도 조절 가능
+	if (!bIsInitialized)
+	{
+		return false;
+	}
+
+	UCWGameUserSettings* GameUserSettings =
+		UCWGameUserSettings::GetCWGameUserSettings();
+
+	if (!IsValid(GameUserSettings))
+	{
+		return false;
+	}
+
+	// 저장값이 실제로 바뀐 경우에만 저장 대기 상태로 표시
+	if (GameUserSettings->SetSFXVolume(InVolume))
+	{
+		bHasUnsavedVolumeChanges = true;
+	}
+
+	// 표시값은 Clamp 를 거친 저장값을 따라감
+	SetSFXVolume(GameUserSettings->GetSFXVolume());
+
+	// 저장값 기준으로 즉시 소리에 반영
+	// 서브시스템이 없으면 저장과 표시만 되고 소리는 이전 상태를 유지함
+	if (UCWAudioSubsystem* AudioSubsystem = GetAudioSubsystem())
+	{
+		AudioSubsystem->SetChannelVolume(
+			ECWAudioChannel::SFX,
+			GameUserSettings->GetSFXVolume()
+		);
+	}
+
+	return true;
+}
+
+void UCWSettingsViewModel::SaveVolumeSettingsIfDirty()
+{
+	// 변경분이 없으면 화면을 여닫기만 해도 디스크에 쓰이는 것을 막음
+	if (!bHasUnsavedVolumeChanges)
+	{
+		return;
+	}
+
+	UCWGameUserSettings* GameUserSettings =
+		UCWGameUserSettings::GetCWGameUserSettings();
+
+	if (!IsValid(GameUserSettings))
+	{
+		return;
+	}
+
+	GameUserSettings->SaveSettings();
+
+	bHasUnsavedVolumeChanges = false;
+}
+
+#pragma endregion
+
 #pragma region StateSetters
 
 void UCWSettingsViewModel::SetResolutionOptions(
@@ -406,6 +562,32 @@ void UCWSettingsViewModel::SetSelectedQualityIndex(int32 InIndex)
 	);
 }
 
+
+
+void UCWSettingsViewModel::SetMasterVolume(float InVolume)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		MasterVolume,
+		InVolume
+	);
+}
+
+void UCWSettingsViewModel::SetBGMVolume(float InVolume)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		BGMVolume,
+		InVolume
+	);
+}
+
+void UCWSettingsViewModel::SetSFXVolume(float InVolume)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(
+		SFXVolume,
+		InVolume
+	);
+}
+
 #pragma endregion
 
 #pragma region SettingsHelpers
@@ -413,6 +595,26 @@ void UCWSettingsViewModel::SetSelectedQualityIndex(int32 InIndex)
 UGameUserSettings* UCWSettingsViewModel::GetGameUserSettings() const
 {
 	return GEngine ? GEngine->GetGameUserSettings() : nullptr;
+}
+
+UCWAudioSubsystem* UCWSettingsViewModel::GetAudioSubsystem() const
+{
+	// Initialize 에서 보관한 월드를 통해 GameInstance 서브시스템에 접근함
+	UWorld* World = BoundWorld.Get();
+
+	if (!IsValid(World))
+	{
+		return nullptr;
+	}
+
+	UGameInstance* GameInstance = World->GetGameInstance();
+
+	if (!IsValid(GameInstance))
+	{
+		return nullptr;
+	}
+
+	return GameInstance->GetSubsystem<UCWAudioSubsystem>();
 }
 
 void UCWSettingsViewModel::ApplyQualityAndSave(UGameUserSettings* GameUserSettings) const
