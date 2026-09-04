@@ -489,6 +489,26 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopLineBrakeDistance = 900.f;
 
+	/**
+	 * 정지 중 목표 지점(GetStopTargetDistance)과의 차이가 이 값 이하면 그대로 확정한다.
+	 *
+	 * 신호색 편도 복제 지연 한 번 분량의 오차로 잡았다. 속도 750cm/s 기준 지연 50ms 면
+	 * 37cm 정도 더 갈 수 있는데, 이 정도는 스냅해도 눈에 띄지 않는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopCorrectionSnapTolerance = 37.f;
+
+	/**
+	 * 허용 오차를 넘는 나머지를 목표 지점 쪽으로 좁히는 속도(cm/s).
+	 *
+	 * 정지 구간은 DistanceAlongLane 이 안 바뀌어 리플리케이션이 다시 안 온다 - 자유주행처럼
+	 * 다음 업데이트가 오차를 지워주지 않는다. 그래서 서 있는 동안 서버·클라 각자
+	 * GetStopTargetDistance() 쪽으로 계속 당겨야 한다. 값이 크면 순간이동처럼 보이므로
+	 * 완만한 속도로 슬라이드시킨다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopCorrectionSpeed = 100.f;
+
 	/** 패링 판정 윈도우(초). 충돌 직전 이 시간 안에 입력해야 성공. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryWindow = 0.3f;

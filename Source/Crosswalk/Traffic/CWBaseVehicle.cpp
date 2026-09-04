@@ -108,6 +108,25 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 
 	DistanceAlongLane += StepSpeed * DeltaSeconds;
 
+	// 정지선 때문에 서 있는 동안에는 목표 지점(StopTargetDistance) 쪽으로 계속 당긴다.
+	// 위 계산식이 정지 중엔 StepSpeed 를 0 으로 묶어 버려서, 신호 지연 등으로 이미 벌어진
+	// 오차가 저절로 줄어들지 않는다 - 값이 안 바뀌면 서버 쪽도 리플리케이션을 다시 안 보내므로,
+	// 서버·클라 각자 여기서 자기 값을 목표로 당겨야 한다. 허용 오차 안이면 그대로 스냅하고,
+	// 넘는 만큼만 완만한 속도로 좁혀서 순간이동처럼 보이지 않게 한다.
+	const bool bNowStoppedAtLine = bStopLineLimited && StepSpeed <= KINDA_SMALL_NUMBER;
+	if (bNowStoppedAtLine && StopTargetDistance >= 0.f)
+	{
+		const float StopError = StopTargetDistance - DistanceAlongLane;
+		if (FMath::Abs(StopError) <= StopCorrectionSnapTolerance)
+		{
+			DistanceAlongLane = StopTargetDistance;
+		}
+		else
+		{
+			DistanceAlongLane += FMath::Clamp(StopError, -StopCorrectionSpeed * DeltaSeconds, StopCorrectionSpeed * DeltaSeconds);
+		}
+	}
+
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
 		if (HasAuthority())
@@ -124,7 +143,7 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	UpdateTransformOnLane(StepSpeed);
 
 	// 정지선 때문에 속도가 0 이 된 것만 정지로 친다. 앞차에 막힌 것은 여기 들어오지 않는다.
-	UpdateStopState(bStopLineLimited && StepSpeed <= KINDA_SMALL_NUMBER);
+	UpdateStopState(bNowStoppedAtLine);
 }
 
 float ACWBaseVehicle::GetVehicleLength() const
