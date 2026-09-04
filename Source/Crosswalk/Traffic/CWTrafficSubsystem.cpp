@@ -121,6 +121,8 @@ void UCWTrafficSubsystem::LogVehicleCensus() const
 	int32 LanedCount = 0;
 	int32 MeshedCount = 0;
 
+	TArray<FString> VehicleIds;
+
 	for (const TWeakObjectPtr<ACWBaseVehicle>& WeakVehicle : ActiveVehicles)
 	{
 		const ACWBaseVehicle* Vehicle = WeakVehicle.Get();
@@ -130,6 +132,7 @@ void UCWTrafficSubsystem::LogVehicleCensus() const
 		}
 
 		++VehicleCount;
+		VehicleIds.Add(GetNetIdTag(Vehicle));
 
 		if (Vehicle->GetCurrentLane())
 		{
@@ -165,9 +168,35 @@ void UCWTrafficSubsystem::LogVehicleCensus() const
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s] 차량 %d / 차선연결 %d / 메쉬 %d"),
+	/**
+	 * 정렬해서 찍는다. 등록 순서는 서버와 클라이언트가 다르므로(스폰 순서 대 도착 순서)
+	 * 정렬하지 않으면 같은 세 대를 들고 있어도 두 줄이 달라 보인다.
+	 */
+	VehicleIds.Sort();
+
+	/**
+	 * 한 줄이 로그를 덮지 않도록 상한을 둔다.
+	 *
+	 * 지금 도로 위 최대치는 4대라 걸릴 일이 없지만, 이 로그는 "예상보다 차가 많다" 는
+	 * 상황에서도 살아 있어야 하는 물건이다. 잘렸다는 사실 자체가 그때의 관측값이라
+	 * 조용히 자르지 않고 남은 수를 적는다.
+	 */
+	constexpr int32 MaxLoggedIds = 20;
+	FString IdList;
+	if (VehicleIds.Num() > MaxLoggedIds)
+	{
+		const int32 Remaining = VehicleIds.Num() - MaxLoggedIds;
+		VehicleIds.SetNum(MaxLoggedIds);
+		IdList = FString::Printf(TEXT("%s 외%d"), *FString::Join(VehicleIds, TEXT(" ")), Remaining);
+	}
+	else
+	{
+		IdList = VehicleIds.Num() > 0 ? FString::Join(VehicleIds, TEXT(" ")) : TEXT("(없음)");
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s] 차량 %d / 차선연결 %d / 메쉬 %d / 목록 %s"),
 		World->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
-		*LocalPlayerTag, VehicleCount, LanedCount, MeshedCount);
+		*LocalPlayerTag, VehicleCount, LanedCount, MeshedCount, *IdList);
 }
 
 const TCHAR* UCWTrafficSubsystem::GetNetRoleTag(const AActor* Actor)
