@@ -3,10 +3,16 @@
 #include "CWTrafficVehicleSpawner.h"
 
 #include "EngineUtils.h"
+#include "Engine/NetConnection.h"
+#include "Engine/NetDriver.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/WorldSettings.h"
 #include "TimerManager.h"
 #include "CWBaseVehicle.h"
 #include "CWTrafficLane.h"
+#include "CWTrafficSubsystem.h"
 
 ACWTrafficVehicleSpawner::ACWTrafficVehicleSpawner()
 {
@@ -222,9 +228,69 @@ ACWBaseVehicle* ACWTrafficVehicleSpawner::SpawnVehicleOfClass(TSubclassOf<ACWBas
 	{
 		Vehicle->InitializeOnLane(TargetLane, RollSpawnParams(StartDistance));
 		LastSpawnedVehicle = Vehicle;
+
+		// 차선 위로 옮겨 놓은 뒤에 잰다. 스폰 직후 위치는 아직 차선 좌표가 아니다.
+		LogSpawnRelevancy(*Vehicle);
 	}
 
 	return Vehicle;
+}
+
+void ACWTrafficVehicleSpawner::LogSpawnRelevancy(const ACWBaseVehicle& Vehicle) const
+{
+	if (!UCWTrafficSubsystem::IsNetRelevancyLoggingEnabled())
+	{
+		return;
+	}
+
+	UNetDriver* NetDriver = GetNetDriver();
+	if (!NetDriver || NetDriver->ClientConnections.Num() == 0)
+	{
+		return;
+	}
+
+	const FVector SpawnLocation = Vehicle.GetActorLocation();
+	const float CullDistance = FMath::Sqrt(Vehicle.GetNetCullDistanceSquared());
+
+	for (UNetConnection* Connection : NetDriver->ClientConnections)
+	{
+		if (!Connection)
+		{
+			continue;
+		}
+
+		FString PlayerTag = GetNameSafe(Connection->OwningActor);
+		if (const APlayerController* Controller = Cast<APlayerController>(Connection->OwningActor))
+		{
+			if (const APlayerState* State = Controller->PlayerState)
+			{
+				PlayerTag = State->GetPlayerName();
+			}
+		}
+
+		/**
+		 * 뷰타깃이 없는 커넥션은 건너뛰지 않고 그 사실을 남긴다.
+		 *
+		 * 아직 폰을 못 받은 상태(로딩·리스폰 중)라는 뜻인데, 그 구간에 스폰된 차량이
+		 * 통째로 빠지는 것이 바로 의심하는 그림 중 하나다. 줄이 없으면 "그 시각에
+		 * 스폰이 없었다" 와 구분이 안 된다.
+		 *
+		 * FNetViewer 는 뷰타깃을 확인하지 않고 바로 위치를 읽으므로 여기서 걸러야 한다.
+		 */
+		if (!Connection->OwningActor || !Connection->ViewTarget)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[TrafficNet] 스폰 %s / %s 시점없음(로딩·리스폰 중)"),
+				*Vehicle.GetName(), *PlayerTag);
+			continue;
+		}
+
+		const FNetViewer Viewer(Connection, 0.f);
+		const float Distance = FVector::Dist(SpawnLocation, Viewer.ViewLocation);
+		const bool bRelevant = Vehicle.IsNetRelevantFor(Viewer.InViewer, Viewer.ViewTarget, Viewer.ViewLocation);
+
+		UE_LOG(LogTemp, Log, TEXT("[TrafficNet] 스폰 %s / 컬거리 %.0fcm / %s 거리 %.0fcm / 관련 %s"),
+			*Vehicle.GetName(), CullDistance, *PlayerTag, Distance, bRelevant ? TEXT("O") : TEXT("X"));
+	}
 }
 
 FCWTrafficVehicleSpawnParams ACWTrafficVehicleSpawner::RollSpawnParams(float StartDistance) const
