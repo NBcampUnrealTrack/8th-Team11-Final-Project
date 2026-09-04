@@ -76,13 +76,3 @@ void UCWMusicSubsystem::StopMusic(float FadeOutTime)
 	MusicComponent = nullptr;
 	CurrentMusic = nullptr;
 }
-
-void UCWMusicSubsystem::SetMusicVolume(float Volume)
-{
-	if (MusicComponent)
-	{
-		MusicComponent->SetVolumeMultiplier(FMath::Clamp(Volume, 0.0f, 1.0f));
-	}
-}
-
-
