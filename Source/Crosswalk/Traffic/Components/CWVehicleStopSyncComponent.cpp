@@ -64,17 +64,15 @@ void UCWVehicleStopSyncComponent::RunCorrection()
 		return;
 	}
 
-	// TODO: CWBaseVehicle에 AdjustDistanceAlongLane(float Delta)가 추가되면 아래 주석을 풀 것.
-	// (코드 리뷰 포인트 참고 - 승하님이 CWBaseVehicle.h/.cpp에 직접 추가 예정)
-	// 그 전까지는 이 컴포넌트가 상태만 확인하고 실제로 보정하지는 않는다.
-	//const float StopError = OwnerVehicle->GetStopTargetDistance() - OwnerVehicle->GetDistanceAlongLane();
-	//
-	//if (FMath::Abs(StopError) <= SnapTolerance)
-	//{
-	//	OwnerVehicle->AdjustDistanceAlongLane(StopError);
-	//	return;
-	//}
-	//
-	//const float MaxStep = CorrectionSpeed * CorrectionInterval;
-	//OwnerVehicle->AdjustDistanceAlongLane(FMath::Clamp(StopError, -MaxStep, MaxStep));
+	const float StopError = OwnerVehicle->GetStopTargetDistance() - OwnerVehicle->GetDistanceAlongLane();
+
+	// SnapTolerance 가 0 이면 이 분기는 오차가 정확히 0 일 때만 걸린다. 그때는 밀 것도 없다.
+	if (FMath::Abs(StopError) <= SnapTolerance)
+	{
+		OwnerVehicle->AdjustDistanceAlongLane(StopError);
+		return;
+	}
+
+	const float MaxStep = CorrectionSpeed * CorrectionInterval;
+	OwnerVehicle->AdjustDistanceAlongLane(FMath::Clamp(StopError, -MaxStep, MaxStep));
 }

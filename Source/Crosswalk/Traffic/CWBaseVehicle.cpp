@@ -15,6 +15,7 @@
 #include "Core/CWDecalStatics.h"
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
+#include "Traffic/Components/CWVehicleStopSyncComponent.h"
 
 ACWBaseVehicle::ACWBaseVehicle()
 {
@@ -43,6 +44,10 @@ ACWBaseVehicle::ACWBaseVehicle()
 	VehicleMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VehicleMesh"));
 	VehicleMesh->SetupAttachment(CollisionBox);
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
+	// 이 컴포넌트가 좁힌다. (양쪽에서 도는 이유는 헤더의 StopSyncComponent 주석 참고)
+	StopSyncComponent = CreateDefaultSubobject<UCWVehicleStopSyncComponent>(TEXT("StopSyncComponent"));
 }
 
 void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

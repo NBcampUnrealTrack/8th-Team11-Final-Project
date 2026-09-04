@@ -12,6 +12,7 @@
 class ACWBaseVehicle;
 class ACWTrafficLane;
 class UBoxComponent;
+class UCWVehicleStopSyncComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -149,6 +150,17 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetDistanceAlongLane() const { return DistanceAlongLane; }
+
+	/**
+	 * 차선 위 진행 거리를 Delta(cm) 만큼 민다. UCWVehicleStopSyncComponent 전용이다.
+	 *
+	 * 값만 열어 준다. 얼마나 밀지, 한 번에 밀지 나눠 밀지 같은 판단은 전부 그 컴포넌트가 한다.
+	 * 여기서 판단까지 하면 정지 구간의 보정이 주행 로직과 같은 파일에 섞인다.
+	 *
+	 * 블루프린트에 열지 않는다. 이 값은 위치 그 자체라, 아무 데서나 밀 수 있으면
+	 * 차가 어디서 왜 움직였는지를 추적할 수 없게 된다.
+	 */
+	void AdjustDistanceAlongLane(float Delta) { DistanceAlongLane += Delta; }
 
 	/**
 	 * 지금 정지선 때문에 서 있는가. 서버·클라이언트 각자의 판단이라 두 값이 다를 수 있고,
@@ -396,6 +408,19 @@ protected:
 	/** 플레이스홀더 메쉬(직육면체 Box). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TObjectPtr<UStaticMeshComponent> VehicleMesh;
+
+	/**
+	 * 정지선 앞에 선 동안 서버-클라 위치 오차를 좁힌다. (보정 담당은 전부 이 컴포넌트 안)
+	 *
+	 * 서버·클라이언트 양쪽에서 돈다. 트랜스폼을 복제하지 않는 구조라 클라이언트 화면의
+	 * 차량 위치는 클라이언트 자신이 계산한 DistanceAlongLane 이 만든다. 서버에서만 돌리면
+	 * 정작 고쳐야 할 화면이 안 고쳐진다.
+	 *
+	 * 치팅 통로가 아니다. 충돌·패링 판정은 서버가 서버 자신의 DistanceAlongLane 으로 따로
+	 * 계산하고, 차가 다시 움직이면 복제가 다시 흘러 클라이언트 값을 덮는다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TObjectPtr<UCWVehicleStopSyncComponent> StopSyncComponent;
 
 	/**
 	 * 외형만 다른 변형 목록. 스폰할 때 서버가 하나를 골라 씌운다.

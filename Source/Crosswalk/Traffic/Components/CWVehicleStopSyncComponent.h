@@ -22,6 +22,19 @@ class ACWBaseVehicle;
  *
  * 매 틱 대신 타이머로 돈다(RagdollCorrectionInterval 과 같은 이유) - 어차피 완만하게
  * 좁히는 보정이라 초당 수십 번 계산할 필요가 없고, 정지 중인 차량만 도니 부하도 작다.
+ *
+ * **HasAuthority 로 막지 않는다. 서버·클라이언트 양쪽에서 도는 것이 의도다.**
+ *
+ * 트랜스폼을 복제하지 않는 구조라, 클라이언트 화면에 보이는 차량 위치는 서버가 보낸 값이
+ * 아니라 클라이언트 자신이 계산한 DistanceAlongLane 이 만든다. 서버에서만 돌리면 정작
+ * 고쳐야 할 화면이 안 고쳐져서 이 컴포넌트를 만든 의미가 없어진다.
+ *
+ * 서버에서 도는 것도 해롭지 않다. 감속이 목표 지점에 수렴하는 식이라 서버가 설 때의
+ * 잔차는 0 에 가깝고([TrafficSync] 정지 로그의 오차 항목), 밀 것이 없으면 아무 일도 안 한다.
+ *
+ * 치팅 통로도 아니다. 충돌·패링 판정은 서버가 서버 자신의 DistanceAlongLane 으로 따로
+ * 계산하므로 클라이언트가 이 값을 흔들어도 판정이 바뀌지 않고, 차가 다시 움직이기
+ * 시작하면 복제가 다시 흘러 클라이언트 값을 서버 값으로 덮는다.
  */
 UCLASS(ClassGroup = (Crosswalk), meta = (BlueprintSpawnableComponent))
 class CROSSWALK_API UCWVehicleStopSyncComponent : public UActorComponent
