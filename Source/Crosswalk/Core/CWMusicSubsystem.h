@@ -1,4 +1,4 @@
-//CWMusicsubsystem.h
+﻿//CWMusicsubsystem.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -23,11 +23,6 @@ public:
 	//BGM 중단
 	UFUNCTION(BlueprintCallable, Category = "Audio|Music")
 	void StopMusic(float FadeOutTime = 1.0f);
-
-
-	//BGM 볼륨 조절
-	UFUNCTION(BlueprintCallable, Category = "Audio|Music")
-	void SetMusicVolume(float Volume);
 
 private:
 	UPROPERTY(Transient)
