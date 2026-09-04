@@ -17,9 +17,20 @@ ACWWorkZone_Dust::ACWWorkZone_Dust()
 
 	Area->SetBoxExtent(FVector(100.f, 50.f, 20.f));
 
-	// 시간으로 차오르는 방식이라 100% 까지 채워야 자연스럽다.
-	// 부모 기본값(0.98)은 격자 칸 존을 위한 값이다.
-	CompleteThreshold = 1.f;
+	/**
+	 * 먼지가 눈에 안 띄는 지점에서 끊는다.
+	 *
+	 * M_DustGround 의 불투명도는 (1 - ClearedPct) 에 비례한다. 진행도 0.95 면 처음 농도의
+	 * 5% 만 남는데, 도로 위에서는 사실상 구분이 안 된다. 그런데도 완료가 아니라서
+	 * 체크리스트에는 미완료로 남고, "다 쓸었는데 왜 안 끝나지" 로 헤매게 된다.
+	 *
+	 * 그래서 이 값을 넘으면 남은 먼지를 한 번에 걷어내고 완료로 넘긴다. (ApplyWork 참고)
+	 * 부모 기본값(0.98)은 격자 칸 존을 위한 값이라 그대로 쓰지 않는다.
+	 *
+	 * 0.95 는 플레이 테스트로 잡은 값이다. 0.9 는 아직 먼지가 보이는데 완료로 넘어가서
+	 * 너무 일찍 사라지는 느낌이 났다.
+	 */
+	CompleteThreshold = 0.95f;
 
 	// 이 존은 빗자루 전용이다. 기본값으로 넣어 두면 배치할 때 빼먹을 일이 없다.
 	AcceptedTools.Add(ECWToolType::Broom);
@@ -156,7 +167,16 @@ void ACWWorkZone_Dust::ApplyWork(UCWWorkerComponent* Worker, const FVector& Worl
 	}
 
 	// 여러 명이 같이 쓸면 각자 이 함수를 부르므로 인원수만큼 빨라진다.
-	SetProgress(GetProgress() + DeltaSeconds / SecondsToClear);
+	const float NextProgress = GetProgress() + DeltaSeconds / SecondsToClear;
+
+	/**
+	 * 완료 임계값을 넘으면 남은 진행도를 건너뛰고 100% 로 올린다.
+	 *
+	 * 임계값에서 완료 처리만 하면 진행도가 그 값에 그대로 굳는다. 그러면 옅은 먼지가
+	 * 영영 남고 HUD 게이지도 90% 에서 멈춘 채로 "완료" 가 된다. 진행도 자체를 1 로
+	 * 올려야 데칼이 완전히 걷히고 게이지도 맞는다.
+	 */
+	SetProgress(NextProgress >= CompleteThreshold ? 1.f : NextProgress);
 }
 
 void ACWWorkZone_Dust::OnProgressChanged(float NewProgress)
