@@ -11,15 +11,15 @@
 UINTERFACE(BlueprintType)
 class CROSSWALK_API UInterface_ParryReceiver : public UInterface
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 };
 
 class CROSSWALK_API IInterface_ParryReceiver
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 public:
-    // 서버 권한 패링 판정을 위해 패링 시도 정보를 전달. 반환값은 판정 통과 여부다
-    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Crosswalk|Parry")
-    bool ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext);
+	// 서버 권한 패링 판정을 위해 패링 시도 정보를 전달. 반환값은 판정 통과 여부다
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Traffic|Parry")
+	bool ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext);
 };

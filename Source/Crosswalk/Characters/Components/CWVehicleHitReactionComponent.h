@@ -50,40 +50,40 @@ public:
 	UCWVehicleHitReactionComponent();
 
 	// 차량 피격 정보를 받아 서버 기준 피격 상태를 시작
-	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Hit")
 	void HandleVehicleHit(const FCWVehicleHitContext& HitContext);
 
 	/**
 	 * 넉백으로 날아간 뒤 땅에 닿았음을 알린다. 이 시점부터 잠금 시간을 잰다.
 	 * 소유 액터의 착지 처리(ACharacter::Landed 등)에서 부른다.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Hit")
 	void NotifyLanded();
 
 	/**
 	 * 기상 모션이 끝나 조작을 돌려줘도 된다고 알린다. 이 시점에 잠금이 풀린다.
 	 * 소유 액터가 OnGetUpRequested 를 받아 연출을 끝낸 뒤 부른다.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Hit")
 	void NotifyGetUpFinished();
 
 	// 현재 피격 후 행동 제한 상태인지 확인
-	UFUNCTION(BlueprintPure, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintPure, Category = "Traffic|Hit")
 	bool IsHitLocked() const;
 
 	// 서버가 마지막으로 확정한 피격 정보를 반환
-	UFUNCTION(BlueprintPure, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintPure, Category = "Traffic|Hit")
 	FCWVehicleHitContext GetLastHitContext() const;
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
 	// 피격 상태가 시작될 때 서버와 클라이언트에서 호출
-	UFUNCTION(BlueprintImplementableEvent, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintImplementableEvent, Category = "Traffic|Hit")
 	void OnHitReactionStarted(const FCWVehicleHitContext& HitContext);
 
 	// 피격 상태가 끝날 때 서버와 클라이언트에서 호출
-	UFUNCTION(BlueprintImplementableEvent, Category = "Crosswalk|Hit")
+	UFUNCTION(BlueprintImplementableEvent, Category = "Traffic|Hit")
 	void OnHitReactionFinished();
 
 private:
@@ -110,21 +110,21 @@ private:
 	 * 기획서 6.2 는 2초지만 1초로 둔다. 래그돌로 굴러가 멈추기까지가 이미 잠금 시간이고,
 	 * 뒤에 기상 모션 길이까지 붙으므로 거기에 2초를 더 얹으면 조작을 못 하는 구간이 너무 길어진다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Hit", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Hit", meta = (ClampMin = "0.0"))
 	float HitLockDuration = 1.f;
 
 	/**
 	 * 착지 통보를 기다리는 최대 시간(초). 넘기면 착지한 것으로 치고 잠금 시간을 시작한다.
 	 * 맵 밖으로 떨어지거나 착지 처리가 오지 않는 경우에 영구 잠금이 되는 것을 막는 안전장치다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Hit", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Hit", meta = (ClampMin = "0.0"))
 	float MaxLandingWait = 5.f;
 
 	/**
 	 * 기상 완료 통보를 기다리는 최대 시간(초). 넘기면 완료된 것으로 치고 잠금을 푼다.
 	 * 기상 몬타주가 비어 있거나 중간에 끊긴 경우에 영구 잠금이 되는 것을 막는 안전장치다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Hit", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Hit", meta = (ClampMin = "0.0"))
 	float MaxGetUpWait = 5.f;
 
 	UPROPERTY(ReplicatedUsing = OnRep_HitLocked)
@@ -147,9 +147,9 @@ private:
 
 	// 델리게이트는 최하단에 배치
 public:
-	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Hit")
+	UPROPERTY(BlueprintAssignable, Category = "Traffic|Hit")
 	FCWOnHitLockChangedSignature OnHitLockChanged;
 
-	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Hit")
+	UPROPERTY(BlueprintAssignable, Category = "Traffic|Hit")
 	FCWOnGetUpRequestedSignature OnGetUpRequested;
 };

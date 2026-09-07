@@ -17,7 +17,16 @@
 ACWTrafficVehicleSpawner::ACWTrafficVehicleSpawner()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	bReplicates = true;
+
+	/**
+	 * 복제하지 않는다. 스폰은 서버 단독이고 이 액터가 클라이언트에 알릴 값이 없다.
+	 *
+	 * 예전에는 bReplicates 가 켜져 있었는데 복제 프로퍼티가 0 개라 스포너마다 액터 채널만
+	 * 하나씩 열려 있었다. 차량의 Owner 가 이 스포너인 것은 서버 안에서만 쓰이는 관계라
+	 * (관련성은 bNetUseOwnerRelevancy 가 꺼져 있어 Owner 를 보지 않는다) 클라이언트에
+	 * 스포너가 없어도 차량 복제에는 영향이 없다.
+	 */
+	bReplicates = false;
 }
 
 void ACWTrafficVehicleSpawner::StartSpawning()
