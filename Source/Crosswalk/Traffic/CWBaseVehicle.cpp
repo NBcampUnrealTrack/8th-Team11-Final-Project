@@ -6,8 +6,6 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerState.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
@@ -742,45 +740,11 @@ void ACWBaseVehicle::RetryPendingHits()
 	}
 }
 
-float ACWBaseVehicle::ResolveTargetViewRewindSeconds(const AActor* Target) const
-{
-	// 보정을 끈 설정이면 되돌릴 것이 없다.
-	if (MaxHitRewindSeconds <= 0.f)
-	{
-		return 0.f;
-	}
-
-	/**
-	 * 호스트가 직접 조종하는 대상은 되돌리지 않는다. 자기가 보는 것이 곧 서버 상황이라
-	 * 어긋남 자체가 없고, 되돌리면 오히려 맞아야 할 피격을 흘려보낸다.
-	 */
-	const APawn* TargetPawn = Cast<APawn>(Target);
-	if (TargetPawn == nullptr || TargetPawn->IsLocallyControlled())
-	{
-		return 0.f;
-	}
-
-	const APlayerState* TargetPlayerState = TargetPawn->GetPlayerState();
-	if (TargetPlayerState == nullptr)
-	{
-		return 0.f;
-	}
-
-	/**
-	 * 되돌릴 시간은 왕복 시간(ping) 전체다. 절반이 아니다.
-	 * 근거는 패링 쪽과 같다. (UCWParryComponent::ResolveViewRewindSeconds 주석)
-	 *
-	 * 그 사람 화면의 차량은 서버가 보낸 값을 받아 그린 것이라 편도만큼 뒤처져 있고,
-	 * 그 화면을 보고 피한 결과가 서버에 닿는 데 다시 편도가 걸린다.
-	 */
-	const float PingSeconds = TargetPlayerState->GetPingInMilliseconds() * 0.001f;
-
-	return FMath::Clamp(PingSeconds, 0.f, MaxHitRewindSeconds);
-}
-
 bool ACWBaseVehicle::PassesHitLagCompensation(const AActor* Target) const
 {
-	const float RewindSeconds = ResolveTargetViewRewindSeconds(Target);
+	// 판정 주체가 쳐내는 사람이 아니라 맞는 사람이라 대상 폰의 핑으로 되돌린다.
+	// 계산과 상한은 패링과 공유한다. 두 판정이 같은 차를 다른 만큼 되돌리면 안 된다.
+	const float RewindSeconds = UCWTrafficSubsystem::ResolveViewRewindSeconds(Target);
 	if (RewindSeconds <= 0.f)
 	{
 		return true;

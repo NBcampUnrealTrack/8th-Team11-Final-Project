@@ -350,15 +350,6 @@ private:
 	bool PassesHitLagCompensation(const AActor* Target) const;
 
 	/**
-	 * 이 대상의 화면이 서버보다 얼마나 뒤처져 있는가(초). 차를 되돌릴 양이다.
-	 *
-	 * 패링의 UCWParryComponent::ResolveViewRewindSeconds 와 같은 근거(그 사람 핑 전체)를
-	 * 쓴다. 판정 주체가 쳐내는 사람이 아니라 맞는 사람이라 여기서 대상 폰을 보고 다시 구한다.
-	 * 호스트가 직접 조종하는 대상은 0 이다. 자기가 보는 것이 곧 서버 상황이다.
-	 */
-	float ResolveTargetViewRewindSeconds(const AActor* Target) const;
-
-	/**
 	 * 겹쳐 있지만 아직 못 친 대상을 서버 틱마다 다시 판정한다. (서버 전용)
 	 *
 	 * 왜 필요한가
@@ -465,23 +456,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float MinHitSpeed = 100.f;
 
-	/**
-	 * 피격 랙 보정으로 차량을 되돌릴 수 있는 상한(초). 0 이면 보정을 아예 끈다.
-	 *
-	 * 피격 판정은 서버의 "지금 차 위치"로 하지만, 그 사람 화면의 차는 왕복 시간(핑)만큼
-	 * 뒤처져 있다. 보정을 하지 않으면 화면에서 분명히 피한 사람이 서버에서는 맞는다.
-	 * 그래서 판정 직전에 차를 그 사람이 본 위치까지 되돌려, 화면에서 아직 닿지 않았던
-	 * 피격은 흘려보낸다. (TryApplyHit 의 랙 보정 게이트)
-	 *
-	 * 패링의 MaxViewRewindSeconds 와 같은 0.2 로 맞춘다. 두 판정이 다른 상한을 쓰면
-	 * "패링은 됐는데 그대로 맞는다" 처럼 같은 순간을 서로 다르게 보는 엇갈림이 생긴다.
-	 * 되돌리는 근거(그 사람 핑)와 되돌리는 대상(같은 차량)이 같으므로 상한도 같아야 한다.
-	 *
-	 * 이 값을 넘게 늦은 사람은 그만큼은 서버의 지금 상황으로 판정된다. 무제한으로 되돌리면
-	 * 남들 화면에서 한참 전에 지나간 차에 뒤늦게 맞는 것으로 보이기 때문이다.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MaxHitRewindSeconds = 0.2f;
+	// 피격 랙 보정의 되돌림 양과 상한은 여기 없다. 패링과 같은 값이어야 해서
+	// UCWTrafficSubsystem::ResolveViewRewindSeconds 하나가 두 판정에 답한다.
 
 	/** 앞차 뒤범퍼와 유지할 최소 여유 거리(cm). 차 길이에 더해서 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
@@ -656,7 +632,7 @@ private:
 	 *
 	 * 복제하지 않는다. 월드 시간은 머신마다 기준이 달라서 값을 그대로 보내면 의미가 없고,
 	 * 패링 판정은 서버에서만 돌아서 보낼 이유도 없다. 클라이언트는 보정량 0 으로 들어오므로
-	 * (UCWParryComponent::ResolveViewRewindSeconds) 깎을 것 자체가 없다.
+	 * (UCWTrafficSubsystem::ResolveViewRewindSeconds) 깎을 것 자체가 없다.
 	 */
 	float ParryLaunchWorldTime = -1.f;
 

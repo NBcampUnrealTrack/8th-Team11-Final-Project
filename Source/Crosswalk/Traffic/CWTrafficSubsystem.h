@@ -54,6 +54,24 @@ public:
 	/** 진단 로그의 액터 식별자. 서버와 클라이언트에서 같은 값이 나오는 것을 고른다. */
 	static FString GetNetIdTag(const AActor* Actor);
 
+	/**
+	 * 이 사람의 화면이 서버보다 얼마나 뒤처져 있는가(초). 판정 직전에 차량을 되돌릴 양이다.
+	 *
+	 * 패링(쳐내는 사람)과 피격(맞는 사람) 두 판정이 같은 차량을 같은 근거(그 사람 핑)로
+	 * 되돌린다. 계산과 상한이 한 곳이어야 "패링은 됐는데 그대로 맞는다" 처럼 같은 순간을
+	 * 두 판정이 다르게 보는 일이 없다. 그래서 어느 한쪽 소유가 아니라 여기 둔다.
+	 *
+	 * 되돌릴 시간은 왕복 시간(ping) 전체다. 절반이 아니다. 그 사람 화면의 차량은 서버가
+	 * 보낸 값을 받아 그린 것이라 편도만큼 뒤처져 있고, 그 화면을 보고 한 행동이 서버에
+	 * 닿는 데 다시 편도가 걸린다.
+	 *
+	 * 서버에서만 의미가 있다. 클라이언트나 호스트가 직접 조종하는 폰은 0 이다 -
+	 * 자기가 보는 것이 곧 서버 상황이라 되돌릴 것이 없다.
+	 *
+	 * @param Viewer  화면을 보고 행동한 사람의 폰. 폰이 아니면 0.
+	 */
+	static float ResolveViewRewindSeconds(const AActor* Viewer);
+
 	void RegisterVehicle(ACWBaseVehicle* Vehicle);
 	void UnregisterVehicle(ACWBaseVehicle* Vehicle);
 
