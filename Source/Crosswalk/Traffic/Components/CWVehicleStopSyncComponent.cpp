@@ -23,10 +23,8 @@ void UCWVehicleStopSyncComponent::BeginPlay()
 	OwnerVehicle->OnStopStateChanged.AddDynamic(this, &UCWVehicleStopSyncComponent::HandleStopStateChanged);
 
 	/**
-	 * 풀링으로 재사용된 차량이 지난 주행에 정지 상태로 반납됐다가, 그 상태 그대로
-	 * 다시 나올 수 있다. InitializeOnLane 은 이 경우 알리지 않고 조용히 되돌리므로
-	 * (ACWBaseVehicle::InitializeOnLane 주석 참고), 델리게이트만 기다리지 않고
-	 * 스폰 시점의 실제 상태를 여기서 한 번 직접 확인한다.
+	 * 바인딩 전에 이미 정지 상태가 됐을 수 있다. 델리게이트만 기다리지 않고
+	 * 지금 상태를 한 번 직접 확인한다. (초기화 순서에 기대지 않기 위한 것이다)
 	 */
 	if (OwnerVehicle->IsStoppedAtStopLine())
 	{
@@ -53,10 +51,9 @@ void UCWVehicleStopSyncComponent::RunCorrection()
 	}
 
 	/**
-	 * 델리게이트를 못 받았을 수 있는 상태 변화(풀링 재사용 등)를 여기서 다시 확인한다.
-	 * InitializeOnLane 은 재사용 시 정지 상태를 알리지 않고 조용히 되돌리기 때문에,
-	 * 델리게이트만 믿으면 이 타이머가 계속 돌면서 이제 막 새로 출발한 차를 엉뚱한
-	 * 목표로 당길 수 있다.
+	 * 델리게이트 없이 바뀐 상태를 여기서 다시 확인한다. InitializeOnLane 은 정지 상태를
+	 * 알리지 않고 조용히 되돌리므로, 델리게이트만 믿으면 이 타이머가 계속 돌면서
+	 * 이제 막 출발한 차를 엉뚱한 목표로 당길 수 있다.
 	 */
 	if (!OwnerVehicle->IsStoppedAtStopLine() || OwnerVehicle->GetStopTargetDistance() < 0.f)
 	{

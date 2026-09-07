@@ -200,16 +200,6 @@ public:
 	bool PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds = 0.f) const;
 
 	/**
-	 * 패링 시도. 성공하면 차량이 LaunchDirection 으로 튕겨나가고 true.
-	 * 입력 처리와 쿨타임(1초)은 플레이어 파트 담당이므로 여기서 관리하지 않는다.
-	 *
-	 * @param ViewRewindSeconds 랙 보정량. 선별 단계와 같은 값을 넘겨야 한다.
-	 *                          다른 값을 넘기면 선별은 통과했는데 여기서 떨어지는 일이 생긴다.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	bool TryParry(AActor* Parrier, const FVector& LaunchDirection, float ViewRewindSeconds = 0.f);
-
-	/**
 	 * 패링 가능 차종인지. 트럭·긴급차량은 자식 BP에서 bCanBeParried를 끈다.
 	 * 이미 튕겨나가는 중이어도 막지 않는다. 날아오는 차를 다른 플레이어가 다시 쳐낼 수 있어야 한다.
 	 */
@@ -244,7 +234,7 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	/** 차선 끝에 도달했을 때. 풀링을 붙이면 이 지점을 반납 훅으로 쓴다. */
+	/** 차선 끝에 도달했거나 패링 소멸 타이머가 끝났을 때. 지금은 Destroy 가 전부다. */
 	virtual void OnReachedLaneEnd();
 
 private:
@@ -303,6 +293,18 @@ private:
 	 * 커서 지점을 못 쓰면 플레이어 기준 방향으로, 그것도 비면 TryParry 가 온 길로 되돌려 보낸다.
 	 */
 	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
+
+	/**
+	 * 패링 판정을 확정하고 차량을 LaunchDirection 으로 튕겨낸다. 성공하면 true.
+	 *
+	 * 들어오는 길은 ReceiveParryAttempt 하나뿐이다. 그 앞에 서브시스템의 선별(차종·반경·각도)이
+	 * 있으므로 여기서는 윈도우만 다시 본다. 블루프린트에 열지 않는다 - 선별을 건너뛰고
+	 * 직접 부르는 길이 하나 더 있으면, 패링이 왜 됐는지 안 됐는지를 두 경로에서 따져야 한다.
+	 *
+	 * @param ViewRewindSeconds 랙 보정량. 선별 단계와 같은 값을 넘겨야 한다.
+	 *                          다른 값을 넘기면 선별은 통과했는데 여기서 떨어지는 일이 생긴다.
+	 */
+	bool TryParry(AActor* Parrier, const FVector& LaunchDirection, float ViewRewindSeconds);
 
 	/**
 	 * 실제로 되돌릴 시간(초). 넘어온 보정량을 등속 직진 가정이 성립하는 구간으로 깎는다.
@@ -587,8 +589,8 @@ protected:
 	 *   기본값이 0이면 0번 변형이 뽑힌 차량만 클라이언트에서 메쉬가 바뀌지 않는다.
 	 *   어떤 유효 인덱스와도 다른 값을 기본값으로 두면 전송과 알림이 항상 보장된다.
 	 *
-	 * 풀링을 붙이면 반납 시점에 이 값을 INDEX_NONE으로 되돌려야 한다.
-	 * 재사용된 차량이 직전과 같은 인덱스를 다시 뽑으면 값이 안 바뀌어 전송이 생략된다.
+	 * 같은 액터에 InitializeOnLane 을 다시 부르는 구조가 생기면(지금은 없다) 그 전에 이 값을
+	 * INDEX_NONE 으로 되돌려야 한다. 직전과 같은 인덱스를 다시 뽑으면 값이 안 바뀌어 전송이 생략된다.
 	 */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_MeshVariantIndex, Category = "Traffic|Vehicle")
 	int32 MeshVariantIndex = INDEX_NONE;
