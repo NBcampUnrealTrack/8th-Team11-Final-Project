@@ -34,6 +34,34 @@ class UStaticMeshComponent;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleStopStateChangedSignature, ACWBaseVehicle*, Vehicle, bool, bStoppedAtStopLine, float, StopTargetDistance);
 
 /**
+ * 한 프레임의 주행 속도 결정 결과. ACWBaseVehicle::ResolveStepSpeed 가 낸다.
+ *
+ * 세 값이 한 묶음인 이유: 속도가 0 인 것만으로는 "정지선 앞에 섰다" 와 "앞차에 막혔다" 를
+ * 가를 수 없고, 정지선 목표 지점은 속도를 정하는 도중에 같이 나온다. 셋을 따로 돌려주면
+ * 부르는 쪽이 매번 초기화하고 짝을 맞춰야 해서, 예전에는 out 포인터에 멤버 주소를 넘기면
+ * 안 된다는 경고 주석까지 필요했다.
+ *
+ * 값으로 돌려주므로 부르는 쪽 멤버는 결과가 다 정해진 뒤에 한 번에 갱신된다.
+ */
+struct FCWVehicleStepResolution
+{
+	/** 이번 프레임에 낼 속도(cm/s). 앞차·정지선 중 더 느리게 만든 쪽의 값이다. */
+	float Speed = 0.f;
+
+	/**
+	 * 이 속도를 정한 것이 정지선인지. 앞차에 막힌 것과 구분하는 데 쓴다.
+	 * 정지선이 앞차보다 더 느리게 만들었을 때만 true 다.
+	 */
+	bool bStopLineLimited = false;
+
+	/**
+	 * 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1.
+	 * 남은 거리가 아니라 목표 지점이다. 이 차가 어디까지 왔든 같은 값이라 보정의 기준으로 쓸 수 있다.
+	 */
+	float StopTargetDistance = -1.f;
+};
+
+/**
  * 차선 스플라인을 따라 직선 주행하는 차량의 공통 베이스.
  * 승용차 / 오토바이 / 트럭 등 차종은 이 클래스를 상속한 BP로 만든다.
  *
@@ -239,18 +267,15 @@ protected:
 
 private:
 	/**
-	 * 앞차를 추월해 통과하지 않도록 주행 속도를 제한한다. 앞차가 없으면 제 속도를 그대로 낸다.
+	 * 앞차와 정지선을 보고 이번 프레임의 주행 속도를 정한다. 둘 다 없으면 제 속도를 그대로 낸다.
 	 *
 	 * 프레임 시간을 받지 않는다. 앞차와의 거리만 보고 정해야 프레임 간격이 흔들려도 속도가
 	 * 같이 흔들리지 않고, 서버와 클라이언트가 같은 상황에서 같은 값을 낸다.
 	 *
-	 * @param OutStopLineLimited     이번 속도를 정한 것이 정지선인지. 정지 상태 판정이 "앞차에 막힌 것"과
-	 *                               구분하는 데 쓴다. 속도 자체는 이 값과 무관하므로 nullptr 이어도 된다.
-	 * @param OutStopTargetDistance  서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1.
-	 *                               남은 거리가 아니라 목표 지점이다. 남은 거리는 진행 거리를 빼면 나오는데,
-	 *                               목표 지점은 이 차가 어디까지 왔든 같은 값이라 보정의 기준으로 쓸 수 있다.
+	 * 멤버를 건드리지 않는 const 함수다. 결과를 멤버에 반영하는 것은 부르는 쪽(Tick)이 한다.
+	 * 각 항목의 뜻은 FCWVehicleStepResolution 참고.
 	 */
-	float ResolveStepSpeed(bool* OutStopLineLimited = nullptr, float* OutStopTargetDistance = nullptr) const;
+	FCWVehicleStepResolution ResolveStepSpeed() const;
 
 	/**
 	 * 멈춰야 할 지점까지 Remaining 만큼 남았을 때 낼 속도. 앞차와 정지선이 각자 부른다.
@@ -671,7 +696,7 @@ private:
 	bool bStoppedAtStopLine = false;
 
 	/**
-	 * 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1. 매 틱 ResolveStepSpeed 가 채운다.
+	 * 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1. 매 틱 Tick 이 ResolveStepSpeed 의 결과로 채운다.
 	 *
 	 * 복제하지 않는다. 정지선 위치도 차체 길이도 이미 양쪽에 다 있어서 계산 결과가 같고,
 	 * 값이 갈리는 유일한 경우는 신호색이 아직 도착하지 않은 순간뿐이다.
