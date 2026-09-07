@@ -86,6 +86,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	ECWTrafficSignalState GetGroupState(FName GroupName) const;
 
+	/**
+	 * 색 이름. 로그·검산 패널·신호등이 전부 이걸 쓴다.
+	 *
+	 * 열거형의 DisplayName 을 그대로 돌려준다. 색 이름 표를 여기 말고 다른 곳에 두면
+	 * 표가 갈라진다 - 실제로 제어기 안에 표 하나, UEnum 호출 두 벌로 세 갈래였다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
+	static FText GetSignalStateText(ECWTrafficSignalState State);
+
 	/** 지금 돌고 있는 시퀀스 단계. 시퀀스가 없거나 멈췄으면 INDEX_NONE. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	int32 GetCurrentStepIndex() const { return CurrentStepIndex; }

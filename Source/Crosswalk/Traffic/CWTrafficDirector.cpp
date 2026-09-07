@@ -18,17 +18,11 @@ namespace
 	{
 		return Approach == ECWTrafficApproach::North || Approach == ECWTrafficApproach::South;
 	}
+}
 
-	const TCHAR* StateToText(ECWTrafficSignalState State)
-	{
-		switch (State)
-		{
-		case ECWTrafficSignalState::Red:    return TEXT("적색");
-		case ECWTrafficSignalState::Yellow: return TEXT("황색");
-		case ECWTrafficSignalState::Green:  return TEXT("초록");
-		default:                            return TEXT("꺼짐");
-		}
-	}
+FText ACWTrafficDirector::GetSignalStateText(ECWTrafficSignalState State)
+{
+	return UEnum::GetDisplayValueAsText(State);
 }
 
 ACWTrafficDirector::ACWTrafficDirector()
@@ -241,6 +235,15 @@ void ACWTrafficDirector::BeginPlay()
 		TrafficSubsystem->RegisterSignalDirector(this);
 	}
 
+	/**
+	 * 계획 검산은 제어기가 한 번 한다.
+	 *
+	 * 예전에는 신호등 컴포넌트마다 BeginPlay 에서 불러서, 8차선이면 같은 검산 로그가
+	 * 8번 찍혔다. 검산 대상은 신호등이 아니라 이 액터의 계획이므로 여기가 맞다.
+	 * 신호등이 하나도 없는 레벨도 검산은 받아야 한다 - 정지선 배선 실수는 신호등과 무관하다.
+	 */
+	ValidateSignalPlan();
+
 	if (!HasAuthority())
 	{
 		return;
@@ -417,15 +420,12 @@ void ACWTrafficDirector::LogSyncSignalChange(FName GroupName, ECWTrafficSignalSt
 		return;
 	}
 
-	// 색 이름은 열거형의 표시 이름을 그대로 쓴다. 여기에 표를 하나 더 두면 둘이 갈라진다.
-	const UEnum* StateEnum = StaticEnum<ECWTrafficSignalState>();
-
 	UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] %s 그룹 '%s' %s <- %s"),
 		UCWTrafficSubsystem::GetNetRoleTag(this),
 		*GetName(),
 		*GroupName.ToString(),
-		*StateEnum->GetDisplayNameTextByValue(static_cast<int64>(NewState)).ToString(),
-		*StateEnum->GetDisplayNameTextByValue(static_cast<int64>(OldState)).ToString());
+		*GetSignalStateText(NewState).ToString(),
+		*GetSignalStateText(OldState).ToString());
 }
 
 void ACWTrafficDirector::ScheduleRule(int32 RuleIndex)
@@ -700,7 +700,7 @@ void ACWTrafficDirector::RefreshPreview()
 		}
 
 		FString Line = FString::Printf(TEXT("그룹 '%s' : 차선 %d개 / 기본 %s"),
-			*Group.GroupName.ToString(), ValidLanes, StateToText(Group.DefaultState));
+			*Group.GroupName.ToString(), ValidLanes, *GetSignalStateText(Group.DefaultState).ToString());
 
 		/**
 		 * 빈 칸이 있으면 반드시 알린다.
