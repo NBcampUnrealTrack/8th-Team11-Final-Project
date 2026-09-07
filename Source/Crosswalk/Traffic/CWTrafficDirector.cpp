@@ -10,6 +10,7 @@
 #include "CWTrafficStopLine.h"
 #include "CWTrafficSubsystem.h"
 #include "Core/CWGameState.h"
+#include "Traffic/CWTrafficLog.h"
 
 namespace
 {
@@ -161,7 +162,7 @@ void ACWTrafficDirector::SetGroupState(FName GroupName, ECWTrafficSignalState Ne
 	const int32 Index = FindGroupIndex(GroupName);
 	if (Index == INDEX_NONE)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] '%s' 그룹이 없어 색을 바꾸지 못했다."), *GetName(), *GroupName.ToString());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] '%s' 그룹이 없어 색을 바꾸지 못했다."), *GetName(), *GroupName.ToString());
 		return;
 	}
 
@@ -228,7 +229,7 @@ void ACWTrafficDirector::BeginPlay()
 
 	if (Groups.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 신호 그룹이 없어 아무 차선도 통제하지 않는다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 신호 그룹이 없어 아무 차선도 통제하지 않는다."), *GetName());
 	}
 
 	// 등록은 클라이언트에서도 한다. 정지선 판정을 양쪽 차량이 각자 하기 때문이다.
@@ -321,7 +322,7 @@ void ACWTrafficDirector::EnterStep(int32 StepIndex)
 	const FCWTrafficSignalStep& Step = Sequence[StepIndex];
 	ApplyAssignments(Step.Assignments);
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] 단계 %d(%s) / %.1f초"), *GetName(), StepIndex, *Step.StepName.ToString(), Step.Duration);
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 단계 %d(%s) / %.1f초"), *GetName(), StepIndex, *Step.StepName.ToString(), Step.Duration);
 
 	OnStepChanged.Broadcast(this, StepIndex, Step.StepName);
 
@@ -422,7 +423,7 @@ void ACWTrafficDirector::LogSyncSignalChange(FName GroupName, ECWTrafficSignalSt
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] %s 그룹 '%s' %s <- %s"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] %s 그룹 '%s' %s <- %s"),
 		UCWTrafficSubsystem::GetNetRoleTag(this),
 		*GetName(),
 		*GroupName.ToString(),
@@ -463,7 +464,7 @@ void ACWTrafficDirector::ExecuteRule(int32 RuleIndex)
 
 	ApplyAssignments(Rule.Assignments);
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] 규칙 '%s' 발동"), *GetName(), *Rule.RuleName.ToString());
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 규칙 '%s' 발동"), *GetName(), *Rule.RuleName.ToString());
 }
 
 void ACWTrafficDirector::EvaluateRules()
@@ -530,7 +531,7 @@ void ACWTrafficDirector::BindStageEvents()
 	ACWGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ACWGameState>() : nullptr;
 	if (!GameState)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] CWGameState 를 찾지 못해 게임 이벤트 규칙이 동작하지 않는다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] CWGameState 를 찾지 못해 게임 이벤트 규칙이 동작하지 않는다."), *GetName());
 		return;
 	}
 
@@ -637,7 +638,7 @@ void ACWTrafficDirector::ValidateSignalPlan()
 
 	for (const FString& Line : Preview)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[%s] %s"), *GetName(), *Line);
+		UE_LOG(LogCWTraffic, Log, TEXT("[%s] %s"), *GetName(), *Line);
 	}
 }
 

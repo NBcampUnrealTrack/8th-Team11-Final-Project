@@ -6,6 +6,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficSubsystem.h"
+#include "Traffic/CWTrafficLog.h"
 
 ACWTrafficStopLine::ACWTrafficStopLine()
 {
@@ -93,7 +94,7 @@ void ACWTrafficStopLine::BeginPlay()
 
 	if (!Lanes.ContainsByPredicate([](const TObjectPtr<ACWTrafficLane>& Entry) { return Entry != nullptr; }))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] Lanes 가 비어 있어 정지선이 동작하지 않는다. 어느 차선의 정지선인지 지정해야 한다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] Lanes 가 비어 있어 정지선이 동작하지 않는다. 어느 차선의 정지선인지 지정해야 한다."), *GetName());
 		return;
 	}
 

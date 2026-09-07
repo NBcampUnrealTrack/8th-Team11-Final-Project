@@ -13,6 +13,7 @@
 #include "CWBaseVehicle.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficSubsystem.h"
+#include "Traffic/CWTrafficLog.h"
 
 ACWTrafficVehicleSpawner::ACWTrafficVehicleSpawner()
 {
@@ -29,7 +30,7 @@ void ACWTrafficVehicleSpawner::StartSpawning()
 
 	if (!TargetLane || !HasSpawnableVehicleClass())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] TargetLane이 없거나 스폰 가능한 차종이 없어 스폰을 시작하지 않는다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] TargetLane이 없거나 스폰 가능한 차종이 없어 스폰을 시작하지 않는다."), *GetName());
 		return;
 	}
 
@@ -41,7 +42,7 @@ void ACWTrafficVehicleSpawner::StartSpawning()
 	 * 경고가 하나도 안 뜨면서 한 차선에만 차가 나온다 - 조용히 틀리는 배치라 이 줄이 없으면
 	 * 화면만 보고 원인을 찾아야 한다.
 	 */
-	UE_LOG(LogTemp, Log, TEXT("[%s] 스폰 시작. 차선 %s / 주기 %.1f~%.1f초"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 스폰 시작. 차선 %s / 주기 %.1f~%.1f초"),
 		*GetName(), *TargetLane->GetName(), SpawnIntervalMin, SpawnIntervalMax);
 
 	WarnOnSharedTargetLane();
@@ -150,7 +151,7 @@ void ACWTrafficVehicleSpawner::WarnOnSharedTargetLane() const
 			continue;
 		}
 
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogCWTraffic, Warning,
 			TEXT("[%s] TargetLane(%s)이 %s 와 같다. 두 스포너가 한 차선에 차를 넣으면 다른 차선은 비게 된다. 복제할 때 차선을 다시 지정하지 않은 것은 아닌지 확인해야 한다."),
 			*GetName(), *TargetLane->GetName(), *Other->GetName());
 
@@ -279,7 +280,7 @@ void ACWTrafficVehicleSpawner::LogSpawnRelevancy(const ACWBaseVehicle& Vehicle) 
 		 */
 		if (!Connection->OwningActor || !Connection->ViewTarget)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[TrafficNet] 스폰 %s / %s 시점없음(로딩·리스폰 중)"),
+			UE_LOG(LogCWTraffic, Log, TEXT("[TrafficNet] 스폰 %s / %s 시점없음(로딩·리스폰 중)"),
 				*Vehicle.GetName(), *PlayerTag);
 			continue;
 		}
@@ -288,7 +289,7 @@ void ACWTrafficVehicleSpawner::LogSpawnRelevancy(const ACWBaseVehicle& Vehicle) 
 		const float Distance = FVector::Dist(SpawnLocation, Viewer.ViewLocation);
 		const bool bRelevant = Vehicle.IsNetRelevantFor(Viewer.InViewer, Viewer.ViewTarget, Viewer.ViewLocation);
 
-		UE_LOG(LogTemp, Log, TEXT("[TrafficNet] 스폰 %s / 컬거리 %.0fcm / %s 거리 %.0fcm / 관련 %s"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficNet] 스폰 %s / 컬거리 %.0fcm / %s 거리 %.0fcm / 관련 %s"),
 			*Vehicle.GetName(), CullDistance, *PlayerTag, Distance, bRelevant ? TEXT("O") : TEXT("X"));
 	}
 }
@@ -323,7 +324,7 @@ void ACWTrafficVehicleSpawner::PrewarmLane()
 
 	if (Count < PrewarmVehicleCount)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 차선 길이 %.0fcm에는 %d대까지만 배치 가능하다. %d대 요청 중 %d대만 배치한다."),
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 차선 길이 %.0fcm에는 %d대까지만 배치 가능하다. %d대 요청 중 %d대만 배치한다."),
 			*GetName(), LaneLength, Count, PrewarmVehicleCount, Count);
 	}
 
