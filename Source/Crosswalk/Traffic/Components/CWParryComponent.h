@@ -30,12 +30,12 @@ public:
 	UCWParryComponent();
 
 	// 로컬 플레이어의 패링 입력을 받아 서버 판정 요청으로 넘김
-	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Parry")
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
 	void RequestParry(const FVector& CursorWorldLocation);
 
 	// 패링 준비 비율을 반환
 	// 0은 방금 사용한 상태, 1은 다시 사용할 수 있는 상태
-	UFUNCTION(BlueprintPure, Category = "Crosswalk|Parry")
+	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	float GetCooldownReadyRatio() const;
 
 protected:
@@ -100,7 +100,7 @@ private:
 	void ResetLocalCooldown();
 
 private:
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryCooldown = 1.f;
 
 	/**
@@ -118,7 +118,7 @@ private:
 	 * 서버 쿨타임에 걸린 요청은 이 값과 무관하게 절대 환불하지 않는다.
 	 * 되돌려주면 곧바로 다시 보내고 다시 걸리기를 반복한다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry")
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
 	bool bRefundCooldownOnMiss = true;
 
 	/**
@@ -128,7 +128,7 @@ private:
 	 * 윈도우 안에 들어온 차량의 표면 거리는 이미 (속도 x 윈도우)로 정해진다.
 	 * 750cm/s 차량에 윈도우 0.3초면 225cm 이므로, 반경을 그보다 좁게 주면 성공 자체가 불가능하다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryRadius = 0.f;
 
 	/**
@@ -137,7 +137,7 @@ private:
 	 * 기본값 360. 커서는 조준이 아니라 차를 튕겨 보낼 방향이다.
 	 * 각도를 좁히면 "차를 저쪽으로 날리려고 반대편을 찍는" 조작이 전부 실패한다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float ParryAngle = 360.f;
 
 	// 랙 보정의 되돌림 양과 상한은 여기 없다. 피격 판정과 같은 값이어야 해서
@@ -149,6 +149,6 @@ private:
 
 	// 델리게이트는 최하단에 배치
 public:
-	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Parry")
+	UPROPERTY(BlueprintAssignable, Category = "Traffic|Parry")
 	FCWOnParrySucceededSignature OnParrySucceeded;
 };
