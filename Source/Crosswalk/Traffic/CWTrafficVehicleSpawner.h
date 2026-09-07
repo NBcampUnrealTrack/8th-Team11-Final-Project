@@ -16,7 +16,7 @@ class ACWTrafficLane;
  * 왕복 2차선은 차선마다 스포너를 하나씩 두고 각자 간격을 굴린다.
  *
  * 개체별 편차(간격 / 속도 / 좌우 위치)와 차종 비율을 여기서 굴려 차량에 넘긴다.
- * 트래픽 프로파일 데이터 에셋이 붙으면 이 값들이 그쪽으로 빠진다.
+ * 판 전체를 한 곡선으로 굴리는 값(주기·차종)은 ACWTrafficDifficulty 가 진행도에 따라 밀어 넣는다.
  */
 UCLASS()
 class CROSSWALK_API ACWTrafficVehicleSpawner : public AActor
@@ -35,16 +35,17 @@ public:
 	/**
 	 * 지금 1대 스폰을 요청한다. 차선 입구가 앞차에 점유돼 있으면 거절한다.
 	 *
-	 * 자체 간격 타이머를 쓰지 않고 밖에서 도착 시점을 편성할 때 쓴다 (ACWTrafficDirector).
-	 * 차종 추첨·개체 편차·입구 점유 검사는 자체 타이머 경로와 완전히 같은 것을 탄다 -
-	 * 두 경로가 다른 판정을 쓰면 편성 여부에 따라 차가 겹치거나 안 겹치게 된다.
+	 * 자체 간격 타이머가 매번 부르는 경로이고, 밖에서 1대 넣고 싶을 때 쓸 유일한 공개 진입점이다.
+	 * (신호 제어기는 스폰을 건드리지 않는다 - ACWTrafficDirector 클래스 주석. 지금 밖에서
+	 * 부르는 곳은 없다) 차종 추첨·개체 편차·입구 점유 검사가 전부 여기를 지나므로,
+	 * 어디서 부르든 같은 판정을 탄다.
 	 *
 	 * @return 스폰한 차량. 입구가 막혔거나 스폰 가능한 차종이 없으면 nullptr.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	ACWBaseVehicle* RequestSpawn();
 
-	/** 이 스포너가 차량을 흘려보내는 차선. 편성 쪽에서 차선 길이를 읽는 데 쓴다. */
+	/** 이 스포너가 차량을 흘려보내는 차선. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
 	ACWTrafficLane* GetTargetLane() const { return TargetLane; }
 
@@ -132,13 +133,13 @@ private:
 	void WarnOnSharedTargetLane() const;
 
 protected:
-	/** 차량을 흘려보낼 차선. 레벨에 배치한 ATrafficLane을 지정한다. */
+	/** 차량을 흘려보낼 차선. 레벨에 배치한 ACWTrafficLane 을 지정한다. */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Traffic|Spawner")
 	TObjectPtr<ACWTrafficLane> TargetLane;
 
 	/**
 	 * 섞어 내보낼 차종과 비율. 비워두면 VehicleClass 한 종류만 나온다.
-	 * 트래픽 프로파일 데이터로 승격될 때 이 배열이 그대로 에셋으로 옮겨간다.
+	 * ACWTrafficDifficulty 의 단계에 VehicleMix 가 있으면 그 값으로 덮어써진다 (로그가 남는다).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner")
 	TArray<FCWTrafficVehicleEntry> VehicleMix;

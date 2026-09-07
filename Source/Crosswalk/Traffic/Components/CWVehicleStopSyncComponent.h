@@ -20,8 +20,8 @@ class ACWBaseVehicle;
  * ACWBaseVehicle 은 OnStopStateChanged/GetStopTargetDistance/AdjustDistanceAlongLane
  * 만 열어 주고, 오차를 스냅할지 글라이드할지 같은 판단은 전부 여기서 한다.
  *
- * 매 틱 대신 타이머로 돈다(RagdollCorrectionInterval 과 같은 이유) - 어차피 완만하게
- * 좁히는 보정이라 초당 수십 번 계산할 필요가 없고, 정지 중인 차량만 도니 부하도 작다.
+ * 매 틱 대신 타이머로 돈다. 어차피 완만하게 좁히는 보정이라 초당 수십 번 계산할 필요가
+ * 없고, 정지 중인 차량만 도니 부하도 작다.
  *
  * **HasAuthority 로 막지 않는다. 서버·클라이언트 양쪽에서 도는 것이 의도다.**
  *
