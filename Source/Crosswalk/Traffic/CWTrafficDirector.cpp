@@ -175,9 +175,11 @@ void ACWTrafficDirector::TriggerRule(FName RuleName)
 		return;
 	}
 
+	EnsureRuleStateSized();
+
 	for (int32 Index = 0; Index < Rules.Num(); ++Index)
 	{
-		if (Rules[Index].RuleName != RuleName || (FiredRules.IsValidIndex(Index) && FiredRules[Index]))
+		if (Rules[Index].RuleName != RuleName || FiredRules[Index])
 		{
 			continue;
 		}
@@ -249,8 +251,8 @@ void ACWTrafficDirector::BeginPlay()
 		return;
 	}
 
-	FiredRules.Init(false, Rules.Num());
-	RuleTimerHandles.SetNum(Rules.Num());
+	// Init 으로 비우지 않는다. BeginPlay 전에 TriggerRule 로 발동한 기록이 있으면 남겨야 한다.
+	EnsureRuleStateSized();
 
 	BindStageEvents();
 
@@ -472,9 +474,11 @@ void ACWTrafficDirector::EvaluateRules()
 		return;
 	}
 
+	EnsureRuleStateSized();
+
 	for (int32 Index = 0; Index < Rules.Num(); ++Index)
 	{
-		if (FiredRules.IsValidIndex(Index) && FiredRules[Index])
+		if (FiredRules[Index])
 		{
 			continue;
 		}
@@ -504,6 +508,20 @@ void ACWTrafficDirector::EvaluateRules()
 
 		FiredRules[Index] = true;
 		ScheduleRule(Index);
+	}
+}
+
+void ACWTrafficDirector::EnsureRuleStateSized()
+{
+	// SetNum 은 늘어난 칸을 0(false / 빈 핸들)으로 채우고 기존 칸은 건드리지 않는다.
+	if (FiredRules.Num() != Rules.Num())
+	{
+		FiredRules.SetNum(Rules.Num());
+	}
+
+	if (RuleTimerHandles.Num() != Rules.Num())
+	{
+		RuleTimerHandles.SetNum(Rules.Num());
 	}
 }
 

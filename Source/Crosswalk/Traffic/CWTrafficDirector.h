@@ -171,6 +171,17 @@ private:
 	/** 조건이 맞는 규칙을 찾아 예약한다. 이미 발동한 규칙은 건너뛴다. */
 	void EvaluateRules();
 
+	/**
+	 * FiredRules 와 RuleTimerHandles 의 길이를 Rules 에 맞춘다. 두 배열에 쓰기 직전에 부른다.
+	 *
+	 * Rules 는 BlueprintReadWrite 라 런타임에 길이가 바뀔 수 있고, TriggerRule 은 다른
+	 * 액터의 BeginPlay 에서 이 액터의 BeginPlay 보다 먼저 들어올 수 있다. 그 두 경우에
+	 * 인덱스로 바로 쓰면 범위 밖이다.
+	 *
+	 * 기존 값은 보존한다. BeginPlay 가 이미 발동한 기록을 지우면 그 규칙이 두 번 발동한다.
+	 */
+	void EnsureRuleStateSized();
+
 	/** 게임 상태 알림을 구독한다. */
 	void BindStageEvents();
 

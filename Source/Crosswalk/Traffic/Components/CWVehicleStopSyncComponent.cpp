@@ -34,11 +34,18 @@ void UCWVehicleStopSyncComponent::BeginPlay()
 
 void UCWVehicleStopSyncComponent::HandleStopStateChanged(ACWBaseVehicle* Vehicle, bool bNowStopped, float TargetDistance)
 {
-	GetWorld()->GetTimerManager().ClearTimer(CorrectionTimerHandle);
+	// 월드가 내려가는 중에 마지막 정지 알림이 올 수 있다. 그때는 걸 타이머도 없다.
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(CorrectionTimerHandle);
 
 	if (bNowStopped)
 	{
-		GetWorld()->GetTimerManager().SetTimer(CorrectionTimerHandle, this,
+		World->GetTimerManager().SetTimer(CorrectionTimerHandle, this,
 			&UCWVehicleStopSyncComponent::RunCorrection, CorrectionInterval, true);
 	}
 }
@@ -57,7 +64,10 @@ void UCWVehicleStopSyncComponent::RunCorrection()
 	 */
 	if (!OwnerVehicle->IsStoppedAtStopLine() || OwnerVehicle->GetStopTargetDistance() < 0.f)
 	{
-		GetWorld()->GetTimerManager().ClearTimer(CorrectionTimerHandle);
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(CorrectionTimerHandle);
+		}
 		return;
 	}
 
