@@ -27,6 +27,9 @@ void UCWWorkerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	// 남의 머리 위 알림에도 필요하다. 소유자에게만 보내면 보급자가 볼 수 없다. (기획서 5-4)
 	DOREPLIFETIME(UCWWorkerComponent, bPaintDepleted);
+
+	// 남의 화면에서도 작업 애니메이션이 나와야 한다. 판정에 쓰이는 TargetZone 은 복제되지 않는다.
+	DOREPLIFETIME(UCWWorkerComponent, bWorkEffective);
 }
 
 void UCWWorkerComponent::BeginPlay()
@@ -127,6 +130,10 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	}
 
 	SetPaintDepleted((bWantsToWork || bZoneReportedDepleted) && !HasPaintForWork());
+
+	// 작업 애니메이션이 보는 값. 아래 조기 반환 앞에 둬야 작업이 끝난 프레임에도 false 로 내려간다.
+	// 여기까지 오는 것은 서버와 소유 클라이언트뿐이다. (위쪽 조기 반환)
+	bWorkEffective = bWantsToWork && !bPaintDepleted;
 
 	ShowDebugPaint();
 

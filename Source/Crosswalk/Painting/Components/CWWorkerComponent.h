@@ -179,6 +179,15 @@ public:
 	bool IsWorkBlocked() const { return bWorkBlocked; }
 
 	/**
+	 * 작업이 실제로 진행되는 중인가. 작업 애니메이션과 이펙트가 이 값을 본다.
+	 *
+	 * IsWorking 과 다르다. 그쪽은 "작업 키를 누르고 있다" 일 뿐이라, 존도 없는 허공에 대고
+	 * 키를 눌러도 true 다. 이 값은 대상 존이 있고 페인트도 있는 경우만 true 다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsWorkEffective() const { return bWorkEffective; }
+
+	/**
 	 * 지금 하는 작업 때문에 패링이 막혀 있는가. 캐릭터가 패링 입력을 무시할 때 쓴다.
 	 *
 	 * 이동 잠금과 같은 이유로 로컬에서만 판단한다. 서버 확정을 기다리면 그 사이 입력이
@@ -364,6 +373,16 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Work")
 	bool bWorkBlocked = false;
+
+	// 작업이 실제로 진행되는 중인가. bWorking 과 달리 대상 존과 페인트까지 본 결과다.
+	//
+	// 복제하는 이유: 판정에 쓰이는 TargetZone 은 Transient 이고, 원격 캐릭터에서는
+	// Tick 이 조기 반환해 계산조차 되지 않는다. 남의 화면에서 "저 사람이 지금 일하는 중인가"
+	// 를 알 방법이 이 플래그밖에 없다.
+	//
+	// bWorking 과 같이 소유 클라이언트가 즉시 세팅하고, 서버 값이 오면 덮인다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Work")
+	bool bWorkEffective = false;
 
 private:
 	// 대상 존은 HUD 표시와 서버 판정에 각각 필요해서 양쪽이 로컬로 계산한다.
