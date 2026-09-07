@@ -103,11 +103,24 @@ bool ACWBaseTool::TryPickUp(APawn* NewHolder)
 		}
 	}
 
-	AttachToComponent(AttachParent, FAttachmentTransformRules::SnapToTargetNotIncludingScale, AttachSocketName);
+	/**
+	 * 어태치 설정은 클래스 단위 값이므로 CDO 에서 직접 읽는다.
+	 *
+	 * EditDefaultsOnly 인데도 레벨에 배치된 액터에는 배치 당시의 값이 굳어 있다.
+	 * 인스턴스에서 편집할 수도, Details 에 표시되지도 않는 값이라 BP 를 고쳐도
+	 * 반영되지 않고, 원인을 찾기가 매우 어렵다. (소켓 이름을 바꿀 때마다 레벨에
+	 * 배치된 도구를 다시 놓아야 했다)
+	 *
+	 * 도구마다 다를 이유가 없는 값이니 항상 클래스 기본값을 따르게 한다.
+	 */
+	const ACWBaseTool* Defaults = GetClass()->GetDefaultObject<ACWBaseTool>();
+
+	AttachToComponent(AttachParent, FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		Defaults->AttachSocketName);
 
 	// 스케일은 도구가 원래 갖고 있던 값을 유지해야 하므로 위치/회전만 보정한다.
-	SetActorRelativeLocation(AttachRelativeLocation);
-	SetActorRelativeRotation(AttachRelativeRotation);
+	SetActorRelativeLocation(Defaults->AttachRelativeLocation);
+	SetActorRelativeRotation(Defaults->AttachRelativeRotation);
 
 	HandleHeldStateChanged();
 
