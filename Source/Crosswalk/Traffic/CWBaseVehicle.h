@@ -221,16 +221,21 @@ public:
 	float GetParryWindow() const { return ParryWindow; }
 
 	/**
-	 * 패링당하는 순간 서버·클라이언트 모두에서 호출된다. 차량 BP 에서 구현해 연출을 붙이는 자리다.
-	 * 이펙트, 사운드, 트레일, 카메라 흔들림 전부 여기서 시작하면 되고 C++ 수정은 필요 없다.
+	 * 패링당하는 순간 서버·클라이언트 모두에서 호출된다. 차량 BP 에서 구현해 **차에 붙는 연출**을 붙이는 자리다.
+	 *
+	 * 패링 성공 연출은 두 갈래로 나뉜다. 어디에 붙일지 헷갈리면 "누구 몸에 붙는가" 로 가른다.
+	 *   차에 붙는 것   - 여기. 차체 스파크, 타이어 트레일, 차 사운드처럼 차량 액터를 따라가는 연출.
+	 *   사람에 붙는 것 - UCWParryComponent::OnParrySucceeded. 카메라 흔들림, 히트스톱, HUD,
+	 *                    쳐낸 사람 애니메이션처럼 플레이어를 따라가는 연출.
+	 * 둘은 같은 사건에 각자 나가는 별개 RPC 다. 한쪽에 다른 쪽 연출을 붙이면 소유 액터가 달라서
+	 * 매번 상대를 찾아야 하고, 그 코드가 두 파일에 흩어진다.
 	 *
 	 * 호출 시점은 차량이 이미 새 방향으로 회전한 뒤다. 그래서 GetActorForwardVector 가
 	 * 곧 날아갈 방향이고, LaunchDirection 도 같은 값이다.
 	 *
 	 * @param LaunchDirection  차량이 날아가는 방향(정규화, 수평).
 	 * @param LaunchSpeed      그 순간의 실제 주행 속도(cm/s). 연출 세기 환산에 쓴다.
-	 * @param Parrier          쳐낸 플레이어. 그 사람 화면에서만 카메라를 흔들고 싶으면
-	 *                         BP 에서 이 액터가 로컬 조종 대상인지 확인하면 된다.
+	 * @param Parrier          쳐낸 플레이어. 차 쪽 연출을 그 사람에 따라 다르게 낼 때 쓴다.
 	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Traffic|Parry")
 	void OnParriedFX(const FVector& LaunchDirection, float LaunchSpeed, AActor* Parrier);
@@ -310,7 +315,10 @@ private:
 	float ResolveEffectiveRewindSeconds(float ViewRewindSeconds) const;
 
 	/**
-	 * 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
+	 * 차에 붙는 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
+	 *
+	 * 사람에 붙는 연출은 UCWParryComponent::Multicast_ParrySucceeded 가 따로 나간다.
+	 * 같은 사건에 RPC 가 둘인 것은 의도다 - 역할 구분은 OnParriedFX 주석 참고.
 	 *
 	 * 차량이 실제로 튕겨나가는 것은 bParried / ParriedLaunch* 복제가 담당한다.
 	 * 상태를 이 RPC 로 넘기지 않는 이유: 패링 순간에 관련성 밖이었다가 뒤늦게 들어온
