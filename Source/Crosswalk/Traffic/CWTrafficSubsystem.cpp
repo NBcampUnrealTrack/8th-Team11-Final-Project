@@ -104,8 +104,19 @@ void UCWTrafficSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UCWTrafficSubsystem::LogVehicleCensus() const
+void UCWTrafficSubsystem::LogVehicleCensus()
 {
+	/**
+	 * 순번과 간격은 콘솔 변수보다 먼저, 무조건 갱신한다.
+	 *
+	 * 켜짐 판정 뒤에 두면 로그를 껐다 켠 순간의 첫 줄이 "몇 분 만에 찍혔다" 로 나온다.
+	 * 이 값이 재는 것은 로그가 나간 간격이 아니라 **타이머가 돈 간격**이다.
+	 */
+	const double Now = FPlatformTime::Seconds();
+	const double Elapsed = (LastCensusRealTime < 0.0) ? -1.0 : (Now - LastCensusRealTime);
+	LastCensusRealTime = Now;
+	++CensusSequence;
+
 	if (!CVarTrafficLogNetCensus.GetValueOnGameThread())
 	{
 		return;
@@ -194,9 +205,13 @@ void UCWTrafficSubsystem::LogVehicleCensus() const
 		IdList = VehicleIds.Num() > 0 ? FString::Join(VehicleIds, TEXT(" ")) : TEXT("(없음)");
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s] 차량 %d / 차선연결 %d / 메쉬 %d / 목록 %s"),
+	// 첫 줄은 견줄 상대가 없어서 간격이 없다. 0.00 으로 적으면 "정상 간격" 으로 읽히므로 구분한다.
+	const FString ElapsedTag = (Elapsed < 0.0) ? TEXT("첫줄") : FString::Printf(TEXT("+%.2f초"), Elapsed);
+
+	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s][#%d %s] 차량 %d / 차선연결 %d / 메쉬 %d / 목록 %s"),
 		World->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
-		*LocalPlayerTag, VehicleCount, LanedCount, MeshedCount, *IdList);
+		*LocalPlayerTag, CensusSequence, *ElapsedTag,
+		VehicleCount, LanedCount, MeshedCount, *IdList);
 }
 
 const TCHAR* UCWTrafficSubsystem::GetNetRoleTag(const AActor* Actor)
