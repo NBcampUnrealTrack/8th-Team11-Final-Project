@@ -372,39 +372,26 @@ ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptCo
 		return nullptr;
 	}
 
+	// 대상은 항상 서버가 고른다. 클라이언트가 차량을 지정해 보내는 경로는 없다 -
+	// 그러면 선별을 클라가 대신하는 셈이고, 어느 차가 맞았는지를 서버가 보증할 수 없다.
 	ACWBaseVehicle* BestVehicle = nullptr;
+	float BestTimeToImpact = TNumericLimits<float>::Max();
 
-	if (ACWBaseVehicle* DesignatedVehicle = Cast<ACWBaseVehicle>(ParryAttemptContext.TargetVehicle))
+	for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
 	{
-		// 대상을 지정해 보냈어도 필터는 똑같이 통과해야 한다. 지정 자체는 클라가 보낸 값이다.
+		ACWBaseVehicle* Vehicle = VehiclePtr.Get();
+
 		float TimeToImpact = 0.f;
-		if (!PassesAttemptFilter(*DesignatedVehicle, ParryAttemptContext, TimeToImpact))
+		if (!Vehicle || !PassesAttemptFilter(*Vehicle, ParryAttemptContext, TimeToImpact))
 		{
-			return nullptr;
+			continue;
 		}
 
-		BestVehicle = DesignatedVehicle;
-	}
-	else
-	{
-		float BestTimeToImpact = TNumericLimits<float>::Max();
-
-		for (const TWeakObjectPtr<ACWBaseVehicle>& VehiclePtr : ActiveVehicles)
+		// 여러 대가 조건에 걸리면 가장 먼저 닿을 차를 친다.
+		if (TimeToImpact < BestTimeToImpact)
 		{
-			ACWBaseVehicle* Vehicle = VehiclePtr.Get();
-
-			float TimeToImpact = 0.f;
-			if (!Vehicle || !PassesAttemptFilter(*Vehicle, ParryAttemptContext, TimeToImpact))
-			{
-				continue;
-			}
-
-			// 여러 대가 조건에 걸리면 가장 먼저 닿을 차를 친다.
-			if (TimeToImpact < BestTimeToImpact)
-			{
-				BestTimeToImpact = TimeToImpact;
-				BestVehicle = Vehicle;
-			}
+			BestTimeToImpact = TimeToImpact;
+			BestVehicle = Vehicle;
 		}
 	}
 
@@ -413,9 +400,8 @@ ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptCo
 		return nullptr;
 	}
 
-	// 수신 측이 차종 분기를 할 수 있도록 서버가 확정한 대상 정보를 채워서 넘긴다.
+	// 수신 측이 차종 분기를 할 수 있도록 서버가 확정한 차종을 채워서 넘긴다.
 	FCWParryAttemptContext ResolvedContext = ParryAttemptContext;
-	ResolvedContext.TargetVehicle = BestVehicle;
 	ResolvedContext.VehicleType = BestVehicle->GetVehicleType();
 
 	if (!IInterface_ParryReceiver::Execute_ReceiveParryAttempt(BestVehicle, ResolvedContext))

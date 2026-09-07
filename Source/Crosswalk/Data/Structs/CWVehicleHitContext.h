@@ -28,10 +28,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
 	FName VehicleType = NAME_None;
 
-	// 이 차량이 패링 가능한 차량인지 여부
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
-	bool bCanParry = false;
-
 	// 대형 트럭처럼 납작해지는 특수 피격을 사용할지 여부
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
 	bool bFlattenOnHit = false;

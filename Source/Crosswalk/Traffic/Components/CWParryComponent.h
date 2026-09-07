@@ -41,7 +41,7 @@ public:
 protected:
 	// 클라이언트에서 서버로 패링 판정을 요청
 	UFUNCTION(Server, Reliable)
-	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation, float ClientInputTime);
+	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation);
 
 	/**
 	 * 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달. 사람에 붙는 연출 전용이다.
@@ -68,10 +68,10 @@ protected:
 
 private:
 	// 서버에서 쿨타임을 확인하고 주변 위협 차량에 패링 판정을 시도
-	void HandleServerParryRequest(const FVector& CursorWorldLocation, float ClientInputTime);
+	void HandleServerParryRequest(const FVector& CursorWorldLocation);
 
 	// 커서 입력을 트래픽 쪽이 판정할 수 있는 시도 정보로 만든다
-	FCWParryAttemptContext BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation, float ClientInputTime) const;
+	FCWParryAttemptContext BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation) const;
 
 	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
 	FCWParrySyncData BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle) const;

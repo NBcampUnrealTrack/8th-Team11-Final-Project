@@ -64,18 +64,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	float ParryAngle = 360.f;
 
-	// 이미 특정 차량을 알고 있을 때 서버 검증에 사용할 대상
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
-	TObjectPtr<AActor> TargetVehicle = nullptr;
-
-	// 차종별 예외 처리를 위한 ID
+	// 서버가 고른 대상의 차종 ID. 선별이 끝난 뒤 UCWTrafficSubsystem 이 채워서 수신 측에 넘긴다
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FName VehicleType = NAME_None;
-
-	// 클라이언트 입력 시점을 기록하기 위한 값이며, 최종 판정은 서버가 결정.
-	// 클라이언트 월드 시간이라 서버 시간과 직접 비교할 수 없다. 기록·디버깅용이다
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
-	float ClientInputTime = 0.f;
 
 	/**
 	 * 이 시도를 판정할 때 차량을 몇 초 되돌려 볼 것인가. (랙 보정)

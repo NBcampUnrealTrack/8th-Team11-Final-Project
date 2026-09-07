@@ -828,7 +828,6 @@ void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHit
 	// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
 	HitContext.VehicleSpeed = GetCurrentSpeed();
 	HitContext.VehicleType = VehicleType;
-	HitContext.bCanParry = bCanBeParried;
 	HitContext.bFlattenOnHit = bFlattenOnHit;
 
 	// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.

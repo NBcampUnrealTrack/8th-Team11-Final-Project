@@ -32,17 +32,13 @@ void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 
 	UpdateLocalCooldown();
 
-	// 서버 판정에는 쓰지 않고 기록만 한다. 클라 월드 시간이라 서버 시간과 비교할 수 없다.
-	const UWorld* World = GetWorld();
-	const float ClientInputTime = World ? World->GetTimeSeconds() : 0.f;
-
 	if (OwnerActor->HasAuthority())
 	{
-		HandleServerParryRequest(CursorWorldLocation, ClientInputTime);
+		HandleServerParryRequest(CursorWorldLocation);
 		return;
 	}
 
-	Server_RequestParry(CursorWorldLocation, ClientInputTime);
+	Server_RequestParry(CursorWorldLocation);
 }
 
 float UCWParryComponent::GetCooldownReadyRatio() const
@@ -73,12 +69,12 @@ float UCWParryComponent::GetCooldownReadyRatio() const
 	);
 }
 
-void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize CursorWorldLocation, float ClientInputTime)
+void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize CursorWorldLocation)
 {
-	HandleServerParryRequest(CursorWorldLocation, ClientInputTime);
+	HandleServerParryRequest(CursorWorldLocation);
 }
 
-void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocation, float ClientInputTime)
+void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocation)
 {
 	AActor* OwnerActor = GetOwner();
 	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
@@ -121,7 +117,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	}
 
 	// 어느 차를 칠지 고르고 판정하는 건 트래픽 쪽이다. 여기서는 시도 정보만 만들어 넘긴다.
-	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation, ClientInputTime);
+	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation);
 
 	// 보정량은 컨텍스트에 들어간 값을 그대로 찍는다. 따로 다시 구하면 두 값이 갈릴 수 있다.
 	UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f, 랙 보정 %.0fms"),
@@ -161,14 +157,13 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	Multicast_ParrySucceeded(BuildParrySyncData(ParryAttemptContext, *ParriedVehicle));
 }
 
-FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation, float ClientInputTime) const
+FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation) const
 {
 	FCWParryAttemptContext ParryAttemptContext;
 	ParryAttemptContext.Parrier = &Parrier;
 	ParryAttemptContext.AttemptLocation = Parrier.GetActorLocation();
 	ParryAttemptContext.ParryRadius = ParryRadius;
 	ParryAttemptContext.ParryAngle = ParryAngle;
-	ParryAttemptContext.ClientInputTime = ClientInputTime;
 
 	// 쿼터뷰라 커서는 바닥 평면 위에 찍힌다. 높이 차를 빼야 방향 판정이 흔들리지 않는다.
 	const FVector ToCursor = (CursorWorldLocation - ParryAttemptContext.AttemptLocation).GetSafeNormal2D();
@@ -190,7 +185,7 @@ FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parri
 	// 계산과 상한은 피격 판정과 공유한다. 두 판정이 같은 차를 다른 만큼 되돌리면 안 된다.
 	ParryAttemptContext.ViewRewindSeconds = UCWTrafficSubsystem::ResolveViewRewindSeconds(&Parrier);
 
-	// 대상 차량과 차종은 서버가 골라 채운다. 클라가 지정해 보내면 서버가 다시 검증한다.
+	// 대상 차종은 서버가 선별을 끝낸 뒤 채운다. 여기서는 비워 둔다.
 
 	return ParryAttemptContext;
 }
@@ -205,7 +200,6 @@ FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptCont
 	FCWParrySyncData ParrySyncData;
 	ParrySyncData.TargetVehicle = &ParriedVehicle;
 	ParrySyncData.VehicleType = ParriedVehicle.GetVehicleType();
-	ParrySyncData.bParrySucceeded = true;
 
 	// 연출 기준점은 클라이언트가 보낸 커서가 아니라 서버가 확정한 차량 위치다.
 	ParrySyncData.ParryLocation = ParriedVehicle.GetActorLocation();

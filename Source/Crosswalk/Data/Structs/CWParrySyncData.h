@@ -30,10 +30,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FName VehicleType = NAME_None;
 
-	// 서버 판정 기준 패링 성공 여부
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
-	bool bParrySucceeded = false;
-
 	// 패링 성공 시 차량이 밀려나거나 멈추는 힘
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	float VehicleReactionStrength = 0.f;
