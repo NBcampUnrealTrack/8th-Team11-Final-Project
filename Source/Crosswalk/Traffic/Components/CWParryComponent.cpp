@@ -7,6 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
+#include "Traffic/CWTrafficLog.h"
 
 UCWParryComponent::UCWParryComponent()
 {
@@ -24,7 +25,7 @@ void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 
 	if (!CanUseLocalCooldown())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
 			ParryCooldown - (GetWorld()->GetTimeSeconds() - LastLocalParryRequestTime));
 		return;
 	}
@@ -93,7 +94,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	 */
 	if (!CanUseServerCooldown())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry] 서버 쿨타임에 막힘."));
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 서버 쿨타임에 막힘."));
 		return;
 	}
 
@@ -105,7 +106,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		if (HitReactionComponent->IsHitLocked())
 		{
 			// 타이밍을 놓친 것이 아니라 서버 상태 때문에 못 받은 것이므로 쿨타임을 되돌려준다.
-			UE_LOG(LogTemp, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다. 쿨타임을 되돌려줍니다."));
+			UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다. 쿨타임을 되돌려줍니다."));
 			RejectParry();
 			return;
 		}
@@ -114,7 +115,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(OwnerActor);
 	if (TrafficSubsystem == nullptr)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다. 쿨타임을 되돌려줍니다."));
+		UE_LOG(LogCWTraffic, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다. 쿨타임을 되돌려줍니다."));
 		RejectParry();
 		return;
 	}
@@ -123,7 +124,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation, ClientInputTime);
 
 	// 보정량은 컨텍스트에 들어간 값을 그대로 찍는다. 따로 다시 구하면 두 값이 갈릴 수 있다.
-	UE_LOG(LogTemp, Log, TEXT("[Parry] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f, 랙 보정 %.0fms"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f, 랙 보정 %.0fms"),
 		TrafficSubsystem->GetActiveVehicleCount(), ParryRadius, ParryAngle,
 		ParryAttemptContext.ViewRewindSeconds * 1000.f);
 
@@ -142,7 +143,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 
 	if (ParriedVehicle == nullptr)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다.%s"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다.%s"),
 			bRefundCooldownOnMiss ? TEXT(" 쿨타임을 되돌려줍니다.") : TEXT(""));
 
 		if (bRefundCooldownOnMiss)
@@ -153,7 +154,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[Parry] 판정 성공. 대상=%s"), *ParriedVehicle->GetName());
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 판정 성공. 대상=%s"), *ParriedVehicle->GetName());
 
 	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ACWBaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.

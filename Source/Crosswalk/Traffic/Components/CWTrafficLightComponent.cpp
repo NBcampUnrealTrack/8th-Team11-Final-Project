@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "Components/SceneComponent.h"
 #include "Traffic/CWTrafficDirector.h"
+#include "Traffic/CWTrafficLog.h"
 
 UCWTrafficLightComponent::UCWTrafficLightComponent()
 {
@@ -19,14 +20,14 @@ void UCWTrafficLightComponent::BeginPlay()
 
 	if (!Director)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 따라갈 ACWTrafficDirector를 찾지 못해 신호등이 꺼진 채로 남는다."),
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 따라갈 ACWTrafficDirector를 찾지 못해 신호등이 꺼진 채로 남는다."),
 			*GetReadableName());
 		return;
 	}
 
 	if (GroupName.IsNone())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] GroupName 이 비어 있어 어느 신호를 비출지 알 수 없다. 꺼진 채로 남는다."),
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] GroupName 이 비어 있어 어느 신호를 비출지 알 수 없다. 꺼진 채로 남는다."),
 			*GetReadableName());
 		return;
 	}
@@ -35,7 +36,7 @@ void UCWTrafficLightComponent::BeginPlay()
 
 	// 계획 검산(정지선 배선·경로 교차)은 제어기가 자기 BeginPlay 에서 한 번 한다. 여기서 부르면 신호등 수만큼 반복된다.
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] 신호등 준비. 제어기 %s / 그룹 '%s'"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 신호등 준비. 제어기 %s / 그룹 '%s'"),
 		*GetReadableName(), *Director->GetName(), *GroupName.ToString());
 
 	Director->OnGroupStateChanged.AddUniqueDynamic(this, &UCWTrafficLightComponent::HandleGroupStateChanged);
@@ -87,7 +88,7 @@ void UCWTrafficLightComponent::ResolveDirector()
 	{
 		if (FoundDirector)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[%s] 레벨에 ACWTrafficDirector가 둘 이상이라 자동으로 고르지 않는다. Director를 직접 지정해야 한다."),
+			UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 레벨에 ACWTrafficDirector가 둘 이상이라 자동으로 고르지 않는다. Director를 직접 지정해야 한다."),
 				*GetReadableName());
 			return;
 		}
@@ -124,7 +125,7 @@ void UCWTrafficLightComponent::ApplyState(ECWTrafficSignalState NewState)
 	SetTaggedComponentsVisible(YellowComponentTag, NewState == ECWTrafficSignalState::Yellow);
 	SetTaggedComponentsVisible(GreenComponentTag, NewState == ECWTrafficSignalState::Green);
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] %s -> %s"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] %s -> %s"),
 		*GetReadableName(),
 		*ACWTrafficDirector::GetSignalStateText(OldState).ToString(),
 		*ACWTrafficDirector::GetSignalStateText(NewState).ToString());
@@ -161,7 +162,7 @@ void UCWTrafficLightComponent::ValidateTaggedComponents() const
 
 	if (RedCount + YellowCount + GreenCount == 0)
 	{
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogCWTraffic, Warning,
 			TEXT("[%s] 태그가 걸린 컴포넌트가 하나도 없다. 신호가 바뀌어도 화면에서 아무 일도 일어나지 않는다. 메시 컴포넌트의 Component Tags 에 %s / %s / %s 를 넣어야 한다."),
 			*GetReadableName(), *RedComponentTag.ToString(), *YellowComponentTag.ToString(), *GreenComponentTag.ToString());
 		return;
@@ -169,18 +170,18 @@ void UCWTrafficLightComponent::ValidateTaggedComponents() const
 
 	if (RedCount == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 태그 %s 가 달린 컴포넌트가 없어 적색이 안 보인다."), *GetReadableName(), *RedComponentTag.ToString());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 태그 %s 가 달린 컴포넌트가 없어 적색이 안 보인다."), *GetReadableName(), *RedComponentTag.ToString());
 	}
 
 	if (GreenCount == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 태그 %s 가 달린 컴포넌트가 없어 초록이 안 보인다."), *GetReadableName(), *GreenComponentTag.ToString());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 태그 %s 가 달린 컴포넌트가 없어 초록이 안 보인다."), *GetReadableName(), *GreenComponentTag.ToString());
 	}
 
 	// 황색은 전환 구간에 자동으로 켜지지 않는다. 단계에서 직접 지정할 때만 쓰이므로 경고가 아니다.
 	if (YellowCount == 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[%s] 태그 %s 가 없다. 단계에서 황색을 지정하지 않는다면 정상이다."),
+		UE_LOG(LogCWTraffic, Log, TEXT("[%s] 태그 %s 가 없다. 단계에서 황색을 지정하지 않는다면 정상이다."),
 			*GetReadableName(), *YellowComponentTag.ToString());
 	}
 }

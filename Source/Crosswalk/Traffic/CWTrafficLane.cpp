@@ -4,6 +4,7 @@
 
 #include "Components/ArrowComponent.h"
 #include "Components/SplineComponent.h"
+#include "Traffic/CWTrafficLog.h"
 
 ACWTrafficLane::ACWTrafficLane()
 {
@@ -62,7 +63,7 @@ void ACWTrafficLane::BeginPlay()
 	const FVector Scale = GetActorScale3D();
 	if (!Scale.Equals(FVector::OneVector, 0.01f))
 	{
-		UE_LOG(LogTemp, Error,
+		UE_LOG(LogCWTraffic, Error,
 			TEXT("[%s] 액터 스케일이 %s 다. 차선은 스케일하면 안 된다 - 길이(%.0fcm)는 로컬 값이라 스케일이 반영되지 않는데, 속도·차간거리·정지선은 전부 월드 cm 라 그만큼 어긋난다. 스플라인 포인트를 옮겨 길이를 잡아야 한다."),
 			*GetName(), *Scale.ToString(), GetLaneLength());
 	}

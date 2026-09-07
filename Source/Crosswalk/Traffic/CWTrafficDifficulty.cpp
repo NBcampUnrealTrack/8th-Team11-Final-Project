@@ -7,6 +7,7 @@
 #include "CWBaseVehicle.h"
 #include "CWTrafficVehicleSpawner.h"
 #include "Core/CWGameState.h"
+#include "Traffic/CWTrafficLog.h"
 
 ACWTrafficDifficulty::ACWTrafficDifficulty()
 {
@@ -61,7 +62,7 @@ void ACWTrafficDifficulty::BeginPlay()
 
 	if (Steps.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] Steps 가 비어 있어 난이도가 움직이지 않는다. 스포너 자기 값이 그대로 쓰인다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] Steps 가 비어 있어 난이도가 움직이지 않는다. 스포너 자기 값이 그대로 쓰인다."), *GetName());
 		return;
 	}
 
@@ -121,7 +122,7 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 
 	if (Targets.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] 대상 스포너를 찾지 못해 단계 '%s' 를 적용하지 못했다."), *GetName(), *Step.StepName.ToString());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 대상 스포너를 찾지 못해 단계 '%s' 를 적용하지 못했다."), *GetName(), *Step.StepName.ToString());
 		return;
 	}
 
@@ -139,14 +140,14 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 			 * 레벨 배치만 보면 스포너에 값이 멀쩡히 들어 있어서, 여기가 조용하면 원인을
 			 * 짚을 방법이 없다. 배치를 지우는 쪽이 로그를 남겨야 한다.
 			 */
-			UE_LOG(LogTemp, Log, TEXT("[%s] %s 의 VehicleMix 를 단계 '%s' 값(%d종)으로 덮어쓴다. 스포너에 배치한 차종 목록은 무시된다."),
+			UE_LOG(LogCWTraffic, Log, TEXT("[%s] %s 의 VehicleMix 를 단계 '%s' 값(%d종)으로 덮어쓴다. 스포너에 배치한 차종 목록은 무시된다."),
 				*GetName(), *Spawner->GetName(), *Step.StepName.ToString(), Step.VehicleMix.Num());
 
 			Spawner->SetVehicleMix(Step.VehicleMix);
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] 난이도 단계 %d(%s) / 진행도 %.0f%% 부터 / 주기 %.1f~%.1f초 / 스포너 %d개"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 난이도 단계 %d(%s) / 진행도 %.0f%% 부터 / 주기 %.1f~%.1f초 / 스포너 %d개"),
 		*GetName(), StepIndex, *Step.StepName.ToString(), Step.StartProgress * 100.f,
 		Step.SpawnIntervalMin, Step.SpawnIntervalMax, Targets.Num());
 
@@ -191,7 +192,7 @@ void ACWTrafficDifficulty::BindStageProgress()
 	ACWGameState* GameState = GetWorld() ? GetWorld()->GetGameState<ACWGameState>() : nullptr;
 	if (!GameState)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[%s] CWGameState 를 찾지 못해 진행도를 따라가지 못한다. 첫 단계로 고정된다."), *GetName());
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] CWGameState 를 찾지 못해 진행도를 따라가지 못한다. 첫 단계로 고정된다."), *GetName());
 		return;
 	}
 

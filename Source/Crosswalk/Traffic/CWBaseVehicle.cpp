@@ -14,6 +14,7 @@
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
 #include "Traffic/Components/CWVehicleStopSyncComponent.h"
+#include "Traffic/CWTrafficLog.h"
 
 ACWBaseVehicle::ACWBaseVehicle()
 {
@@ -372,7 +373,7 @@ float ACWBaseVehicle::ResolveEffectiveRewindSeconds(float ViewRewindSeconds) con
 	}
 
 	// 실제로 깎이는 구간은 발사 후 0.2초 안쪽뿐이라 로그가 쌓이지 않는다.
-	UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 발사 직후라 랙 보정을 %.0fms -> %.0fms 로 깎습니다."),
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 발사 직후라 랙 보정을 %.0fms -> %.0fms 로 깎습니다."),
 		*GetName(), RequestedSeconds * 1000.f, SecondsSinceLaunch * 1000.f);
 
 	return SecondsSinceLaunch;
@@ -605,7 +606,7 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 	{
 		// 목표 지점과 실제로 선 자리를 같이 남긴다. 양쪽 로그에서 목표가 같은데 선 자리가
 		// 다르면 도착 지연 탓이고, 목표부터 다르면 신호색이 아직 안 갔거나 차선을 다르게 보고 있다.
-		UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선 앞 정지 - 차선 %s / 진행거리 %.1fcm / 목표지점 %.1fcm / 오차 %.1fcm"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선 앞 정지 - 차선 %s / 진행거리 %.1fcm / 목표지점 %.1fcm / 오차 %.1fcm"),
 			UCWTrafficSubsystem::GetNetRoleTag(this),
 			*UCWTrafficSubsystem::GetNetIdTag(this),
 			CurrentLane ? *CurrentLane->GetName() : TEXT("(없음)"),
@@ -616,7 +617,7 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선에서 출발 - 진행거리 %.1fcm"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선에서 출발 - 진행거리 %.1fcm"),
 		UCWTrafficSubsystem::GetNetRoleTag(this),
 		*UCWTrafficSubsystem::GetNetIdTag(this),
 		DistanceAlongLane);

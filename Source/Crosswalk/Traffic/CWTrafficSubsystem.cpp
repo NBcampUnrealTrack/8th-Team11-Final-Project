@@ -19,6 +19,7 @@
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
 #include "TimerManager.h"
+#include "Traffic/CWTrafficLog.h"
 
 namespace
 {
@@ -257,7 +258,7 @@ void UCWTrafficSubsystem::LogVehicleCensus()
 	// 첫 줄은 견줄 상대가 없어서 간격이 없다. 0.00 으로 적으면 "정상 간격" 으로 읽히므로 구분한다.
 	const FString ElapsedTag = (Elapsed < 0.0) ? TEXT("첫줄") : FString::Printf(TEXT("+%.2f초"), Elapsed);
 
-	UE_LOG(LogTemp, Log, TEXT("[TrafficNet][%s][%s][#%d %s] 차량 %d / 차선연결 %d / 메쉬 %d / 목록 %s"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficNet][%s][%s][#%d %s] 차량 %d / 차선연결 %d / 메쉬 %d / 목록 %s"),
 		World->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
 		*LocalPlayerTag, CensusSequence, *ElapsedTag,
 		VehicleCount, LanedCount, MeshedCount, *IdList);
@@ -431,7 +432,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 
 	if (!Vehicle.CanBeParried())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 패링 불가 차종"), *Vehicle.GetName());
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 패링 불가 차종"), *Vehicle.GetName());
 		return false;
 	}
 
@@ -443,7 +444,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	const float SurfaceDistance = Vehicle.GetDistanceToPoint(ParryAttemptContext.AttemptLocation);
 	if (ParryAttemptContext.ParryRadius > 0.f && SurfaceDistance > ParryAttemptContext.ParryRadius)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 반경 밖 (거리 %.0f > %.0f)"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 반경 밖 (거리 %.0f > %.0f)"),
 			*Vehicle.GetName(), SurfaceDistance, ParryAttemptContext.ParryRadius);
 		return false;
 	}
@@ -458,7 +459,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 		const float Dot = FVector::DotProduct(AttemptDirection, ToVehicle);
 		if (Dot < FMath::Cos(FMath::DegreesToRadians(HalfAngle)))
 		{
-			UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
+			UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
 				*Vehicle.GetName(), FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))), HalfAngle);
 			return false;
 		}
@@ -470,13 +471,13 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact, ParryAttemptContext.ViewRewindSeconds))
 	{
 		// 진행 경로 밖이거나 이미 지나친 차량이다. 도로 위에 서 있지 않으면 여기서 전부 걸린다.
-		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
 		return false;
 	}
 
 	if (TimeToImpact > Vehicle.GetParryWindow())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Parry]   %s: 타이밍 이릅 (충돌까지 %.2f초 > 윈도우 %.2f초, 보정 %.0fms)"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 타이밍 이릅 (충돌까지 %.2f초 > 윈도우 %.2f초, 보정 %.0fms)"),
 			*Vehicle.GetName(), TimeToImpact, Vehicle.GetParryWindow(), ParryAttemptContext.ViewRewindSeconds * 1000.f);
 		return false;
 	}
