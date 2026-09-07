@@ -148,15 +148,23 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	DistanceAlongLane = Params.StartDistance;
 	LaneLateralOffset = Params.LateralOffset;
 
+	/**
+	 * 아래의 되돌리기는 전부 "이 액터가 이전 주행을 가진 채 다시 초기화되는" 경우를 위한 것이다.
+	 *
+	 * 지금은 그런 경우가 없다. 차량은 스폰마다 새 액터라 이 값들은 이미 초기값이다.
+	 * 차량 풀링은 팀 결정으로 보류다 - 스폰 빈도가 낮아 얻는 것이 없다. 그래도 되돌리는 것은,
+	 * 이 함수가 한 액터에 두 번 불리는 구조가 나중에 생겼을 때 조용히 틀리는 것보다
+	 * 여기서 대여섯 줄 쓰는 편이 싸기 때문이다. 설계 전제가 아니라 방어다.
+	 */
 	bParried = false;
 	ParriedLaunchLocation = FVector::ZeroVector;
 	ParriedLaunchDirection = FVector::ZeroVector;
 
-	// 풀링으로 재사용된 차량이 지난 주행의 발사 시각으로 보정량을 깎으면 안 된다.
+	// 이전 주행의 발사 시각으로 보정량을 깎으면 안 된다.
 	ParryLaunchWorldTime = -1.f;
 
-	// 지난 주행에서 정지선 앞에 서 있던 채로 반납된 차량이 그 상태를 갖고 다시 나오면 안 된다.
-	// 알리지 않고 되돌린다. 스폰 직후라 아직 아무도 이 차량을 듣고 있지 않고,
+	// 이전 주행에서 정지선 앞에 서 있던 상태를 갖고 나오면 안 된다.
+	// 알리지 않고 되돌린다. 초기화 직후라 아직 아무도 이 차량을 듣고 있지 않고,
 	// 앞 주행의 정지가 이제 와서 풀렸다는 알림은 받는 쪽에서 해석할 수 없다.
 	bStoppedAtStopLine = false;
 	StopTargetDistance = -1.f;
@@ -171,7 +179,7 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 		ApplyMeshVariant();
 	}
 
-	// 풀링으로 재사용될 때 지난 주행의 피격 기록이 남아 있으면 안 된다.
+	// 이전 주행의 피격 기록이 남아 있으면 안 된다.
 	HitActors.Reset();
 	OverlappingReceivers.Reset();
 
@@ -457,7 +465,7 @@ void ACWBaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeN
 
 void ACWBaseVehicle::OnRep_ParryLaunch()
 {
-	// 풀링으로 재사용된 차량은 번호가 남아 있을 수 있다. 실제로 튕겨나간 상태만 반영한다.
+	// 번호만 도착하고 bParried 가 아직 false 인 순서는 없어야 하지만, 실제로 튕겨나간 상태만 반영한다.
 	if (!bParried)
 	{
 		return;
@@ -513,7 +521,7 @@ void ACWBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ACWBaseVehicle::OnReachedLaneEnd()
 {
-	// 풀링을 붙이면 Destroy 대신 스포너에 반납하도록 자식에서 오버라이드한다.
+	// 차량 풀링은 팀 결정으로 보류다(스폰 빈도가 낮아 이득이 없다). 소멸은 Destroy 로 끝낸다.
 	Destroy();
 }
 
