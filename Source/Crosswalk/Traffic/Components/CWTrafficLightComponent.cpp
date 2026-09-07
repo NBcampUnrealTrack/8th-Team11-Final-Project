@@ -33,13 +33,7 @@ void UCWTrafficLightComponent::BeginPlay()
 
 	ValidateTaggedComponents();
 
-	/**
-	 * 신호등이 보이는데 정지선이 없으면 빨간불에 차가 그대로 지나간다.
-	 *
-	 * 규칙이 있다고 보여주고 그 규칙을 어기는 그림이라 신호등이 없는 것보다 나쁘다.
-	 * 제어기가 계획 전반을 검사해 주므로 여기서는 그쪽을 불러 주기만 한다.
-	 */
-	Director->ValidateSignalPlan();
+	// 계획 검산(정지선 배선·경로 교차)은 제어기가 자기 BeginPlay 에서 한 번 한다. 여기서 부르면 신호등 수만큼 반복된다.
 
 	UE_LOG(LogTemp, Log, TEXT("[%s] 신호등 준비. 제어기 %s / 그룹 '%s'"),
 		*GetReadableName(), *Director->GetName(), *GroupName.ToString());
@@ -132,8 +126,8 @@ void UCWTrafficLightComponent::ApplyState(ECWTrafficSignalState NewState)
 
 	UE_LOG(LogTemp, Log, TEXT("[%s] %s -> %s"),
 		*GetReadableName(),
-		*UEnum::GetDisplayValueAsText(OldState).ToString(),
-		*UEnum::GetDisplayValueAsText(NewState).ToString());
+		*ACWTrafficDirector::GetSignalStateText(OldState).ToString(),
+		*ACWTrafficDirector::GetSignalStateText(NewState).ToString());
 
 	OnLightStateChanged.Broadcast(this, NewState, OldState);
 }
