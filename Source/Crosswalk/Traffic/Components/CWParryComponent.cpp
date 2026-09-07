@@ -5,8 +5,6 @@
 
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "GameFramework/Actor.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerState.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
 
@@ -188,46 +186,12 @@ FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parri
 		: Parrier.GetActorForwardVector().GetSafeNormal2D();
 
 	// 이 사람이 화면에서 본 상황으로 되돌려 판정하도록 보정량을 실어 보낸다.
-	ParryAttemptContext.ViewRewindSeconds = ResolveViewRewindSeconds();
+	// 계산과 상한은 피격 판정과 공유한다. 두 판정이 같은 차를 다른 만큼 되돌리면 안 된다.
+	ParryAttemptContext.ViewRewindSeconds = UCWTrafficSubsystem::ResolveViewRewindSeconds(&Parrier);
 
 	// 대상 차량과 차종은 서버가 골라 채운다. 클라가 지정해 보내면 서버가 다시 검증한다.
 
 	return ParryAttemptContext;
-}
-
-float UCWParryComponent::ResolveViewRewindSeconds() const
-{
-	const AActor* OwnerActor = GetOwner();
-	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
-	{
-		return 0.f;
-	}
-
-	// 호스트가 직접 조종하는 캐릭터는 되돌릴 것이 없다. 자기가 보는 것이 곧 서버 상황이다.
-	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
-	if (OwnerPawn == nullptr || OwnerPawn->IsLocallyControlled())
-	{
-		return 0.f;
-	}
-
-	const APlayerState* OwnerPlayerState = OwnerPawn->GetPlayerState();
-	if (OwnerPlayerState == nullptr)
-	{
-		return 0.f;
-	}
-
-	/**
-	 * 되돌릴 시간은 왕복 시간(ping) 전체다. 절반이 아니다.
-	 *
-	 * 클라이언트 화면의 차량 위치는 서버가 보낸 값을 이어받아 그린 것이라 편도만큼 뒤처져 있다.
-	 * 그 화면을 보고 누른 입력이 서버에 닿는 데 다시 편도가 걸린다.
-	 * 그래서 서버의 지금 상황과 그 사람이 본 상황의 차이는 두 편도를 합한 값, 즉 왕복 시간이다.
-	 *
-	 * ExactPing 은 서버에서만 정확하다. GetPingInMilliseconds 가 서버에서 그 값을 돌려준다.
-	 */
-	const float PingSeconds = OwnerPlayerState->GetPingInMilliseconds() * 0.001f;
-
-	return FMath::Clamp(PingSeconds, 0.f, MaxViewRewindSeconds);
 }
 
 void UCWParryComponent::Multicast_ParrySucceeded_Implementation(const FCWParrySyncData& ParrySyncData)

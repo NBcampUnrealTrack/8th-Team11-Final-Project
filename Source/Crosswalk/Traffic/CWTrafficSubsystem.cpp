@@ -14,6 +14,7 @@
 #include "Engine/PackageMapClient.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
@@ -64,6 +65,24 @@ namespace
 	 * 맞춰 볼 수가 없다. 조절할 수 있어야 하는 것은 주기가 아니라 켜짐 여부다.
 	 */
 	constexpr float TrafficNetCensusInterval = 1.f;
+
+	/**
+	 * 랙 보정으로 차량을 되돌릴 수 있는 상한(초). 패링과 피격이 같이 쓴다.
+	 *
+	 * 보정을 하지 않으면 핑이 있는 사람은 패링 윈도우(0.3초)의 뒷부분을 통째로 잃고,
+	 * 화면에서 분명히 피한 피격을 서버에서는 맞는다. 그렇다고 무제한으로 되돌리면
+	 * 다른 사람 화면에서 한참 전에 지나간 차가 갑자기 튕겨나가거나 뒤늦게 누굴 친다.
+	 * 되돌린 만큼은 남들이 보기에 과거를 고치는 것이다.
+	 *
+	 * 0.2 인 이유: 기본 속도 750cm/s 로 150cm, 차 길이(440cm)의 3분의 1 정도다.
+	 * 그 정도면 쳐낸 사람과 차가 아직 겹쳐 보이는 범위라 남들 화면에서도 납득이 된다.
+	 * 랜 환경 핑은 대부분 이 밑이라 실제로는 거의 잘리지 않는다.
+	 *
+	 * BP 프로퍼티로 두지 않는다. 예전에는 차량과 패링 컴포넌트가 각자 들고 "같게 맞춰라" 는
+	 * 주석으로 버텼는데, BP 에서 한쪽만 바꾸면 컴파일도 로그도 잡지 못한 채 두 판정이 갈린다.
+	 * 값이 둘일 수 없는 물건이라 코드에 하나만 둔다.
+	 */
+	constexpr float TrafficMaxViewRewindSeconds = 0.2f;
 }
 
 bool UCWTrafficSubsystem::IsSyncLoggingEnabled()
@@ -74,6 +93,36 @@ bool UCWTrafficSubsystem::IsSyncLoggingEnabled()
 bool UCWTrafficSubsystem::IsNetRelevancyLoggingEnabled()
 {
 	return CVarTrafficLogNetRelevancy.GetValueOnAnyThread();
+}
+
+float UCWTrafficSubsystem::ResolveViewRewindSeconds(const AActor* Viewer)
+{
+	// 핑은 서버에서만 정확하다. 클라이언트에서 부르면 되돌릴 근거 자체가 없다.
+	if (Viewer == nullptr || !Viewer->HasAuthority())
+	{
+		return 0.f;
+	}
+
+	/**
+	 * 호스트가 직접 조종하는 폰은 되돌리지 않는다. 자기가 보는 것이 곧 서버 상황이라
+	 * 어긋남 자체가 없고, 되돌리면 오히려 맞아야 할 피격을 흘려보낸다.
+	 */
+	const APawn* ViewerPawn = Cast<APawn>(Viewer);
+	if (ViewerPawn == nullptr || ViewerPawn->IsLocallyControlled())
+	{
+		return 0.f;
+	}
+
+	const APlayerState* ViewerPlayerState = ViewerPawn->GetPlayerState();
+	if (ViewerPlayerState == nullptr)
+	{
+		return 0.f;
+	}
+
+	// ExactPing 은 서버에서만 정확하다. GetPingInMilliseconds 가 서버에서 그 값을 돌려준다.
+	const float PingSeconds = ViewerPlayerState->GetPingInMilliseconds() * 0.001f;
+
+	return FMath::Clamp(PingSeconds, 0.f, TrafficMaxViewRewindSeconds);
 }
 
 void UCWTrafficSubsystem::OnWorldBeginPlay(UWorld& InWorld)
