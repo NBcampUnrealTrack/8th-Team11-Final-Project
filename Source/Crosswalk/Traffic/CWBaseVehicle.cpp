@@ -101,15 +101,12 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 
 	// 클라이언트도 같은 계산을 돈다. 속도를 정하는 값이 양쪽에 모두 있어서 결과가 같고,
 	// 서버 값이 도착하면 DistanceAlongLane 이 그 값으로 덮이면서 어긋난 만큼만 맞춰진다.
-	bool bStopLineLimited = false;
-	float StopTarget = -1.f;
-	const float StepSpeed = ResolveStepSpeed(&bStopLineLimited, &StopTarget);
+	const FCWVehicleStepResolution Step = ResolveStepSpeed();
 
-	// 멤버 주소를 그대로 넘기지 않는다. ResolveStepSpeed 가 도중에 이 값을 되돌려 놓기 때문에,
-	// 나중에 그 함수가 자기 멤버를 읽게 되면 아직 안 정해진 값을 보게 된다.
-	StopTargetDistance = StopTarget;
+	// 결과가 다 정해진 뒤에 멤버를 갱신한다. 정지선이 사라진 프레임에는 -1 이 그대로 들어온다.
+	StopTargetDistance = Step.StopTargetDistance;
 
-	DistanceAlongLane += StepSpeed * DeltaSeconds;
+	DistanceAlongLane += Step.Speed * DeltaSeconds;
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
@@ -124,10 +121,10 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		DistanceAlongLane = CurrentLane->GetLaneLength();
 	}
 
-	UpdateTransformOnLane(StepSpeed);
+	UpdateTransformOnLane(Step.Speed);
 
 	// 정지선 때문에 속도가 0 이 된 것만 정지로 친다. 앞차에 막힌 것은 여기 들어오지 않는다.
-	UpdateStopState(bStopLineLimited && StepSpeed <= KINDA_SMALL_NUMBER);
+	UpdateStopState(Step.bStopLineLimited && Step.Speed <= KINDA_SMALL_NUMBER);
 }
 
 float ACWBaseVehicle::GetVehicleLength() const
@@ -523,26 +520,19 @@ void ACWBaseVehicle::OnReachedLaneEnd()
 	Destroy();
 }
 
-float ACWBaseVehicle::ResolveStepSpeed(bool* OutStopLineLimited, float* OutStopTargetDistance) const
+FCWVehicleStepResolution ACWBaseVehicle::ResolveStepSpeed() const
 {
-	// 정지선을 보지 못하고 빠져나가는 경로가 여럿이라 여기서 한 번에 "없음" 으로 맞춰 둔다.
-	// 부르는 쪽이 매번 초기화하게 두면, 정지선이 사라진 뒤에도 지난 목표 지점이 남는다.
-	if (OutStopLineLimited)
-	{
-		*OutStopLineLimited = false;
-	}
-
-	if (OutStopTargetDistance)
-	{
-		*OutStopTargetDistance = -1.f;
-	}
+	// 기본값이 곧 "정지선 없음" 이다. 정지선을 보지 못하고 빠져나가는 경로가 여럿인데,
+	// 구조체 기본값이 그 경우를 전부 받아 주므로 경로마다 되돌릴 것이 없다.
+	FCWVehicleStepResolution Result;
 
 	const float DesiredSpeed = GetEffectiveSpeed();
+	Result.Speed = DesiredSpeed;
 
 	const UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this);
 	if (!TrafficSubsystem)
 	{
-		return DesiredSpeed;
+		return Result;
 	}
 
 	/**
@@ -557,14 +547,12 @@ float ACWBaseVehicle::ResolveStepSpeed(bool* OutStopLineLimited, float* OutStopT
 	 * 정지선을 "길이 0인 가상의 앞차" 로 넣는 비유가 너무 잘 맞아서, 서는 자리는
 	 * 분리했으면서 제동 거리는 앞차 값을 그대로 쓰고 있었다.
 	 */
-	float StepSpeed = DesiredSpeed;
-
 	if (const ACWBaseVehicle* VehicleAhead = TrafficSubsystem->FindVehicleAhead(this))
 	{
 		const float BumperToBumper = VehicleAhead->GetDistanceAlongLane() - DistanceAlongLane
 			- (GetVehicleLength() * 0.5f) - (VehicleAhead->GetVehicleLength() * 0.5f);
 
-		StepSpeed = FMath::Min(StepSpeed, ResolveApproachSpeed(BumperToBumper - FollowingGap, FollowingGap, DesiredSpeed));
+		Result.Speed = FMath::Min(Result.Speed, ResolveApproachSpeed(BumperToBumper - FollowingGap, FollowingGap, DesiredSpeed));
 	}
 
 	float StopLineDistance = 0.f;
@@ -584,22 +572,16 @@ float ACWBaseVehicle::ResolveStepSpeed(bool* OutStopLineLimited, float* OutStopT
 		const float RemainingToStop = StopTarget - DistanceAlongLane;
 		const float StopLineSpeed = ResolveApproachSpeed(RemainingToStop, StopLineBrakeDistance, DesiredSpeed);
 
-		if (OutStopTargetDistance)
-		{
-			*OutStopTargetDistance = StopTarget;
-		}
+		Result.StopTargetDistance = StopTarget;
 
 		// 정지선이 앞차보다 더 느리게 만들었을 때만 정지선 탓이다. 둘을 뭉치면 로그가
 		// "정지선 앞에 섰다" 라고 말하는데 실제로는 앞차에 막힌 상황이 섞여 들어온다.
-		if (OutStopLineLimited)
-		{
-			*OutStopLineLimited = StopLineSpeed <= StepSpeed;
-		}
+		Result.bStopLineLimited = StopLineSpeed <= Result.Speed;
 
-		StepSpeed = FMath::Min(StepSpeed, StopLineSpeed);
+		Result.Speed = FMath::Min(Result.Speed, StopLineSpeed);
 	}
 
-	return StepSpeed;
+	return Result;
 }
 
 void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
