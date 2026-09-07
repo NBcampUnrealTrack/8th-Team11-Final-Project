@@ -180,8 +180,8 @@ float ACWTrafficLane::GetDistanceAtWorldLocation(const FVector& WorldLocation) c
 	 * 도달할 수 없는 지점이 된다. 정지선이 그렇게 잡히면 감속이 영원히 걸리지 않아서
 	 * "정지선이 없는 것" 과 같아진다 - 화면만 봐서는 원인을 알 수 없다.
 	 *
-	 * 잘라 두면 최소한 차선 끝으로 잡히고, 검사(ValidateSignalPlan)가 그것을 이상값으로
-	 * 잡아낸다.
+	 * 잘라 두면 최소한 차선 끝으로 잡히고, 정지선 액터의 검산 표시(ACWTrafficStopLine::
+	 * RefreshLaneReadout)가 0% / 100% 를 "차선 밖" 으로 잡아낸다.
 	 */
 	const float LaneLength = GetLaneLength();
 	const float Clamped = FMath::Clamp(Distance, 0.f, LaneLength);
