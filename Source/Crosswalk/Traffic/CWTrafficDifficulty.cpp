@@ -1,4 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
+﻿// CWTrafficDifficulty.cpp
 
 #include "CWTrafficDifficulty.h"
 

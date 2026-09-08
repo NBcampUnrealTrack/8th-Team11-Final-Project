@@ -1,5 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
-// CWVehicleHitContext.h
+﻿// CWVehicleHitContext.h
 
 #pragma once
 

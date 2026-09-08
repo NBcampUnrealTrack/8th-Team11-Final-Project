@@ -1,4 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
+﻿// CWTrafficVehicleSpawner.cpp
 
 #include "CWTrafficVehicleSpawner.h"
 

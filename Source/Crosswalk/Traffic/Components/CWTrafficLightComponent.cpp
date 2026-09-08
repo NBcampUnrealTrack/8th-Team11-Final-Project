@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+// CWTrafficLightComponent.cpp
 
 #include "CWTrafficLightComponent.h"
 

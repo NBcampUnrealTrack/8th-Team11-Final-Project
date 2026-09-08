@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+// CWTrafficDirector.cpp
 
 #include "CWTrafficDirector.h"
 

@@ -1,5 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
-// CWParryComponent.cpp
+﻿// CWParryComponent.cpp
 
 #include "Traffic/Components/CWParryComponent.h"
 

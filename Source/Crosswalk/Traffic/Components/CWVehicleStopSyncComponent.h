@@ -1,4 +1,3 @@
-// Copyright Crosswalk Team. All Rights Reserved.
 // CWVehicleStopSyncComponent.h
 
 #pragma once
