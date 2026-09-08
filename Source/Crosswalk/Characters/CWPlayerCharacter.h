@@ -60,6 +60,22 @@ public:
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
+	/** 커서 조준 회전만 담당한다. 나머지 상태는 전부 타이머와 델리게이트로 돈다. */
+	virtual void Tick(float DeltaSeconds) override;
+
+	/**
+	 * 지금 몸이 커서를 보고 있는가. (이동 방향 정렬을 끈 상태인가)
+	 *
+	 * AnimBP 가 스트레이프 이동으로 갈아탈 판단에 쓴다. 이게 true 인 동안에는 바라보는
+	 * 방향과 이동 방향이 따로 놀기 때문에, 전진 애니만 재생하면 옆으로 미끄러져 보인다.
+	 *
+	 * AnimBP 에서 이동 방향은 이렇게 구한다.
+	 *   Velocity 를 캐릭터 회전 기준으로 환산 → Direction (-180 ~ 180)
+	 *   그 값으로 전/후/좌/우 블렌드스페이스를 돌린다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Facing")
+	bool IsFacingCursor() const { return bFaceCursor; }
+
 	/**
 	 * 기상 애니로 넘어가는 중이라 래그돌 스냅샷 포즈를 밑에 깔아야 하는 구간인지.
 	 *
@@ -226,6 +242,16 @@ private:
 	 */
 	FVector ResolveCursorWorldLocation() const;
 
+	/**
+	 * 몸을 커서 방향으로 돌린다. Tick 에서 매 프레임 부른다.
+	 *
+	 * 회전을 실제로 넣는 것은 조종 중인 본인 기계뿐이다. 서버와 다른 클라이언트는
+	 * 캐릭터 무브먼트의 회전 리플리케이션으로 같은 값을 받는다. 서버가 자기 판단으로 또 돌리면
+	 * 클라이언트가 보내온 회전과 싸워서 남의 화면에서만 몸이 떨린다.
+	 * 애초에 서버는 남의 마우스 커서를 읽을 수 없다.
+	 */
+	void ApplyCursorFacing(float DeltaSeconds);
+
 	/** 비어 있는 InputAction 을 C++ 로 채우고, 빠진 키 매핑을 보완 컨텍스트에 담는다. */
 	void BuildBuiltInInput();
 
@@ -361,6 +387,36 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	TObjectPtr<UCameraComponent> TopDownCamera;
+
+	/**
+	 * 캐릭터가 항상 마우스 커서 방향을 보게 한다.
+	 *
+	 * 켜면 CharacterMovement 의 bOrientRotationToMovement 를 끄고 Tick 이 직접 회전을 넣는다.
+	 * 켜 둔 채로 회전을 넣으면 무브먼트가 매 프레임 이동 방향으로 되돌려서 아무 효과가 없다.
+	 *
+	 * 끄면 예전 조작(이동 방향을 본다)으로 돌아간다. 생성자에서 한 번만 읽으므로
+	 * 런타임에 바꿔도 반영되지 않는다. BP 클래스 기본값으로 정하는 스위치다.
+	 *
+	 * 주의: 켜면 이동 방향과 바라보는 방향이 갈라져서 캐릭터가 옆으로도 걷는다.
+	 * AnimBP 에 스트레이프가 없으면 정면 달리기 애니로 미끄러져 보인다. (IsFacingCursor 참고)
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Facing")
+	bool bFaceCursor = true;
+
+	// 몸이 커서 방향으로 도는 속도. 0 이면 즉시 돌아간다.
+	// 즉시 돌리면 커서를 조금만 흔들어도 몸이 같이 떨려서 보간을 기본으로 둔다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facing", meta = (ClampMin = "0.0"))
+	float CursorFacingInterpSpeed = 14.f;
+
+	/**
+	 * 커서가 이 거리(cm)보다 가까우면 몸을 돌리지 않는다.
+	 *
+	 * 커서가 발밑에 오거나, 트레이스가 빗나가 ResolveCursorWorldLocation 이 캐릭터 위치를
+	 * 그대로 낼 때 방향 벡터가 거의 0 이 된다. 그러면 각도가 매 프레임 튀므로
+	 * 마지막으로 보던 방향을 유지하는 것이 맞다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facing", meta = (ClampMin = "1.0"))
+	float MinCursorFacingDistance = 25.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UCWWorkerComponent> WorkerComponent;

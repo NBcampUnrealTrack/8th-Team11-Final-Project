@@ -47,15 +47,23 @@ namespace
 
 ACWPlayerCharacter::ACWPlayerCharacter()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 커서 조준 회전에만 쓴다. 그 외 상태는 전부 타이머와 델리게이트로 돈다.
+	//
+	// BP_PlayerCharacter 는 PrimaryActorTick 을 직렬화하고 있지만 오버라이드된 항목은
+	// bStartWithTickEnabled 뿐이라, bCanEverTick 은 여기 값을 그대로 상속한다.
+	// 그 대신 시작 시 켜져 있다고 믿을 수 없어서 BeginPlay 에서 한 번 더 켠다.
+	PrimaryActorTick.bCanEverTick = true;
 
-	// 쿼터뷰라 마우스로 시야를 돌리지 않는다. 캐릭터는 이동 방향으로만 회전한다.
+	// 쿼터뷰라 마우스로 시야를 돌리지 않는다. 컨트롤 회전은 쓰지 않는다.
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
-	Movement->bOrientRotationToMovement = true;
+
+	// 커서를 보는 모드에서는 이동 방향 정렬을 끈다.
+	// 켜 둔 채로 회전을 넣으면 무브먼트가 매 프레임 이동 방향으로 되돌려서 아무 효과가 없다.
+	Movement->bOrientRotationToMovement = !bFaceCursor;
 	Movement->RotationRate = FRotator(0.f, 720.f, 0.f);
 	// 기획서 3.3 의 "차량 속도 = 기본 이동속도의 1.5배" 기준값이 되므로 명시해 둔다.
 	Movement->MaxWalkSpeed = 500.f;
@@ -126,6 +134,18 @@ void ACWPlayerCharacter::BeginPlay()
 	 * BeginPlay 에서 만든 슬롯 메시까지 여기서 함께 잡힌다.
 	 */
 	UCWDecalStatics::DisableDecalReceiveOnActor(this);
+
+	/**
+	 * 틱을 확실히 켠다. 생성자의 bCanEverTick 만으로는 부족하다.
+	 *
+	 * BP_PlayerCharacter 애셋이 PrimaryActorTick 의 bStartWithTickEnabled 를 직렬화하고 있어서,
+	 * 생성자에서 bCanEverTick 을 켜도 시작 시점에는 꺼진 채로 등록될 수 있다.
+	 * 그러면 커서 조준 회전이 조용히 동작하지 않는다.
+	 *
+	 * bCanEverTick 은 BP 가 덮지 않으므로(생성자 주석 참고) 틱 함수 자체는 등록되어 있고,
+	 * 여기서 켜는 것으로 충분하다.
+	 */
+	SetActorTickEnabled(true);
 
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
@@ -1601,6 +1621,64 @@ void ACWPlayerCharacter::ToggleOutfit()
 {
 	// 어느 슬롯이 함께 벗겨지는지는 카탈로그의 bIncludeInToggleAll 이 정한다.
 	WearableComponent->ToggleAllSlots();
+}
+
+void ACWPlayerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	ApplyCursorFacing(DeltaSeconds);
+}
+
+void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)
+{
+	if (!bFaceCursor)
+	{
+		return;
+	}
+
+	/**
+	 * 회전을 넣는 것은 조종 중인 본인 기계뿐이다.
+	 *
+	 * 남의 캐릭터 회전은 캐릭터 무브먼트의 리플리케이션으로 내려온다. 서버가 자기 판단으로
+	 * 또 돌리면 클라이언트가 보내온 회전과 싸워서 남의 화면에서만 몸이 떨린다.
+	 * 애초에 서버와 다른 클라이언트는 이 플레이어의 마우스 커서를 읽을 수 없다.
+	 */
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	/**
+	 * 쓰러져 있는 동안은 돌리지 않는다.
+	 *
+	 * 래그돌이 물리로 자세를 잡고 있고, 기상할 때는 복귀 정렬이 캡슐 회전을 직접 맞춘다.
+	 * (HandleHitLockChanged 경로의 SetActorRotation) 여기서 매 프레임 덮으면 그 정렬과 싸운다.
+	 */
+	if (IsActionLocked())
+	{
+		return;
+	}
+
+	FVector ToCursor = ResolveCursorWorldLocation() - GetActorLocation();
+	ToCursor.Z = 0.f;
+
+	// 커서가 발밑이거나, 트레이스가 빗나가 ResolveCursorWorldLocation 이 캐릭터 위치를
+	// 그대로 낸 경우다. 방향이 거의 0 이라 각도가 매 프레임 튀므로 마지막 방향을 유지한다.
+	if (ToCursor.SizeSquared() < FMath::Square(MinCursorFacingDistance))
+	{
+		return;
+	}
+
+	const FRotator CurrentYaw(0.f, GetActorRotation().Yaw, 0.f);
+	const FRotator TargetYaw(0.f, ToCursor.Rotation().Yaw, 0.f);
+
+	// RInterpTo 는 각도 차를 정규화해서 보간하므로 ±180도 경계에서 한 바퀴 돌지 않는다.
+	const FRotator NewYaw = (CursorFacingInterpSpeed <= 0.f)
+		? TargetYaw
+		: FMath::RInterpTo(CurrentYaw, TargetYaw, DeltaSeconds, CursorFacingInterpSpeed);
+
+	SetActorRotation(FRotator(0.f, NewYaw.Yaw, 0.f));
 }
 
 FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
