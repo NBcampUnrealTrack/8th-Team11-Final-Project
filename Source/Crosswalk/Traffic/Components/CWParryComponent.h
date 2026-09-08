@@ -1,5 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
-// CWParryComponent.h
+﻿// CWParryComponent.h
 
 #pragma once
 

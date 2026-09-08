@@ -1,5 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
-// Interface_ParryReceiver.h
+﻿// Interface_ParryReceiver.h
 
 #pragma once
 

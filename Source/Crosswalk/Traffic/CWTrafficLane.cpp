@@ -1,4 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
+﻿// CWTrafficLane.cpp
 
 #include "CWTrafficLane.h"
 

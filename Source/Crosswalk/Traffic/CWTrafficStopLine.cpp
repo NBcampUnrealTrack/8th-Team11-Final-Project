@@ -1,4 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
+﻿// CWTrafficStopLine.cpp
 
 #include "CWTrafficStopLine.h"
 

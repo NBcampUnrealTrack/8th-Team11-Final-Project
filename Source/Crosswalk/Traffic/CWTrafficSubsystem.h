@@ -1,4 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
+﻿// CWTrafficSubsystem.h
 
 #pragma once
 

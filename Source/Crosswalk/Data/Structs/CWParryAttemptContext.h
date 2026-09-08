@@ -1,5 +1,4 @@
-﻿// Copyright Crosswalk Team. All Rights Reserved.
-// CWParryAttemptContext.h
+﻿// CWParryAttemptContext.h
 
 #pragma once
 
