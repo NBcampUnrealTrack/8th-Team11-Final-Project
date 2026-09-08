@@ -509,6 +509,31 @@ void ACWBaseVehicle::OnRep_ParryLaunch()
 	}
 }
 
+void ACWBaseVehicle::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	/**
+	 * BP 가 들고 있는 박스 크기에 맞춰 높이를 잡는다.
+	 *
+	 * 여기서 하는 이유는 편집 화면에 보이는 것이 곧 런타임 모습이어야 하기 때문이다.
+	 * 플레이 시작 시점에만 맞추면 BP 뷰포트에는 정렬 전 위치가 그려져서, 박스 크기를
+	 * 바꿀 때마다 높이를 손으로 다시 계산해야 하고 그 계산이 틀려도 플레이하기 전에는
+	 * 드러나지 않는다. 박스 피벗이 정중앙이라 반높이를 암산하는 일이 매번 생긴다.
+	 *
+	 * 정렬 지점을 한 곳으로 모으는 목적도 있다. OnConstruction 은 레벨 로드와
+	 * SpawnActor 양쪽에서, 그리고 BP 에 저장된 값이 적용된 뒤에 지나간다. 그래서
+	 * "차종 BP 가 크기만 직접 편집해 ApplyMeshVariant 를 타지 않는" 경우도 여기서 걸린다.
+	 *
+	 * 크기는 BP 값을 그대로 쓰고 높이만 따라간다. 바닥이 노면에 붙는다는 것은 차종이
+	 * 고를 수 있는 값이 아니라 트래픽의 불변식이다.
+	 */
+	if (CollisionBox)
+	{
+		ApplyCollisionExtent(CollisionBox->GetUnscaledBoxExtent());
+	}
+}
+
 void ACWBaseVehicle::BeginPlay()
 {
 	Super::BeginPlay();
@@ -520,21 +545,6 @@ void ACWBaseVehicle::BeginPlay()
 	 * BP 에서 부속 메시를 더 달아도 액터 단위로 훑으므로 함께 꺼진다.
 	 */
 	UCWDecalStatics::DisableDecalReceiveOnActor(this);
-
-	/**
-	 * BP 가 들고 있는 박스 크기에 맞춰 높이를 다시 잡는다.
-	 *
-	 * 차종 BP 가 CollisionBox 크기를 직접 편집했으면 ApplyMeshVariant 를 타지 않아서
-	 * 상대 위치는 C++ 생성자 값에 머문다. 저장된 BP 가 상대 위치까지 예전 값(0)으로
-	 * 들고 있으면 생성자 값 자체가 덮인다. 어느 쪽이든 그 차종만 노면에 박힌 채 다닌다.
-	 *
-	 * "바닥이 노면에 붙는다" 는 차종이 고를 수 있는 값이 아니라 트래픽의 불변식이라,
-	 * BP 가 뭘 저장해 뒀든 여기서 한 번 맞추고 시작한다. 크기는 BP 값 그대로 쓴다.
-	 */
-	if (CollisionBox)
-	{
-		ApplyCollisionExtent(CollisionBox->GetUnscaledBoxExtent());
-	}
 
 	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ACWBaseVehicle::HandleBeginOverlap);
 	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ACWBaseVehicle::HandleEndOverlap);
