@@ -260,6 +260,9 @@ public:
 	void OnParriedFX(const FVector& LaunchDirection, float LaunchSpeed, AActor* Parrier);
 
 protected:
+	/** 콜리전 박스를 바닥 기준으로 정렬한다. 편집 화면과 런타임이 같은 모습이어야 하기 때문이다. */
+	virtual void OnConstruction(const FTransform& Transform) override;
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
