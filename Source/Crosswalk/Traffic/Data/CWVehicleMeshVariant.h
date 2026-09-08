@@ -32,6 +32,10 @@ struct FCWVehicleMeshVariant
 	 * 메쉬 실측 치수의 절반을 넣되 폭은 5cm 정도 깎는다. 스치듯 지나갔는데 맞는 오차가
 	 * 제일 비싸기 때문이다. 반대 방향 오차(맞을 뻔했는데 안 맞음)는 억울하지 않다.
 	 *
+	 * Z 도 마찬가지로 전체 높이의 절반이다. 박스는 이 값만큼 위로 올라가 바닥이 노면에
+	 * 맞으므로(ACWBaseVehicle::ApplyCollisionExtent), Z 를 실제보다 낮게 넣으면 차 지붕
+	 * 쪽에 판정이 비는 것이지 차가 도로에 박히는 것이 아니다.
+	 *
 	 * 0 이면 건드리지 않는다. 크기가 같은 변형만 넣은 차종은 BP 값을 그대로 쓰면 된다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic")

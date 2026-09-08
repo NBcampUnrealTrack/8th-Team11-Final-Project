@@ -33,15 +33,21 @@ ACWBaseVehicle::ACWBaseVehicle()
 	// 추정이 어긋나도 보정량이 눈에 띄지 않는다.
 	SetNetUpdateFrequency(20.f);
 
+	// 원점을 노면에 고정하는 빈 루트. 콜리전 박스가 루트를 맡을 수 없는 이유는 헤더 주석 참고.
+	VehicleRoot = CreateDefaultSubobject<USceneComponent>(TEXT("VehicleRoot"));
+	SetRootComponent(VehicleRoot);
+
 	CollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("CollisionBox"));
-	SetRootComponent(CollisionBox);
+	CollisionBox->SetupAttachment(VehicleRoot);
 	// 승용차 대략치. 플레이스홀더 메쉬 크기와 맞춰 조정한다.
-	CollisionBox->SetBoxExtent(FVector(220.f, 90.f, 70.f));
+	ApplyCollisionExtent(FVector(220.f, 90.f, 70.f));
 	CollisionBox->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 	CollisionBox->SetGenerateOverlapEvents(true);
 
+	// 박스가 아니라 루트에 붙인다. 박스는 높이의 절반만큼 올라가 있어서,
+	// 거기에 붙이면 메쉬도 같이 떠올라 차가 공중에 뜬 채로 다닌다.
 	VehicleMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VehicleMesh"));
-	VehicleMesh->SetupAttachment(CollisionBox);
+	VehicleMesh->SetupAttachment(VehicleRoot);
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
@@ -208,8 +214,32 @@ void ACWBaseVehicle::ApplyMeshVariant()
 	 */
 	if (!Variant.BoxExtent.IsNearlyZero())
 	{
-		CollisionBox->SetBoxExtent(Variant.BoxExtent);
+		ApplyCollisionExtent(Variant.BoxExtent);
 	}
+}
+
+void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
+{
+	if (!CollisionBox)
+	{
+		return;
+	}
+
+	CollisionBox->SetBoxExtent(Extent);
+
+	/**
+	 * 박스 바닥을 노면에 맞춘다. 액터 원점이 노면이라 올려야 할 양이 곧 박스의 반높이다.
+	 *
+	 * 컴포넌트 자기 스케일을 곱한다. 익스텐트는 스케일이 붙기 전 값이라, BP 가 박스
+	 * 컴포넌트를 키워 뒀으면 실제 반높이는 그만큼 크다. 곱하지 않으면 키운 만큼 도로 묻힌다.
+	 * (액터 스케일은 상대 위치에도 똑같이 곱해지므로 여기서 볼 필요가 없다)
+	 *
+	 * 회전은 항등으로 되돌린다. 이 박스가 루트이던 시절에는 상대 회전이 저장돼 있어도
+	 * 액터 트랜스폼이 매 프레임 덮어써서 드러나지 않았다. 자식으로 내려온 지금은 그 값이
+	 * 그대로 살아나 박스만 비스듬히 돈다. 박스는 언제나 차선 방향을 봐야 한다.
+	 */
+	const float HalfHeight = Extent.Z * CollisionBox->GetRelativeScale3D().Z;
+	CollisionBox->SetRelativeLocationAndRotation(FVector(0.f, 0.f, HalfHeight), FRotator::ZeroRotator);
 }
 
 void ACWBaseVehicle::OnRep_MeshVariantIndex()
@@ -490,6 +520,21 @@ void ACWBaseVehicle::BeginPlay()
 	 * BP 에서 부속 메시를 더 달아도 액터 단위로 훑으므로 함께 꺼진다.
 	 */
 	UCWDecalStatics::DisableDecalReceiveOnActor(this);
+
+	/**
+	 * BP 가 들고 있는 박스 크기에 맞춰 높이를 다시 잡는다.
+	 *
+	 * 차종 BP 가 CollisionBox 크기를 직접 편집했으면 ApplyMeshVariant 를 타지 않아서
+	 * 상대 위치는 C++ 생성자 값에 머문다. 저장된 BP 가 상대 위치까지 예전 값(0)으로
+	 * 들고 있으면 생성자 값 자체가 덮인다. 어느 쪽이든 그 차종만 노면에 박힌 채 다닌다.
+	 *
+	 * "바닥이 노면에 붙는다" 는 차종이 고를 수 있는 값이 아니라 트래픽의 불변식이라,
+	 * BP 가 뭘 저장해 뒀든 여기서 한 번 맞추고 시작한다. 크기는 BP 값 그대로 쓴다.
+	 */
+	if (CollisionBox)
+	{
+		ApplyCollisionExtent(CollisionBox->GetUnscaledBoxExtent());
+	}
 
 	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ACWBaseVehicle::HandleBeginOverlap);
 	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ACWBaseVehicle::HandleEndOverlap);

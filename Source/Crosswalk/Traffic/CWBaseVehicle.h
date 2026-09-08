@@ -13,6 +13,7 @@ class ACWBaseVehicle;
 class ACWTrafficLane;
 class UBoxComponent;
 class UCWVehicleStopSyncComponent;
+class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -294,6 +295,17 @@ private:
 	/** 고른 변형의 메쉬와 콜리전 크기를 반영한다. 인덱스가 범위 밖이면 아무것도 하지 않는다. */
 	void ApplyMeshVariant();
 
+	/**
+	 * 콜리전 박스 크기를 바꾸고, 바뀐 높이에 맞춰 박스를 다시 노면 위로 올린다.
+	 *
+	 * 크기와 위치를 따로 부르면 안 된다. 박스 중심은 항상 높이의 절반 지점이라
+	 * 한쪽만 바꾸면 그 차종만 노면을 뚫거나 공중에 뜬 채로 다닌다.
+	 *
+	 * Extent 는 스케일이 붙기 전 값이다. 액터 스케일은 익스텐트와 상대 위치에 똑같이
+	 * 곱해지므로, 차량 BP 가 크기를 키워도 바닥은 계속 노면에 붙어 있다.
+	 */
+	void ApplyCollisionExtent(const FVector& Extent);
+
 	/** 서버가 고른 변형이 클라이언트에 도착했을 때. */
 	UFUNCTION()
 	void OnRep_MeshVariantIndex();
@@ -427,7 +439,25 @@ private:
 		int32 OtherBodyIndex);
 
 protected:
-	/** 플레이어 충돌 판정용. 플레이스홀더 단계에서는 이 박스가 곧 차량 크기다. */
+	/**
+	 * 액터 원점을 노면에 붙잡아 두는 빈 루트.
+	 *
+	 * 콜리전 박스를 루트로 두면 박스 중심이 곧 액터 원점이 된다. 그런데 액터 위치는
+	 * 차선 스플라인 위의 점(노면)을 그대로 덮어쓰므로(UpdateTransformOnLane),
+	 * 박스가 노면을 중심으로 걸려 아래 절반은 도로에 박히고 위 절반만 차를 덮었다.
+	 * 실제 차 높이의 절반에만 판정이 있는 상태였다.
+	 *
+	 * 루트는 자기 자신에게 상대 위치를 줄 수 없어서, 트랜스폼만 가진 이 컴포넌트를
+	 * 원점 자리에 세우고 박스를 자식으로 내려 위로 올렸다. 액터 원점은 계속 노면이라
+	 * GetActorLocation 을 기준으로 재는 코드(피격·패링·앞차 간격)는 그대로 성립한다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TObjectPtr<USceneComponent> VehicleRoot;
+
+	/**
+	 * 플레이어 충돌 판정용. 플레이스홀더 단계에서는 이 박스가 곧 차량 크기다.
+	 * 바닥이 노면에 닿도록 높이의 절반만큼 올라가 있다. (ApplyCollisionExtent)
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TObjectPtr<UBoxComponent> CollisionBox;
 
