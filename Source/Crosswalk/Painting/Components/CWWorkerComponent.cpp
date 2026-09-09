@@ -97,6 +97,9 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	ACWBaseWorkZone* FoundZone = FindTargetZone(WorkLocation);
 	SetTargetZone(FoundZone);
 
+	// 조준 표시기가 읽어갈 수 있게 남겨 둔다. 표시기는 이 값을 그대로 원의 중심으로 쓴다.
+	CurrentWorkLocation = WorkLocation;
+
 	// 커서 지점은 소유 클라이언트만 알 수 있으므로 작업 중에는 서버로 올려보낸다.
 	// (게이지/미니게임 존은 이 값을 쓰지 않지만, 칸을 칠하는 존은 이게 붓 중심이 된다)
 	if (bIsLocalWorker && !bIsServer && bWorking)

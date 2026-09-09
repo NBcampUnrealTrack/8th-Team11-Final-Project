@@ -171,6 +171,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	ACWBaseWorkZone* GetTargetZone() const { return TargetZone; }
 
+	/**
+	 * 이번 프레임에 계산된 붓 중심. 커서 지점을 MaxBrushDistance 로 끌어당긴 뒤의 값이다.
+	 *
+	 * 조준 표시기(UCWWorkReticleComponent)가 이 값을 그대로 원의 중심으로 쓴다.
+	 * 표시기가 커서 트레이스를 다시 쏘지 않는 이유가 여기 있다. 같은 값을 두 번 계산하면
+	 * 화면에 보이는 자리와 실제로 칠해지는 자리가 어긋날 수 있고, 그게 이 기능이 없애려는 문제다.
+	 *
+	 * 원격 캐릭터에서는 갱신되지 않는다. TickComponent 가 조기 반환하기 때문이다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	FVector GetWorkLocation() const { return CurrentWorkLocation; }
+
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsWorking() const { return bWorking; }
 
@@ -391,6 +403,10 @@ private:
 
 	// 서버가 마지막으로 받은 작업 지점. 서버에서만 의미가 있다.
 	FVector ReceivedWorkLocation = FVector::ZeroVector;
+
+	// 이번 프레임의 붓 중심. GetWorkLocation 이 돌려주는 값이다.
+	// TargetZone 과 같은 자리에서 같이 갱신된다.
+	FVector CurrentWorkLocation = FVector::ZeroVector;
 
 	// 작업 지점을 마지막으로 올려보낸 시각. 소유 클라이언트에서만 쓴다.
 	float LastWorkLocationSendTime = -1000.f;

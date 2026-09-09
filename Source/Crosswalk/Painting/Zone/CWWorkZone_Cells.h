@@ -190,6 +190,47 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	int32 GetSpillCellCount() const { return FilledCellCount - CountedFilledCount; }
 
+	/**
+	 * 체온을 반영한 실제 붓 반경.
+	 *
+	 * 이 존은 시간이 아니라 붓이 덮는 면적으로 진행해서, 넘어오는 시간을 줄여도 느려지지 않는다.
+	 * 그래서 붓 자체를 줄인다. (체온 기획서 4.2)
+	 *
+	 * 계수를 반경에 그대로 곱한다. 면적 기준으로 맞추려면 제곱근을 씌워야 하지만(계수 0.2 → 반경 45%),
+	 * 그러면 눈에 보이는 붓 크기가 거의 안 변해서 패널티가 걸린 줄을 모른다.
+	 *
+	 * ForEachCellInRadius 가 판정에 칸 크기의 절반을 더해주므로, 반경이 아무리 작아져도
+	 * 커서 아래 칸은 항상 칠해진다. 붓이 먹통이 되지는 않는다.
+	 *
+	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳"이 같은 값을 써야 해서 함수로 뺐다.
+	 *
+	 * public 인 이유: 조준 표시기(UCWWorkReticleComponent)가 이 값을 그대로 원의 반경으로 쓴다.
+	 * 표시기가 자기 식으로 다시 계산하면 화면의 원과 실제 칠해지는 범위가 어긋난다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	float GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const;
+
+	/**
+	 * 이 붓질이 실제로 칠하는 반경을 **월드 단위(cm)** 로 돌려준다.
+	 * 조준 표시기가 그리는 원의 반경이 이 값이다.
+	 *
+	 * 두 가지가 보정된다.
+	 *
+	 * 1. 칸 반쪽. ForEachCellInRadius 가 "칸의 절반 이상이 덮이면 칠해진 것" 으로 보려고
+	 *    반경에 칸 크기의 절반을 더해서 판정한다.
+	 *
+	 * 2. 액터 스케일. 칸 판정은 Area 컴포넌트의 **로컬(스케일 제외)** 공간에서 돈다.
+	 *    (ToLocalLocation 이 InverseTransformPosition 으로 스케일을 나누고, CachedCellSize 도
+	 *    GetUnscaledBoxExtent 기반이다) 그래서 BrushRadius 는 사실상 로컬 단위이고,
+	 *    월드에서 실제로 칠해지는 넓이는 액터 스케일만큼 달라진다.
+	 *
+	 * X/Y 스케일이 다르면 칠해지는 모양은 타원이지만, 원은 **작은 쪽 축**에 맞춘다.
+	 * 원 안쪽이 안 칠해지는 것과 원 밖이 칠해지는 것 중 전자가 더 눈에 거슬리기 때문이다.
+	 * 이 규칙이면 "원 안쪽은 반드시 칠해진다" 가 보장되고, 긴 축으로 조금 더 칠해질 뿐이다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	float GetPaintedWorldRadius(const UCWWorkerComponent* Worker) const;
+
 protected:
 	virtual void OnProgressChanged(float NewProgress) override;
 
@@ -303,22 +344,6 @@ private:
 	 *               보낼 수 없고, 폰에 붙은 작업 컴포넌트를 거쳐야 한다. 서버면 nullptr.
 	 */
 	void QueueOutgoingStroke(UCWWorkerComponent* Worker, const FCWBrushStroke& Stroke);
-
-	/**
-	 * 체온을 반영한 실제 붓 반경.
-	 *
-	 * 이 존은 시간이 아니라 붓이 덮는 면적으로 진행해서, 넘어오는 시간을 줄여도 느려지지 않는다.
-	 * 그래서 붓 자체를 줄인다. (체온 기획서 4.2)
-	 *
-	 * 계수를 반경에 그대로 곱한다. 면적 기준으로 맞추려면 제곱근을 씌워야 하지만(계수 0.2 → 반경 45%),
-	 * 그러면 눈에 보이는 붓 크기가 거의 안 변해서 패널티가 걸린 줄을 모른다.
-	 *
-	 * ForEachCellInRadius 가 판정에 칸 크기의 절반을 더해주므로, 반경이 아무리 작아져도
-	 * 커서 아래 칸은 항상 칠해진다. 붓이 먹통이 되지는 않는다.
-	 *
-	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳"이 같은 값을 써야 해서 함수로 뺐다.
-	 */
-	float GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const;
 
 	/**
 	 * 월드 좌표를 존 로컬 좌표로 옮긴다. (Area 박스 트랜스폼의 역변환)

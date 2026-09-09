@@ -19,6 +19,7 @@ class UCWToolHolderComponent;
 class UCWVehicleHitReactionComponent;
 class UCWWearableComponent;
 class UCWWorkerComponent;
+class UCWWorkReticleComponent;
 class UInputAction;
 enum class EInputActionValueType : uint8;
 class UInputMappingContext;
@@ -436,6 +437,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UCWWorkerComponent> WorkerComponent;
+
+	// 붓이 닿을 자리와 크기를 바닥에 원으로 그린다. 내 화면에만 보이는 로컬 연출이다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
+	TObjectPtr<UCWWorkReticleComponent> WorkReticleComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Tool")
 	TObjectPtr<UCWToolHolderComponent> ToolHolderComponent;
