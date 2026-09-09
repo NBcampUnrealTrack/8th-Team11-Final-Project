@@ -1260,6 +1260,24 @@ float ACWWorkZone_Cells::GetEffectiveBrushRadius(const UCWWorkerComponent* Worke
 	return BrushRadius * Worker->GetWorkSpeedFactor();
 }
 
+float ACWWorkZone_Cells::GetPaintedWorldRadius(const UCWWorkerComponent* Worker) const
+{
+	// 로컬 반경. ForEachCellInRadius 의 EffectiveRadius 와 같은 식이어야 한다.
+	// 한쪽만 고치면 화면의 원과 실제 칠해지는 범위가 다시 어긋난다.
+	const float LocalRadius = GetEffectiveBrushRadius(Worker)
+		+ FMath::Max(CachedCellSize.X, CachedCellSize.Y) * 0.5f;
+
+	// Area 컴포넌트의 스케일로 월드 단위로 옮긴다. 존을 액터 스케일로 줄여 배치했다면
+	// 실제로 칠해지는 넓이도 그만큼 줄어 있다.
+	const FVector AreaScale = Area != nullptr
+		? Area->GetComponentTransform().GetScale3D()
+		: FVector::OneVector;
+
+	const float ScaleXY = FMath::Min(FMath::Abs(AreaScale.X), FMath::Abs(AreaScale.Y));
+
+	return LocalRadius * FMath::Max(ScaleXY, KINDA_SMALL_NUMBER);
+}
+
 bool ACWWorkZone_Cells::HasAnyCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly) const
 {
 	bool bFound = false;

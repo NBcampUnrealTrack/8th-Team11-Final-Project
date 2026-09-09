@@ -32,6 +32,7 @@
 #include "Interfaces/Interface_Interactable.h"
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
+#include "Painting/Components/CWWorkReticleComponent.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "Painting/Components/CWSupplyCarrierComponent.h"
 #include "Painting/Components/CWToolHolderComponent.h"
@@ -85,6 +86,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	TopDownCamera->bUsePawnControlRotation = false;
 
 	WorkerComponent = CreateDefaultSubobject<UCWWorkerComponent>(TEXT("WorkerComponent"));
+	WorkReticleComponent = CreateDefaultSubobject<UCWWorkReticleComponent>(TEXT("WorkReticleComponent"));
 	ToolHolderComponent = CreateDefaultSubobject<UCWToolHolderComponent>(TEXT("ToolHolderComponent"));
 	ParryComponent = CreateDefaultSubobject<UCWParryComponent>(TEXT("ParryComponent"));
 	HitReactionComponent = CreateDefaultSubobject<UCWVehicleHitReactionComponent>(TEXT("HitReactionComponent"));
