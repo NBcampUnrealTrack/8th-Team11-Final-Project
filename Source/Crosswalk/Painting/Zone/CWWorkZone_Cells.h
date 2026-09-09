@@ -7,7 +7,10 @@
 
 class UBoxComponent;
 class UInstancedStaticMeshComponent;
+class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UStaticMeshComponent;
+class UTexture2D;
 
 /** 작업이 칸을 채우는 쪽인지, 지우는 쪽인지. */
 UENUM(BlueprintType)
@@ -23,10 +26,17 @@ enum class ECWCellWorkMode : uint8
  * 영역을 격자로 나눠 칸 단위로 채우거나 지우는 존.
  * 1단계 청소 / 3단계 도색 / 3단계+ 페인트 정리를 이 클래스 하나로 다 만든다.
  *
- * 핵심 아이디어: 칸 하나 = 작은 사각형 메쉬 하나.
- *   - 채워진 칸은 메쉬가 보이고, 빈 칸은 메쉬가 없다.
+ * 핵심 아이디어: 영역을 격자로 나눠 칸별 bool 하나만 들고 있는다.
  *   - 진행도 = 채워진 칸 수 / 전체 칸 수  (지우기 모드는 반대로 계산)
- * 렌더 타깃이나 텍스처를 만들 필요가 없고, 에디터에서 눈으로 바로 확인된다.
+ *   - 붓질은 "어디를 얼마만큼" 만 주고받는다. 칸 배열을 통째로 보내지 않는다.
+ *
+ * 화면에 그리는 방법은 두 가지고, 칸 상태와는 완전히 분리돼 있다.
+ *   1. 페인트 필드 (기본, bUsePaintField)
+ *      칸 상태를 텍스처로 넘기고 판 하나에 셰이더로 그린다. 격자가 화면에서 사라지고
+ *      드로우콜은 칸 수와 무관하게 하나다. 자세한 원리는 bUsePaintField 주석에 있다.
+ *   2. 칸 메쉬 (PaintFieldMaterial 이 비었을 때의 대체 경로, 디버그용)
+ *      칸 하나가 작은 사각형 메쉬 하나다. 칸이 그대로 눈에 보여서 격자무늬가 된다.
+ *      진행도가 안 차는 원인을 찾을 때는 이쪽이 정확하다. (bShowCellMeshes)
  *
  * 격자는 두 겹이다. Area 박스 안쪽이 "점수 영역"이고, OverspillMargin 만큼 바깥으로
  * 더 뻗은 고리가 "삐져나간 영역"이다. 붓은 양쪽 다 칠하지만 진행도는 안쪽만 센다.
@@ -256,6 +266,37 @@ private:
 	void Multicast_ApplyBrushes(const TArray<FCWBrushStroke>& Strokes);
 
 	/**
+	 * 완료 판정이 난 존의 점수 영역에 빈 칸이 남아 있으면 마저 채운다. 서버에서만 판단한다.
+	 *
+	 * 왜 필요한가
+	 *   CompleteThreshold 가 1 보다 낮아서(기본 0.99) 구석 몇 칸이 비어도 완료로 친다.
+	 *   그런데 완료된 존은 작업 입력을 받지 않으므로, 그 칸들은 이제 칠할 방법이 없다.
+	 *   화면에는 다 칠한 횡단보도에 구멍이 뚫린 채로 영원히 남는다.
+	 *
+	 *   진행도만 1 로 올리면 숫자와 그림이 따로 논다. 칸을 실제로 채워서 둘을 맞춘다.
+	 *   (자국 지우기 쪽의 ACWPaintDecalField::RemoveRemainingThreshold 와 같은 취지다)
+	 *
+	 * 지우기 모드는 대상이 아니다
+	 *   오염 레이어처럼 도중에 할 일이 생기는 존은 평소 진행도가 1 근처다. 그대로 두면
+	 *   차가 자국을 하나 남긴 순간 이미 완료 판정이라 저절로 지워진다. 치울 일이 사라진다.
+	 *
+	 * 진행도가 바뀔 때마다 불리므로 조건을 싸게 거른다.
+	 */
+	void TryAutoCompleteCounted();
+
+	/**
+	 * 자동 완성을 전원에게 알린다.
+	 *
+	 * 좌표를 싣지 않는다. "점수 영역을 전부 채운다" 는 격자만 같으면 어느 기계에서든 같은 결과라,
+	 * 붓질처럼 위치를 주고받을 이유가 없다. 놓치면 그 기계만 영영 덜 칠해진 채로 남으므로 Reliable 이다.
+	 */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_CompleteCounted();
+
+	/** 점수 영역의 빈 칸을 전부 채우고 화면·진행도를 맞춘다. 모든 머신이 각자 부른다. */
+	void FillRemainingCountedCells();
+
+	/**
 	 * 내보낼 붓질을 모아둔다. 실제 전송은 FlushOutgoingStrokes 가 한다.
 	 *
 	 * @param Worker 클라이언트에서 부를 때만 필요하다. 존은 소유자가 없어 서버 RPC 를 직접
@@ -314,7 +355,11 @@ private:
 		// 빈 칸을 덮어버린다. 그래서 화면은 빈틈 없이 칠해졌는데 진행도는 안 차는 상황이 생긴다.
 		//
 		// 칸 크기의 절반을 반경에 더해 "칸의 절반 이상이 덮이면 칠해진 것"으로 본다.
-		const float EffectiveRadius = Radius + FMath::Max(CachedCellSize.X, CachedCellSize.Y) * 0.5f;
+		//
+		// 여기서 쓰는 모든 길이는 월드 cm 다. Radius 가 월드 값이라 그쪽에 기준을 맞춘다.
+		// 로컬 좌표로 재면 액터 스케일이 붓 모양을 축마다 다르게 늘려서, 세로로 그을 때와
+		// 가로로 그을 때 칠해지는 폭이 달라진다. (CachedAreaScale 주석 참고)
+		const float EffectiveRadius = Radius + FMath::Max(CachedCellWorldSize.X, CachedCellWorldSize.Y) * 0.5f;
 		const float RadiusSquared = FMath::Square(EffectiveRadius);
 
 		// 월드 좌표를 존 로컬로 한 번만 옮긴다.
@@ -327,19 +372,25 @@ private:
 
 		// 붓이 닿을 수 있는 칸 범위만 훑는다. 격자 전체를 도는 것과 결과는 같고 비용만 다르다.
 		// (붓 반경 20cm 에 칸 10cm 면 5x5 정도다. 예전에는 매번 1600칸을 전부 돌았다)
+		//
+		// 이 사각형은 로컬 좌표로 잡아야 한다. 월드 반경을 축마다 스케일로 나눠 로컬로 되돌린다.
+		const float LocalRadiusX = EffectiveRadius / CachedAreaScale.X;
+		const float LocalRadiusY = EffectiveRadius / CachedAreaScale.Y;
+
 		const int32 MinX = FMath::Max(0,
-			FMath::CeilToInt((LocalCenter.X - EffectiveRadius - FirstCellCenter.X) / CachedCellSize.X));
+			FMath::CeilToInt((LocalCenter.X - LocalRadiusX - FirstCellCenter.X) / CachedCellSize.X));
 		const int32 MaxX = FMath::Min(FullGridSize.X - 1,
-			FMath::FloorToInt((LocalCenter.X + EffectiveRadius - FirstCellCenter.X) / CachedCellSize.X));
+			FMath::FloorToInt((LocalCenter.X + LocalRadiusX - FirstCellCenter.X) / CachedCellSize.X));
 		const int32 MinY = FMath::Max(0,
-			FMath::CeilToInt((LocalCenter.Y - EffectiveRadius - FirstCellCenter.Y) / CachedCellSize.Y));
+			FMath::CeilToInt((LocalCenter.Y - LocalRadiusY - FirstCellCenter.Y) / CachedCellSize.Y));
 		const int32 MaxY = FMath::Min(FullGridSize.Y - 1,
-			FMath::FloorToInt((LocalCenter.Y + EffectiveRadius - FirstCellCenter.Y) / CachedCellSize.Y));
+			FMath::FloorToInt((LocalCenter.Y + LocalRadiusY - FirstCellCenter.Y) / CachedCellSize.Y));
 
 		for (int32 CellY = MinY; CellY <= MaxY; ++CellY)
 		{
 			// 세로 거리는 이 줄 안에서 바뀌지 않는다. 안쪽 반복문 밖으로 뺀다.
-			const float DeltaY = (FirstCellCenter.Y + CellY * CachedCellSize.Y) - LocalCenter.Y;
+			// 스케일을 곱해 월드 거리로 바꾼 뒤에 재야 반경과 단위가 맞는다.
+			const float DeltaY = ((FirstCellCenter.Y + CellY * CachedCellSize.Y) - LocalCenter.Y) * CachedAreaScale.Y;
 			const float DeltaYSquared = DeltaY * DeltaY;
 
 			for (int32 CellX = MinX; CellX <= MaxX; ++CellX)
@@ -362,7 +413,7 @@ private:
 				}
 
 				// 높이는 무시하고 평면 거리로만 판정한다. (탑뷰 클릭 감각 우선)
-				const float DeltaX = (FirstCellCenter.X + CellX * CachedCellSize.X) - LocalCenter.X;
+				const float DeltaX = ((FirstCellCenter.X + CellX * CachedCellSize.X) - LocalCenter.X) * CachedAreaScale.X;
 				if (DeltaX * DeltaX + DeltaYSquared > RadiusSquared)
 				{
 					continue;
@@ -447,6 +498,54 @@ private:
 	/** 이 기계가 칸 메쉬를 만들 필요가 있는가. 데디케이티드 서버는 그리지 않으므로 필요 없다. */
 	bool ShouldBuildCellMeshes() const;
 
+	/**
+	 * 이 기계가 페인트 필드를 그리는가.
+	 *
+	 * 머티리얼이 안 꽂혀 있으면 false 다. 그러면 칸 메쉬 방식으로 되돌아간다.
+	 * 판 하나에 기본 머티리얼이 입혀져 존 전체가 회색으로 덮이는 것보다는 네모라도 보이는 편이 낫다.
+	 */
+	bool ShouldBuildPaintField() const;
+
+	/**
+	 * 페인트 필드를 격자 구성에 맞춰 다시 잡는다. 텍스처 · 판 크기 · 머티리얼 파라미터까지 전부.
+	 *
+	 * 격자가 바뀌는 자리(OnConstruction, BuildGrid)에서만 부른다. 붓질은 텍셀만 건드린다.
+	 */
+	void RefreshPaintField();
+
+	/**
+	 * 다 칠한 존을 셰이더의 솔리드 경로로 넘긴다. (M_PaintField 의 SolidFill)
+	 *
+	 * 필드는 칸 상태를 bilinear 로 읽어 임계값에서 자른다. 그래서 다 칠한 존이라도 가장자리가
+	 * 마지막 칸 중심에서 (1 - EdgeThreshold) 칸 나간 자리에서 끝나고, 그 자리가 도메인 워프
+	 * 진폭만큼 흔들린다. 스트라이프 테두리와 겹치는 폭이 그 흔들림보다 얇으면 도로가 점점이 비친다.
+	 *
+	 * 솔리드 경로는 칸 상태 대신 점수 영역(텍스처 G)으로 자르고 워프를 끈다. 경계가 고정값이
+	 * 되므로 겹침 폭을 계산으로 보장할 수 있고, 칸 크기나 액터 스케일을 바꿔도 안 깨진다.
+	 */
+	void RefreshPaintFieldSolidState(float NewProgress);
+
+	/**
+	 * 칸 상태를 담을 텍스처를 만든다. 크기가 그대로면 아무것도 하지 않는다.
+	 *
+	 * 텍스처는 격자보다 가로세로 한 칸씩 크다. 그 테두리 텍셀을 0 으로 남겨 두면
+	 * 셰이더가 격자 밖을 "안 칠한 곳" 으로 읽어서, 칠한 자리의 끝이 판 경계에서
+	 * 직선으로 잘리지 않고 자연스럽게 빠진다. (TA_Clamp 라 테두리 값이 밖으로 이어진다)
+	 */
+	void RebuildFieldTexture();
+
+	/** 격자 전체를 텍스처에 다시 쓴다. 격자를 새로 만들거나 스냅샷을 통째로 적용했을 때 쓴다. */
+	void WriteAllFieldTexels();
+
+	/**
+	 * 칸 하나를 텍셀에 쓰고 더티 사각형을 넓힌다. 업로드는 하지 않는다.
+	 * (FlushFieldTextureUpdates 가 프레임 끝에 한 번에 올린다)
+	 */
+	void WriteFieldTexel(int32 CellX, int32 CellY, bool bFilled);
+
+	/** 더티 사각형만 GPU 텍스처로 올린다. 한 프레임에 한 번이면 된다. */
+	void FlushFieldTextureUpdates();
+
 	/** 늦게 들어온 플레이어에게 넘길 칸 상태가 낡았다고 표시한다. 서버에서만 유효하다. */
 	void MarkCellSnapshotDirty();
 
@@ -488,6 +587,15 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UInstancedStaticMeshComponent> AreaBorderMeshes;
 
+	/**
+	 * 칠한 자리를 그리는 판. 격자 전체를 덮는 판 하나다. (bUsePaintField 를 켰을 때)
+	 *
+	 * 이게 칸 메쉬를 대신한다. 칸 상태는 텍스처로 넘기고 경계는 셰이더가 만들기 때문에,
+	 * 격자가 몇 칸이든 드로우콜은 하나다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
+	TObjectPtr<UStaticMeshComponent> PaintFieldMesh;
+
 protected:
 	// Area 안쪽(=진행도로 세는 영역)의 가로 x 세로 칸 수.
 	// 영역 비율에 맞춰 칸이 정사각형이 되게 잡는 게 보기 좋다.
@@ -506,6 +614,9 @@ protected:
 	 *
 	 * 8~10cm 면 붓 자국처럼 보이고, 20cm 를 넘으면 어떤 머티리얼을 써도 네모가 눈에 띈다.
 	 * 오염 레이어는 스트라이프의 1~1.5배로 맞추면 경계에서 이음새가 티나지 않는다.
+	 *
+	 * 이 값은 **월드 크기**다. 액터 스케일이 1 이 아니면 Area 박스 크기를 GridSize 로 나눈
+	 * 값과 다르다. 두 축이 크게 다르면 칸이 찌그러진 것이니 GridSize 를 다시 잡아야 한다.
 	 */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "Work", meta = (DisplayName = "칸 크기 (cm)"))
 	FVector2D CellSizePreview = FVector2D::ZeroVector;
@@ -637,6 +748,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
 	bool bShowDebugGridLayout = false;
 
+	/**
+	 * 페인트 필드를 쓰는 중에도 칸 메쉬를 같이 그린다.
+	 *
+	 * 필드는 셰이더가 경계를 만들기 때문에, 화면에 보이는 자리와 실제로 칠해진 칸이
+	 * 정확히 같지 않다. 진행도가 안 차는 원인을 찾을 때 둘을 겹쳐 보면 바로 갈린다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
+	bool bShowCellMeshes = false;
+
 	// 바깥 고리로 삐져나간 칸을 주황 상자로 그린다.
 	//
 	// 체크리스트에는 "페인트 정리 N칸 남음" 이라고 뜨는데, 삐져나간 페인트는 도로 위에
@@ -682,6 +802,45 @@ protected:
 	// 사각형 그대로면 칸이 그대로 눈에 보여서 격자무늬가 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual")
 	TObjectPtr<UMaterialInterface> CellMaterial;
+
+	/**
+	 * 칸 메쉬 대신 판 하나에 셰이더로 그린다. 격자가 화면에서 사라진다.
+	 *
+	 * 어떻게 사라지는가
+	 *   칸 상태를 텍스처로 넘기고 bilinear 로 읽으면 칸 경계가 보간으로 녹아 0~1 연속 필드가 된다.
+	 *   거기에 노이즈로 좌표를 흔들고 임계값으로 자르면, 축에 맞춰 정렬되지 않은 출렁이는
+	 *   외곽선이 나온다. 안쪽은 플랫하게 채워져서 페인트를 칠한 자국처럼 읽힌다.
+	 *
+	 * 대가
+	 *   경계의 해상도가 칸 크기에 묶인다. 칸이 8cm 면 그보다 잔 붓 디테일은 표현되지 않는다.
+	 *   붓 반경(BrushRadius, 기본 20cm)이 칸보다 훨씬 크므로 실사용에는 걸리지 않는다.
+	 *
+	 * PaintFieldMaterial 이 비어 있으면 이 값과 무관하게 칸 메쉬 방식으로 돈다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual")
+	bool bUsePaintField = true;
+
+	/**
+	 * 페인트 필드에 입힐 머티리얼. (M_PaintField)
+	 *
+	 * 규약이 있어서 아무 머티리얼이나 꽂으면 안 된다.
+	 *   CellField      Texture2D  R = 칠했나, G = 점수 영역인가. 이 클래스가 런타임에 넣는다
+	 *   FieldWorldSize Vector     판의 실제 크기(cm). 노이즈 진폭을 UV 로 환산하는 데 쓴다
+	 *   WarpAmountCm   Scalar     외곽선을 흔드는 폭(cm). 칸 크기에서 자동 계산해 넣는다
+	 * 나머지 파라미터(PaintColor, RimWidth, StreakTex 등)는 머티리얼 인스턴스에서 잡는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual")
+	TObjectPtr<UMaterialInterface> PaintFieldMaterial;
+
+	/**
+	 * 외곽선을 흔드는 폭을 칸 크기의 몇 배로 잡을 것인가. (WarpAmountCm 으로 들어간다)
+	 *
+	 * 칸 크기에 비례해서 넣는 이유: 격자 해상도가 다른 존들이 같은 값을 써도 비슷하게 보인다.
+	 * 0 이면 흔들지 않아서 칸 경계의 보간만 남는다. 그러면 격자 방향이 희미하게 드러난다.
+	 * 1 을 넘기면 칠한 자리가 원래 칸에서 눈에 띄게 벗어나 진행도와 그림이 어긋나 보인다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual", meta = (ClampMin = "0.0", ClampMax = "1.5"))
+	float PaintFieldWarpCells = 0.7f;
 
 	// 차량이 이 존의 젖은 페인트를 밟고 지나가면 자국을 남기는가. (3단계 도색 존에서 켠다)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle")
@@ -793,6 +952,19 @@ private:
 
 	FVector2D CachedCellSize = FVector2D(1.f, 1.f);
 
+	/**
+	 * Area 컴포넌트의 월드 스케일(XY). 로컬 길이를 월드 cm 로 바꾸는 계수다.
+	 *
+	 * 격자는 로컬 좌표로 깔고 메쉬도 로컬로 배치한다. 거기까지는 스케일을 몰라도 된다.
+	 * 하지만 붓 반경 · OverspillMargin · 페인트 단가 · 워프 진폭은 "몇 cm" 라는 월드 값이라,
+	 * 로컬 값과 섞이는 지점마다 이 계수로 환산해야 한다.
+	 */
+	FVector2D CachedAreaScale = FVector2D(1.f, 1.f);
+
+	// 칸 하나의 실제 월드 크기(cm). CachedCellSize * CachedAreaScale 이다.
+	// 디테일 패널에 띄우는 값도, 붓 판정에 쓰는 값도 이쪽이다.
+	FVector2D CachedCellWorldSize = FVector2D(1.f, 1.f);
+
 	// 이번 프레임에 상태가 바뀐 칸. 프레임 끝에 한 번에 인스턴스로 반영한다.
 	TArray<int32> PendingCellMeshUpdates;
 
@@ -820,4 +992,30 @@ private:
 
 	// 이 기계에서 마지막으로 붓질한 시각. 스냅샷을 덮어도 되는지 판단하는 데 쓴다.
 	float LastLocalStrokeTime = -1000.f;
+
+	// 칸 상태를 담아 셰이더로 넘기는 텍스처. 텍셀 하나가 칸 하나다. (테두리 한 줄은 항상 0)
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> PaintFieldTexture;
+
+	// PaintFieldMesh 에 입힌 머티리얼 인스턴스. 존마다 텍스처가 달라서 인스턴스도 존마다 따로다.
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> PaintFieldMID;
+
+	// 텍스처의 CPU 쪽 사본. BGRA 순서로 텍셀당 4바이트다.
+	//
+	// 이걸 들고 있는 이유: 부분 업로드는 원본 배열이 있어야 한다. 매번 GPU 텍스처를
+	// 락해서 읽어오는 것보다 CPU 에 사본을 두는 편이 싸다. 40x20 격자면 3.7KB 다.
+	TArray<uint8> FieldPixels;
+
+	// 텍스처 크기. 격자보다 가로세로 한 칸씩 크다. (RebuildFieldTexture)
+	FIntPoint FieldTextureSize = FIntPoint::ZeroValue;
+
+	// 이번 프레임에 바뀐 텍셀을 감싸는 사각형. Max 는 미포함이다.
+	FIntRect FieldDirtyRect = FIntRect();
+
+	bool bFieldDirty = false;
+
+	// 자동 완성을 처리하는 중인가. 칸을 채우면 진행도가 다시 바뀌어 OnProgressChanged 가
+	// 또 불리므로, 그 재진입에서 같은 판단을 반복하지 않게 막는다.
+	bool bAutoCompleting = false;
 };
