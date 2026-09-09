@@ -378,8 +378,12 @@ protected:
 	// 기본값이 1 보다 낮은 이유는 칸 채우기 존 때문이다. 격자 구석 칸까지 전부 칠하기가
 	// 까다로워서 살짝 여유를 준다. 게이지가 차오르는 존(Hold)은 100% 까지 채워야 자연스러우므로
 	// 자식 생성자에서 1.0 으로 올린다.
+	//
+	// 남는 칸은 완료 판정이 난 뒤 칸 존이 알아서 채운다. (ACWWorkZone_Cells::TryAutoCompleteCounted)
+	// 그래서 이 값은 "몇 칸까지 대신 채워줄 것인가" 를 정하는 셈이고, 낮출수록 한 번에
+	// 툭 채워지는 덩어리가 커진다. 5cm 칸 3000개짜리 스트라이프 기준 0.985 면 45칸이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.1", ClampMax = "1.0"))
-	float CompleteThreshold = 0.98f;
+	float CompleteThreshold = 0.985f;
 
 	// 배치 시점의 시작 진행도. 0 이면 처음부터, 1 이면 이미 끝난 상태로 시작한다.
 	//

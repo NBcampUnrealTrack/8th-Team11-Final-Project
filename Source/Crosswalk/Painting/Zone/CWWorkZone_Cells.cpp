@@ -2,8 +2,14 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+// FUpdateTextureRegion2D 는 Texture2D.h 에 전방 선언만 있다. 실제로 만들려면 이쪽이 필요하다.
+#include "RHITypes.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
@@ -56,6 +62,22 @@ ACWWorkZone_Cells::ACWWorkZone_Cells()
 		AreaBorderMeshes->SetStaticMesh(PlaneMesh.Object);
 	}
 
+	PaintFieldMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PaintFieldMesh"));
+	PaintFieldMesh->SetupAttachment(Area);
+	PaintFieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PaintFieldMesh->SetCastShadow(false);
+	PaintFieldMesh->SetMobility(EComponentMobility::Movable);
+
+	// 판 하나가 격자 전체를 덮는다. Plane 은 100x100 이라 원하는 크기를 100 으로 나누면 배율이 된다.
+	if (PlaneMesh.Succeeded())
+	{
+		PaintFieldMesh->SetStaticMesh(PlaneMesh.Object);
+	}
+
+	// 머티리얼이 꽂히기 전에는 숨겨 둔다. 기본 머티리얼이 입힌 판이 존 전체를 회색으로 덮으면
+	// 칸 메쉬로 되돌아가도 그 아래에 가려서 아무것도 안 보인다.
+	PaintFieldMesh->SetVisibility(false);
+
 	// 칸마다 머티리얼이 읽을 값을 두 개 실어 보낸다. 0번은 칠해졌는지, 1번은 점수 영역인지.
 	//
 	// 격자는 BuildGrid 에서 한 번 전부 깔고, 이후에는 인스턴스를 추가하거나 지우지 않는다.
@@ -76,11 +98,14 @@ void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
 	ApplyCellMaterial();
 	ResetCells();
 	RebuildAllCellInstances();
+	RefreshPaintField();
 	RefreshAreaBorder();
 
 	// 디테일 패널에 칸 크기와 칸 수를 띄운다. 박스를 끌면 실시간으로 따라온다.
 	// (ResetCells 안의 RebuildGridLayout 이 방금 다시 계산해 둔 값이다)
-	CellSizePreview = CachedCellSize;
+	// 로컬이 아니라 월드 크기를 띄운다. 액터에 스케일이 걸려 있으면 둘이 다르고,
+	// 디자이너가 보고 판단하는 값은 화면에 보이는 실제 크기여야 한다.
+	CellSizePreview = CachedCellWorldSize;
 	CellCountPreview = CellFilled.Num();
 }
 
@@ -275,6 +300,105 @@ void ACWWorkZone_Cells::OnProgressChanged(float NewProgress)
 	Super::OnProgressChanged(NewProgress);
 
 	RefreshPaintDryState();
+
+	// 거의 다 칠했으면 남은 칸을 마저 채운다. 여기서 채우면 진행도가 다시 바뀌어
+	// 이 함수가 한 번 더 불리고, 그때 RefreshPaintDryState 가 완료 상태를 보고 마름 대기를 건다.
+	TryAutoCompleteCounted();
+
+	// 완료 여부가 바뀌었으면 셰이더 경로도 따라가야 한다. 자동 완성이 칸을 채우면 진행도가
+	// 다시 바뀌어 이 함수가 재진입하는데, 두 경로 다 임계값 위라 결과는 같다.
+	RefreshPaintFieldSolidState(NewProgress);
+}
+
+void ACWWorkZone_Cells::TryAutoCompleteCounted()
+{
+	// 칸을 바꾸는 것은 서버만 한다. 클라이언트는 멀티캐스트를 받아서 따라온다.
+	if (!HasAuthority() || bAutoCompleting)
+	{
+		return;
+	}
+
+	// 지우기 모드는 대상이 아니다. 이유는 헤더 주석에 있다.
+	if (WorkMode != ECWCellWorkMode::FillCells)
+	{
+		return;
+	}
+
+	// 완료 판정은 베이스가 CompleteThreshold 로 이미 내렸다. 여기서 같은 기준을 또 두면
+	// 손잡이가 둘이 되어 "완료인데 안 채워지는" 조합이 생긴다.
+	if (!IsCompleted())
+	{
+		return;
+	}
+
+	// 이미 다 찼으면 할 일이 없다. 자동 완성이 부른 재진입도 여기서 걸린다.
+	const int32 CountedCellCount = GridSize.X * GridSize.Y;
+	if (CountedCellCount <= 0 || CountedFilledCount >= CountedCellCount)
+	{
+		return;
+	}
+
+	bAutoCompleting = true;
+	Multicast_CompleteCounted();
+	bAutoCompleting = false;
+}
+
+void ACWWorkZone_Cells::Multicast_CompleteCounted_Implementation()
+{
+	FillRemainingCountedCells();
+}
+
+void ACWWorkZone_Cells::FillRemainingCountedCells()
+{
+	if (CellFilled.Num() == 0)
+	{
+		return;
+	}
+
+	int32 ChangedCellCount = 0;
+
+	for (int32 CellY = CountedOrigin.Y; CellY < CountedOrigin.Y + GridSize.Y; ++CellY)
+	{
+		for (int32 CellX = CountedOrigin.X; CellX < CountedOrigin.X + GridSize.X; ++CellX)
+		{
+			const int32 CellIndex = GetCellIndex(CellX, CellY);
+
+			// 격자에서 빼둔 칸은 없는 것으로 친다. 붓질(ForEachCellInRadius)과 같은 규칙이어야
+			// 진행도의 분자와 여기서 채우는 대상이 어긋나지 않는다.
+			if (CellMasked.IsValidIndex(CellIndex) && CellMasked[CellIndex])
+			{
+				continue;
+			}
+
+			if (!CellFilled.IsValidIndex(CellIndex) || CellFilled[CellIndex])
+			{
+				continue;
+			}
+
+			CellFilled[CellIndex] = true;
+			++FilledCellCount;
+			++CountedFilledCount;
+			++ChangedCellCount;
+
+			QueueCellMeshUpdate(CellIndex);
+		}
+	}
+
+	if (ChangedCellCount == 0)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[%s] 완료 판정 후 남아 있던 %d칸을 채웠습니다."), *GetName(), ChangedCellCount);
+
+	// 완료되는 순간이라 화면이 바로 맞아야 한다. 틱이 꺼져 있을 수 있어서 여기서 직접 반영한다.
+	FlushCellMeshUpdates();
+
+	// SetProgress 는 서버에서만 실제로 먹는다. 클라이언트에서는 조용히 무시된다. (ApplyStroke 와 같다)
+	RefreshProgress();
+
+	MarkCellSnapshotDirty();
+	RefreshTickEnabled();
 }
 
 void ACWWorkZone_Cells::RefreshPaintDryState()
@@ -800,6 +924,16 @@ void ACWWorkZone_Cells::RefreshSpillMask()
 
 	int32 MaskedCount = 0;
 
+	/**
+	 * 칸 중심 한 점으로 판정한다.
+	 *
+	 * 네 모서리를 다 보게 해서 경계에 걸친 칸을 살려둔 적이 있다. 스트라이프와 레이어 사이의
+	 * 틈은 사라졌지만, 그 칸들의 바깥쪽 절반이 스트라이프 테두리 밖으로 삐져나와
+	 * 완성된 횡단보도의 가장자리가 지저분해 보였다. 스테이지를 다 끝냈을 때 선이
+	 * 깔끔하게 떨어지는 쪽이 중요해서 중심 판정으로 되돌렸다.
+	 *
+	 * 대가는 스트라이프 경계에 최대 반 칸의 빈 띠다. 격자 위상에 따라 변마다 다르다.
+	 */
 	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
 	{
 		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
@@ -851,7 +985,8 @@ float ACWWorkZone_Cells::GetPaintCostPerArea() const
 	//
 	// 전체 격자가 아니라 점수 영역 면적으로 나누는 것이 핵심이다. 그래야 안쪽만 정확히
 	// 칠했을 때 소모량이 정확히 PaintCostFull 이 되고, 밖으로 나간 만큼이 초과 비용이 된다.
-	const float CountedArea = CachedAreaSize.X * CachedAreaSize.Y;
+	// 월드 면적으로 나눈다. 로컬 면적으로 나누면 스케일이 걸린 존의 단가가 그만큼 어긋난다.
+	const float CountedArea = (CachedAreaSize.X * CachedAreaScale.X) * (CachedAreaSize.Y * CachedAreaScale.Y);
 
 	return CountedArea > 0.f ? PaintCostFull / CountedArea : 0.f;
 }
@@ -868,7 +1003,7 @@ void ACWWorkZone_Cells::ConsumePaintForCells(UCWWorkerComponent* Worker, int32 C
 	// 스트라이프와 오염 레이어는 칸 크기가 다르다. 칸 수로 세면 같은 붓질인데도
 	// 어느 격자에 찍혔느냐에 따라 소모량이 몇 배씩 달라진다. 면적으로 재면 격자 해상도와
 	// 무관하게 "얼마나 넓게 칠했는가" 하나로 정해진다.
-	const float ChangedArea = ChangedCellCount * CachedCellSize.X * CachedCellSize.Y;
+	const float ChangedArea = ChangedCellCount * CachedCellWorldSize.X * CachedCellWorldSize.Y;
 
 	Worker->ConsumePaint(ChangedArea * GetPaintCostPerArea());
 }
@@ -918,9 +1053,27 @@ void ACWWorkZone_Cells::RebuildGridLayout()
 	CachedAreaSize = Area->GetUnscaledBoxExtent() * 2.f;
 	CachedCellSize = FVector2D(CachedAreaSize.X / GridSize.X, CachedAreaSize.Y / GridSize.Y);
 
+	/**
+	 * 액터에 스케일이 걸려 있으면 로컬 1cm 가 월드 1cm 가 아니다.
+	 *
+	 * 격자와 메쉬 배치는 로컬 좌표로 하는 게 맞다. 컴포넌트 트랜스폼이 알아서 월드로 옮겨준다.
+	 * 문제는 월드 cm 로 정의된 값들이다. 붓 반경, OverspillMargin, 페인트 단가, 워프 진폭은
+	 * 전부 "몇 cm" 라는 뜻이라 로컬 값과 바로 비교하면 스케일 배수만큼 어긋난다.
+	 *
+	 * 스케일 (1.5, 4.5) 인 존에서 반경 20cm 붓이 월드 30x90cm 타원이 되어, 세로로 그을 때만
+	 * 3배 넓게 칠해지는 문제가 실제로 있었다. 아래 두 값이 그 환산을 담당한다.
+	 */
+	const FVector ComponentScale = Area->GetComponentScale();
+	CachedAreaScale = FVector2D(
+		FMath::Max(FMath::Abs(ComponentScale.X), KINDA_SMALL_NUMBER),
+		FMath::Max(FMath::Abs(ComponentScale.Y), KINDA_SMALL_NUMBER));
+
+	CachedCellWorldSize = CachedCellSize * CachedAreaScale;
+
 	// 바깥 고리도 안쪽과 같은 크기의 칸을 쓴다. 칸 크기가 달라지면 경계에서 티가 난다.
-	CountedOrigin.X = (CachedCellSize.X > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellSize.X) : 0;
-	CountedOrigin.Y = (CachedCellSize.Y > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellSize.Y) : 0;
+	// OverspillMargin 은 월드 cm 라서 월드 칸 크기로 나눈다.
+	CountedOrigin.X = (CachedCellWorldSize.X > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellWorldSize.X) : 0;
+	CountedOrigin.Y = (CachedCellWorldSize.Y > 0.f) ? FMath::CeilToInt(OverspillMargin / CachedCellWorldSize.Y) : 0;
 
 	FullGridSize.X = GridSize.X + CountedOrigin.X * 2;
 	FullGridSize.Y = GridSize.Y + CountedOrigin.Y * 2;
@@ -935,6 +1088,9 @@ void ACWWorkZone_Cells::ResetCells()
 	CellFilled.Init(false, CellCount);
 	FilledCellCount = 0;
 	CountedFilledCount = 0;
+
+	// 격자가 새로 만들어지면 마스크 인덱스는 의미가 없다. 오염 레이어면 RefreshSpillMask 가 다음 틱에 다시 채운다.
+	CellMasked.Reset();
 
 	// 격자가 새로 만들어지면 이전 인덱스로 모아둔 갱신은 의미가 없다.
 	PendingCellMeshUpdates.Reset();
@@ -980,18 +1136,55 @@ void ACWWorkZone_Cells::ResetCells()
 void ACWWorkZone_Cells::BuildGrid()
 {
 	ResetCells();
-	// 격자가 너무 잘면 칸 수가 그대로 렌더·메모리 비용이 된다. 넓은 존을 깔 때 실수하기 쉽다.
-	// 차량 자국은 타이어 폭만큼 거칠어도 되므로, 넓은 정리 존은 칸을 25~30cm 로 잡는 편이 낫다.
-	// (칸 크기 = Area 크기 / GridSize 다. 존을 넓히면 GridSize 도 같이 키워야 칸 크기가 유지된다)
-	constexpr int32 CellCountWarnThreshold = 20000;
-	if (CellFilled.Num() > CellCountWarnThreshold)
+
+	/**
+	 * 칸이 많을 때 실제로 남는 비용은 렌더가 아니라 네트워크다.
+	 *
+	 * 예전에는 칸 하나가 인스턴스 메쉬 하나였다. 칸 수가 그대로 인스턴스 버퍼(칸당 56바이트)와
+	 * 삼각형 수가 됐고, 붓질마다 MarkRenderStateDirty 로 그 버퍼를 다시 올렸다. 그래서
+	 * "칸 2만 개" 가 프레임에 직결됐다.
+	 *
+	 * 지금은 판 하나에 셰이더로 그린다. 드로우콜은 칸 수와 무관하게 1개이고, 붓질은 텍스처의
+	 * 더러워진 사각형만 부분 업로드한다. 픽셀 비용은 존이 화면에서 차지하는 면적에만 붙는다.
+	 * 칸 수에 비례해 남는 것은 CPU 배열과 텍스처 메모리인데 둘 다 칸당 몇 바이트라 사소하다.
+	 *
+	 * 남은 하나가 CellSnapshot 이다. 늦게 들어온 플레이어용 밑그림이라 Reliable 로 나가고,
+	 * 칸 하나가 비트 하나다. 이게 지금 격자 크기의 실질적인 상한이라 여기를 기준으로 경고한다.
+	 */
+	constexpr int32 SnapshotBytesWarnThreshold = 8192;
+	const int32 SnapshotBytes = FMath::DivideAndRoundUp(CellFilled.Num(), 8);
+
+	if (SnapshotBytes > SnapshotBytesWarnThreshold)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[%s] 칸이 %d개입니다. (격자 %dx%d, 칸 크기 %.1fx%.1fcm) 프레임에 영향이 올 수 있습니다. GridSize 를 줄여 칸을 키우세요."),
-			*GetName(), CellFilled.Num(), FullGridSize.X, FullGridSize.Y, CachedCellSize.X, CachedCellSize.Y);
+			TEXT("[%s] 칸이 %d개라 칸 상태 스냅샷이 %.1fKB 입니다. (격자 %dx%d, 칸 크기 %.1fx%.1fcm) ")
+			TEXT("누가 이 존을 칠하는 동안 %.1f초마다 접속자 전원에게 Reliable 로 나갑니다. ")
+			TEXT("GridSize 를 줄여 칸을 키우거나 존을 나누세요."),
+			*GetName(), CellFilled.Num(), SnapshotBytes / 1024.f,
+			FullGridSize.X, FullGridSize.Y, CachedCellWorldSize.X, CachedCellWorldSize.Y,
+			CellSnapshotInterval);
+	}
+
+	// 월드 칸이 정사각형에서 많이 벗어나면 알린다.
+	//
+	// Area 박스만 보고 GridSize 를 맞춰도, 액터에 비균등 스케일이 걸려 있으면 월드에서는
+	// 찌그러진다. 그러면 붓 자국의 거칠기가 축마다 달라지고, 이웃 존과 맞닿는 경계에
+	// 칸 크기 차이만큼 빈 띠가 생긴다. 눈으로는 원인을 짚기 어려운 증상이라 로그로 남긴다.
+	const float LongCellSide = FMath::Max(CachedCellWorldSize.X, CachedCellWorldSize.Y);
+	const float ShortCellSide = FMath::Max(FMath::Min(CachedCellWorldSize.X, CachedCellWorldSize.Y), KINDA_SMALL_NUMBER);
+	constexpr float CellAspectWarnRatio = 1.5f;
+
+	if (LongCellSide / ShortCellSide > CellAspectWarnRatio)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 월드 칸이 %.1fx%.1fcm 로 찌그러져 있습니다. (격자 %dx%d, 액터 스케일 %.2fx%.2f) ")
+			TEXT("GridSize 를 월드 크기 기준으로 다시 잡거나 스케일을 1 로 되돌리세요."),
+			*GetName(), CachedCellWorldSize.X, CachedCellWorldSize.Y,
+			GridSize.X, GridSize.Y, CachedAreaScale.X, CachedAreaScale.Y);
 	}
 
 	RebuildAllCellInstances();
+	RefreshPaintField();
 
 	// 시작 진행도는 서버가 정한다. 클라이언트가 계산해서 넣으면
 	// 이미 리플리케이트되어 온 진행도(도중 참가)를 0 으로 덮어쓴다.
@@ -1141,7 +1334,22 @@ int32 ACWWorkZone_Cells::SetCellsInRadius(const FVector& WorldCenter, float Radi
 bool ACWWorkZone_Cells::ShouldBuildCellMeshes() const
 {
 	// 데디케이티드 서버는 화면을 그리지 않는다. 칸이 수만 개인 정리 존에서 특히 크게 아낀다.
-	return CellMeshes != nullptr && GetNetMode() != NM_DedicatedServer;
+	if (CellMeshes == nullptr || GetNetMode() == NM_DedicatedServer)
+	{
+		return false;
+	}
+
+	// 필드로 그리는 중이면 칸 메쉬는 만들지 않는다. 인스턴스를 남겨 두면 네모가 페인트 위로 겹친다.
+	// 디버그로 켜 두면 둘 다 그린다.
+	return bShowCellMeshes || !ShouldBuildPaintField();
+}
+
+bool ACWWorkZone_Cells::ShouldBuildPaintField() const
+{
+	return bUsePaintField
+		&& PaintFieldMaterial != nullptr
+		&& PaintFieldMesh != nullptr
+		&& GetNetMode() != NM_DedicatedServer;
 }
 
 FTransform ACWWorkZone_Cells::GetCellInstanceTransform(int32 CellX, int32 CellY, bool bFilled) const
@@ -1162,7 +1370,7 @@ FTransform ACWWorkZone_Cells::GetCellInstanceTransform(int32 CellX, int32 CellY,
 
 void ACWWorkZone_Cells::RebuildAllCellInstances()
 {
-	if (!ShouldBuildCellMeshes())
+	if (CellMeshes == nullptr)
 	{
 		return;
 	}
@@ -1170,6 +1378,13 @@ void ACWWorkZone_Cells::RebuildAllCellInstances()
 	CellMeshes->ClearInstances();
 	PendingCellMeshUpdates.Reset();
 	PendingCellMeshUpdateMask.Init(false, CellFilled.Num());
+
+	// 필드로 그리거나 데디케이티드 서버면 인스턴스를 만들지 않는다.
+	// 위에서 이미 비워 뒀으므로, 에디터에서 bUsePaintField 를 켜면 네모가 바로 사라진다.
+	if (!ShouldBuildCellMeshes())
+	{
+		return;
+	}
 
 	if (CellFilled.Num() == 0)
 	{
@@ -1226,17 +1441,11 @@ void ACWWorkZone_Cells::FlushCellMeshUpdates()
 		return;
 	}
 
-	if (!ShouldBuildCellMeshes())
-	{
-		// 데디케이티드 서버. 칸 상태는 이미 맞춰져 있고 그릴 것만 없다.
-		for (const int32 CellIndex : PendingCellMeshUpdates)
-		{
-			PendingCellMeshUpdateMask[CellIndex] = false;
-		}
-
-		PendingCellMeshUpdates.Reset();
-		return;
-	}
+	// 데디케이티드 서버면 둘 다 false 다. 칸 상태는 이미 맞춰져 있고 그릴 것만 없다.
+	// 그래도 목록은 비워야 한다. 안 그러면 중복 방지 비트가 켜진 채로 남아서
+	// 같은 칸이 다시 뒤집혀도 목록에 들어가지 않는다.
+	const bool bDrawCells = ShouldBuildCellMeshes();
+	const bool bDrawField = ShouldBuildPaintField();
 
 	for (const int32 CellIndex : PendingCellMeshUpdates)
 	{
@@ -1251,14 +1460,263 @@ void ACWWorkZone_Cells::FlushCellMeshUpdates()
 		const int32 CellX = CellIndex % FullGridSize.X;
 		const int32 CellY = CellIndex / FullGridSize.X;
 
-		// 렌더 상태는 여기서 더럽히지 않는다. 반복문이 끝난 뒤 한 번만 더럽힌다.
-		CellMeshes->UpdateInstanceTransform(CellIndex, GetCellInstanceTransform(CellX, CellY, bFilled), false, false, true);
-		CellMeshes->SetCustomDataValue(CellIndex, 0, bFilled ? 1.f : 0.f, false);
+		if (bDrawCells)
+		{
+			// 렌더 상태는 여기서 더럽히지 않는다. 반복문이 끝난 뒤 한 번만 더럽힌다.
+			CellMeshes->UpdateInstanceTransform(CellIndex, GetCellInstanceTransform(CellX, CellY, bFilled), false, false, true);
+			CellMeshes->SetCustomDataValue(CellIndex, 0, bFilled ? 1.f : 0.f, false);
+		}
+
+		if (bDrawField)
+		{
+			// 텍셀만 고쳐 두고 업로드는 아래에서 한 번에 한다.
+			WriteFieldTexel(CellX, CellY, bFilled);
+		}
 	}
 
 	PendingCellMeshUpdates.Reset();
 
-	CellMeshes->MarkRenderStateDirty();
+	if (bDrawCells)
+	{
+		CellMeshes->MarkRenderStateDirty();
+	}
+
+	if (bDrawField)
+	{
+		FlushFieldTextureUpdates();
+	}
+}
+
+void ACWWorkZone_Cells::RefreshPaintField()
+{
+	if (PaintFieldMesh == nullptr)
+	{
+		return;
+	}
+
+	if (!ShouldBuildPaintField())
+	{
+		PaintFieldMesh->SetVisibility(false);
+		return;
+	}
+
+	RebuildFieldTexture();
+
+	// 판은 텍스처와 같은 범위를 덮어야 한다. 텍셀 하나가 칸 하나에 정확히 대응해야
+	// 셰이더가 읽는 UV 와 칸 위치가 맞는다. 격자는 Area 박스 기준으로 원점 대칭이므로
+	// 판도 로컬 원점에 두면 된다. (GetFirstCellCenter 참고)
+	// 판의 크기는 로컬로 잡는다. RelativeScale3D 는 부모(Area) 로컬 공간이라 여기에
+	// 스케일을 곱하면 두 번 걸린다.
+	const FVector2D FieldLocalSize(
+		FieldTextureSize.X * CachedCellSize.X,
+		FieldTextureSize.Y * CachedCellSize.Y);
+
+	PaintFieldMesh->SetRelativeLocation(FVector(0.f, 0.f, CellHeightOffset));
+	PaintFieldMesh->SetRelativeScale3D(FVector(FieldLocalSize.X / 100.f, FieldLocalSize.Y / 100.f, 1.f));
+	PaintFieldMesh->SetVisibility(true);
+
+	// 존마다 텍스처가 다르므로 머티리얼 인스턴스도 존마다 따로 만든다.
+	// 이미 같은 부모로 만들어 둔 것이 있으면 다시 만들지 않는다. OnConstruction 은
+	// 디테일 패널을 만질 때마다 돌아서, 매번 새로 만들면 인스턴스가 계속 쌓인다.
+	if (PaintFieldMID == nullptr || PaintFieldMID->Parent != PaintFieldMaterial)
+	{
+		PaintFieldMID = PaintFieldMesh->CreateDynamicMaterialInstance(0, PaintFieldMaterial);
+	}
+
+	if (PaintFieldMID != nullptr)
+	{
+		PaintFieldMID->SetTextureParameterValue(TEXT("CellField"), PaintFieldTexture);
+
+		/**
+		 * 셰이더는 노이즈 진폭을 cm 로 받아 UV 로 환산한다. (UVOffset = WarpAmountCm / FieldWorldSize)
+		 *
+		 * 여기에는 반드시 **월드** 크기가 들어가야 한다. UV 에서 월드로 가는 변환은 컴포넌트의
+		 * 실제 스케일을 타기 때문에, 로컬 크기를 넘기면 진폭이 축마다 스케일 배수만큼 증폭된다.
+		 *
+		 * 스케일 (1.5, 4.5) 인 존에서 0.4cm 로 넣은 진폭이 실제로는 0.6 / 1.8cm 가 되어,
+		 * 주기 3.3cm 노이즈와 겹치며 테두리가 알갱이로 흩어지는 문제가 있었다.
+		 */
+		const FVector2D FieldWorldSize = FieldLocalSize * CachedAreaScale;
+
+		PaintFieldMID->SetVectorParameterValue(
+			TEXT("FieldWorldSize"), FLinearColor(FieldWorldSize.X, FieldWorldSize.Y, 0.f, 0.f));
+
+		// 흔드는 폭을 칸 크기에 비례해 넣는다. 격자 해상도가 다른 존들이 같은 설정으로 비슷하게 보인다.
+		const float AverageCellSize = (CachedCellWorldSize.X + CachedCellWorldSize.Y) * 0.5f;
+		PaintFieldMID->SetScalarParameterValue(TEXT("WarpAmountCm"), AverageCellSize * PaintFieldWarpCells);
+
+		/**
+		 * MID 가 방금 새로 만들어졌을 수 있다. 완료 상태는 파라미터에만 남으므로 여기서 다시 얹는다.
+		 *
+		 * 리플리케이트된 GetProgress() 가 아니라 칸에서 직접 센다. 여기는 격자를 새로 잡는
+		 * 자리라 진행도가 아직 그 격자를 반영하지 못한 값이다. 에디터에는 BeginPlay 가 없어서
+		 * 진행도가 늘 0 이고, 그래서 bStartFilled 로 채워 둔 존이 뷰포트에서만 솔리드로
+		 * 안 보이는 문제도 여기서 같이 사라진다.
+		 */
+		RefreshPaintFieldSolidState(CalculateProgress());
+	}
+
+	WriteAllFieldTexels();
+}
+
+void ACWWorkZone_Cells::RefreshPaintFieldSolidState(float NewProgress)
+{
+	if (PaintFieldMID == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 채우기 모드만 대상이다. 지우기 모드는 "완료 = 텅 빈 상태" 라서, 걸어두면 다 치운 순간
+	 * 격자 전체가 페인트로 덮여 도로가 통째로 하얘진다.
+	 *
+	 * IsCompleted() 를 쓰지 않는 이유: bCompleted 와 Progress 는 각각 따로 리플리케이트돼서
+	 * 클라이언트에 도착하는 순서가 갈린다. 여기서 진행도로 직접 판정해야 한 틱 어긋나지 않는다.
+	 */
+	const bool bSolid = IsFillMode() && NewProgress >= CompleteThreshold;
+
+	PaintFieldMID->SetScalarParameterValue(TEXT("SolidFill"), bSolid ? 1.f : 0.f);
+}
+
+void ACWWorkZone_Cells::RebuildFieldTexture()
+{
+	// 격자보다 가로세로 한 칸씩 크다. 이유는 헤더의 RebuildFieldTexture 주석에 있다.
+	const FIntPoint DesiredSize(FullGridSize.X + 2, FullGridSize.Y + 2);
+
+	if (PaintFieldTexture != nullptr && FieldTextureSize == DesiredSize)
+	{
+		return;
+	}
+
+	FieldTextureSize = DesiredSize;
+	FieldPixels.Init(0, FieldTextureSize.X * FieldTextureSize.Y * 4);
+
+	// 초기 데이터를 반드시 넘긴다. CreateTransient 는 밉을 Realloc 만 하고 0 으로 밀지 않아서,
+	// 안 넘기면 초기화되지 않은 메모리가 그대로 텍스처가 된다. 그 값이 임계값을 넘는 자리는
+	// 아무도 칠하지 않았는데 페인트로 그려지고, 쓰레기 값이라 실행할 때마다 달라진다.
+	PaintFieldTexture = UTexture2D::CreateTransient(
+		FieldTextureSize.X, FieldTextureSize.Y, PF_B8G8R8A8, NAME_None, FieldPixels);
+	if (PaintFieldTexture == nullptr)
+	{
+		return;
+	}
+
+	// 색이 아니라 데이터다. sRGB 를 켜면 텍셀 값이 감마로 휘어서 임계값이 어긋난다.
+	PaintFieldTexture->SRGB = false;
+
+	// 격자를 화면에서 지우는 것이 이 한 줄이다. bilinear 보간이 칸 경계를 녹여
+	// 0/1 격자를 0~1 연속 필드로 만든다. TF_Nearest 로 두면 네모가 그대로 돌아온다.
+	PaintFieldTexture->Filter = TF_Bilinear;
+
+	// 격자 밖으로 UV 가 나가도 테두리 텍셀(항상 0)이 이어진다. 반대쪽 끝이 물려 오면 안 된다.
+	PaintFieldTexture->AddressX = TA_Clamp;
+	PaintFieldTexture->AddressY = TA_Clamp;
+
+	PaintFieldTexture->NeverStream = true;
+	PaintFieldTexture->UpdateResource();
+
+	// 텍스처 객체가 바뀌었으니 머티리얼 인스턴스도 다시 물려야 한다.
+	PaintFieldMID = nullptr;
+}
+
+void ACWWorkZone_Cells::WriteAllFieldTexels()
+{
+	if (PaintFieldTexture == nullptr || CellFilled.Num() == 0)
+	{
+		return;
+	}
+
+	for (int32 CellY = 0; CellY < FullGridSize.Y; ++CellY)
+	{
+		for (int32 CellX = 0; CellX < FullGridSize.X; ++CellX)
+		{
+			WriteFieldTexel(CellX, CellY, CellFilled[GetCellIndex(CellX, CellY)]);
+		}
+	}
+
+	// 테두리 한 줄까지 통째로 올린다.
+	//
+	// 위 반복문은 칸에 해당하는 텍셀만 더티로 잡는다. 테두리는 칸이 아니라서 빠지는데,
+	// 그러면 그 줄만 영영 업로드되지 않는다. FieldPixels 는 0 으로 채워 두므로
+	// 여기서 전체를 올려야 테두리도 "안 칠한 곳" 으로 확정된다.
+	bFieldDirty = true;
+	FieldDirtyRect = FIntRect(0, 0, FieldTextureSize.X, FieldTextureSize.Y);
+
+	FlushFieldTextureUpdates();
+}
+
+void ACWWorkZone_Cells::WriteFieldTexel(int32 CellX, int32 CellY, bool bFilled)
+{
+	// 텍셀 좌표는 칸 좌표에서 한 칸 밀린다. 0번 줄은 항상 0 으로 남는 테두리다.
+	const int32 TexelX = CellX + 1;
+	const int32 TexelY = CellY + 1;
+	const int32 ByteIndex = (TexelY * FieldTextureSize.X + TexelX) * 4;
+
+	if (!FieldPixels.IsValidIndex(ByteIndex + 3))
+	{
+		return;
+	}
+
+	// PF_B8G8R8A8 이라 메모리 순서가 B, G, R, A 다.
+	// 머티리얼(M_PaintField)은 R 을 "칠했나", G 를 "점수 영역인가" 로 읽는다.
+	FieldPixels[ByteIndex + 0] = 0;
+	FieldPixels[ByteIndex + 1] = IsCountedCell(CellX, CellY) ? 255 : 0;
+	FieldPixels[ByteIndex + 2] = bFilled ? 255 : 0;
+	FieldPixels[ByteIndex + 3] = 255;
+
+	// 바뀐 텍셀을 감싸는 사각형만 넓혀 둔다. 한 프레임에 수십 칸이 바뀌어도 업로드는 한 번이다.
+	if (!bFieldDirty)
+	{
+		bFieldDirty = true;
+		FieldDirtyRect = FIntRect(TexelX, TexelY, TexelX + 1, TexelY + 1);
+		return;
+	}
+
+	FieldDirtyRect.Min.X = FMath::Min(FieldDirtyRect.Min.X, TexelX);
+	FieldDirtyRect.Min.Y = FMath::Min(FieldDirtyRect.Min.Y, TexelY);
+	FieldDirtyRect.Max.X = FMath::Max(FieldDirtyRect.Max.X, TexelX + 1);
+	FieldDirtyRect.Max.Y = FMath::Max(FieldDirtyRect.Max.Y, TexelY + 1);
+}
+
+void ACWWorkZone_Cells::FlushFieldTextureUpdates()
+{
+	if (!bFieldDirty || PaintFieldTexture == nullptr)
+	{
+		return;
+	}
+
+	bFieldDirty = false;
+
+	const int32 RegionWidth = FieldDirtyRect.Width();
+	const int32 RegionHeight = FieldDirtyRect.Height();
+	if (RegionWidth <= 0 || RegionHeight <= 0)
+	{
+		return;
+	}
+
+	// 렌더 스레드가 이 데이터를 몇 프레임 뒤에 읽을 수 있다. FieldPixels 를 그대로 넘기면
+	// 그동안 다음 붓질이 같은 배열을 고쳐서, 올라가는 그림이 의도한 프레임과 어긋난다.
+	// 필요한 사각형만 따로 떠서 넘기고, 다 쓰면 콜백에서 해제한다.
+	const int32 RegionPitch = RegionWidth * 4;
+	uint8* RegionData = static_cast<uint8*>(FMemory::Malloc(RegionPitch * RegionHeight));
+
+	for (int32 Row = 0; Row < RegionHeight; ++Row)
+	{
+		const int32 SourceIndex = ((FieldDirtyRect.Min.Y + Row) * FieldTextureSize.X + FieldDirtyRect.Min.X) * 4;
+		FMemory::Memcpy(RegionData + Row * RegionPitch, FieldPixels.GetData() + SourceIndex, RegionPitch);
+	}
+
+	// 떠낸 데이터는 사각형 원점에서 시작하므로 Src 는 (0, 0) 이다.
+	FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(
+		FieldDirtyRect.Min.X, FieldDirtyRect.Min.Y, 0, 0, RegionWidth, RegionHeight);
+
+	PaintFieldTexture->UpdateTextureRegions(
+		0, 1, Region, RegionPitch, 4, RegionData,
+		[](uint8* CleanupData, const FUpdateTextureRegion2D* CleanupRegions)
+		{
+			FMemory::Free(CleanupData);
+			delete CleanupRegions;
+		});
 }
 
 void ACWWorkZone_Cells::RefreshProgress()
