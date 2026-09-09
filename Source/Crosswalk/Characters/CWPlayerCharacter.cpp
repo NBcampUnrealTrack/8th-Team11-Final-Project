@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "PhysicsEngine/BodyInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -366,8 +367,18 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 	// 방금 SetSimulatePhysics(true) 한 메시의 상대 트랜스폼을 계속 덮어쓰려 든다.
 	GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
 
-	// 이전 비행에서 누적된 값이 새 비행 초반에 바로 보정을 쏘게 만들면 안 된다.
-	RagdollCorrectionElapsed = 0.f;
+	// 이전 비행에서 살아남은 보간 타이머가 있으면 정리한다. 같은 이유로 필요하다.
+	GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+
+	/**
+	 * pelvis 를 키네마틱으로 바꾸는 시점은 여기가 아니다. 처음부터 키네마틱으로 굳히면
+	 * 첫 서버 동기화가 도착하기 전까지 pelvis 가 완전히 못 박혀 있고, 관절로 묶인 나머지 몸통만
+	 * 임펄스를 받아 그 자리에서 파닥거리다가 첫 값이 도착하는 순간 훅 튀어버린다("차에 낀 채
+	 * 파닥이다 펑 날아가는" 것처럼 보임). 대신 여기서는 플래그만 초기화해 두고, 실제 전환은
+	 * Multicast_SyncRagdollPosition_Implementation 에서 첫 서버 값이 도착하는 순간에 한다.
+	 * 그 전까지는 서버와 마찬가지로 pelvis 도 그냥 임펄스를 받아 자연스럽게 날아간다.
+	 */
+	bPelvisConvertedToKinematic = false;
 
 	// 무브먼트가 계속 돌면 캡슐이 캐릭터를 끌고 다니면서 물리와 서로 밀어낸다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
@@ -438,10 +449,20 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 		*GetName(), (int32)GetLocalRole(), *RecoverLocation.ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(),
 		(RecoverLocation - MeshComponent->GetSocketLocation(RagdollPivotBone)).Size());
 
-	// 캡슐을 옮기기 전, 메시가 지금 화면에 보이던 월드 위치를 떠 둔다.
-	// 서버·클라 물리가 크게 벌어졌을 때 곧장 스냅하면 순간이동한 것처럼 튀어서,
-	// 이 값에서부터 TickRecoverBlend 로 기본 포즈까지 짧게 이어붙인다.
-	const FTransform PreCorrectionMeshWorldTransform = MeshComponent->GetComponentTransform();
+	/**
+	 * [진짜 원인] 캡슐을 옮기기 전, "지금 화면에 실제로 보이던" pelvis 의 월드 위치를 떠 둔다.
+	 *
+	 * 예전에는 여기서 MeshComponent->GetComponentTransform() (메시 컴포넌트 자체 트랜스폼)을
+	 * 썼는데, 이게 틀렸다 — pelvis 를 키네마틱으로 뺀 뒤로는 물리가 컴포넌트 자체
+	 * 트랜스폼을 갱신해 주는 경로(SyncComponentToRBPhysics, "루트 바디가 시뮬레이션 중일 때만"
+	 * 동작)를 안 타서, 컴포넌트 트랜스폼은 래그돌 내내 캡슐(=피격 시작 지점) 근처에 멈춰 있었다.
+	 * 화면에 실제로 렌더되는 pelvis 위치는 bBlendPhysics/bUpdateMeshWhenKinematic 덕에 정확했지만,
+	 * 그 값은 컴포넌트 트랜스폼이 아니라 GetSocketLocation으로만 읽을 수 있다. 그래서 여기서
+	 * 컴포넌트 트랜스폼 기준으로 이어붙이기 시작값을 계산하면, "피격 시작 지점 → 기상 지점" 이라는
+	 * 원래 비행 거리 전체를 오차로 잘못 인식해서, 기상 순간 그 구간 전체를 다시 날아오는 것처럼
+	 * 보였다. pelvis 소켓의 실측 위치를 쓰면 이 문제를 피한다.
+	 */
+	const FVector PreCorrectionPelvisWorldLocation = MeshComponent->GetSocketLocation(RagdollPivotBone);
 
 	/**
 	 * 쓰러진 포즈를 물리를 끄기 전에 떠 둔다. 끄고 나면 이미 애니메이션 포즈로 돌아가 있다.
@@ -464,6 +485,9 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 		);
 	}
 
+	// pelvis 이어붙이기가 아직 돌고 있었다면 멈춘다. 이제부터는 TickRecoverBlend 가 담당한다.
+	GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+
 	/**
 	 * 물리를 확실히 내린다.
 	 *
@@ -475,7 +499,11 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	MeshComponent->SetAllBodiesSimulatePhysics(false);
 	MeshComponent->PutAllRigidBodiesToSleep();
 	MeshComponent->bBlendPhysics = false;
+	MeshComponent->bUpdateMeshWhenKinematic = false;
 	MeshComponent->SetCollisionProfileName(DefaultMeshCollisionProfile);
+
+	// StartRagdoll에서 pelvis를 키네마틱으로 뺄 때 건드린 값을 원래 기본값으로 되돌린다.
+	MeshComponent->KinematicBonesUpdateType = EKinematicBonesUpdateToPhysics::SkipSimulatingBones;
 
 	// 캡슐을 먼저 세우고 메시를 되돌린다. 순서가 바뀌면 메시가 한 프레임 원점에 찍힌다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
@@ -483,36 +511,38 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	SetActorRotation(FRotator(0.f, RecoverYaw, 0.f), ETeleportType::TeleportPhysics);
 
 	MeshComponent->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 
 	/**
-	 * 래그돌 동안 캡슐은 제자리에 있고 메시만 월드에서 굴러다닌다. 그래서 메시의 상대
-	 * 트랜스폼에는 물리가 만든 큰 오프셋이 남아 있고, 여기서 원래 값으로 되돌려야 한다.
+	 * [주의] 여기서 GetSocketLocation(RagdollPivotBone)으로 "지금 이 자세로 서면 pelvis가 어디
+	 * 오는지"를 다시 읽으면 절대 안 된다 — 캐시된 ComponentSpaceTransforms는 순수한 포즈 값이
+	 * 아니라, 물리로 구동되던 본의 경우 "실제 월드 위치 × 그 당시(옛) 컴포넌트 트랜스폼의 역"
+	 * 형태로 오염돼 있다. 방금 캡슐을 옮겨 컴포넌트 트랜스폼이 바뀐 지금 그 오염된 캐시값을
+	 * 다시 얹으면, 피격 시작 지점↔기상 지점 사이의 거리가 오차 계산에 다시 반영돼서 되레
+	 * 원래 비행 거리 규모로 부풀어버린다("이상한 곳에서 확 끌려오는" 증상의 원인이었다).
 	 *
-	 * Teleport 플래그를 주지 않으면 이 이동이 반영되지 않는다. 그러면 캡슐만 기상 위치로
-	 * 가고 메시는 엉뚱한 오프셋을 유지해서, 화면에서는 캐릭터가 사라진 것처럼 보인다.
-	 *
-	 * 다만 기본 포즈로 곧장 스냅하지는 않는다. 방금 캡슐을 옮기기 전 메시가 있던 자리를
-	 * 새 캡슐 기준 상대 트랜스폼으로 환산해 먼저 넣고, TickRecoverBlend 가 그 값에서
-	 * DefaultMeshRelativeTransform 까지 짧게 이어붙인다. 오차가 클수록 이 처리가 효과를 낸다.
+	 * 대신 물리를 끄기 전에 이미 확보해 둔, 검증된 두 월드 좌표값만 쓴다: 래그돌 종료 직전
+	 * 실제 pelvis 위치(PreCorrectionPelvisWorldLocation)와 서버가 준 목표 위치(RecoverLocation).
+	 * 이 둘의 차이는 실측상 대체로 수십 cm(주로 pelvis 높이 차이)에 불과하다.
 	 */
-	RecoverBlendFromRelativeTransform = PreCorrectionMeshWorldTransform.GetRelativeTransform(GetCapsuleComponent()->GetComponentTransform());
+	RecoverBlendWorldOffset = PreCorrectionPelvisWorldLocation - RecoverLocation;
 
 	/**
 	 * 이어붙일 실제 거리(=오차)에 맞춰 이어붙이는 시간을 늘린다.
 	 *
-	 * 비행 중 임펄스 보정([RagdollSync] 3번 로그)이 물리 발산을 다 못 따라잡고 남은 오차가
+	 * 비행 중 위치 동기화([RagdollSync] 3번 로그)가 물리 발산을 다 못 따라잡고 남은 오차가
 	 * StopRagdoll 시점까지 그대로 남을 수 있다는 게 로그로 확인됐다. 오차가 1m 넘게 남아도
 	 * 고정된 짧은 시간에 억지로 이어붙이면 그 자체가 순간이동처럼 보인다. 오차가 클수록
 	 * 더 천천히 미끄러지듯 이어붙여서, 눈에는 "늦게 따라잡는" 것처럼 보이게 한다.
 	 */
-	const float RecoverBlendDistance = (RecoverBlendFromRelativeTransform.GetLocation() - DefaultMeshRelativeTransform.GetLocation()).Size();
+	const float RecoverBlendDistance = RecoverBlendWorldOffset.Size();
 	RecoverBlendActiveDuration = RecoverBlendDuration > 0.f
 		? FMath::Clamp(RecoverBlendDistance / RecoverBlendSpeed, RecoverBlendDuration, RecoverBlendMaxDuration)
 		: 0.f;
 
 	if (RecoverBlendActiveDuration > 0.f)
 	{
-		MeshComponent->SetRelativeTransform(RecoverBlendFromRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+		MeshComponent->AddWorldOffset(RecoverBlendWorldOffset, false, nullptr, ETeleportType::TeleportPhysics);
 
 		RecoverBlendElapsed = 0.f;
 		GetWorldTimerManager().SetTimer(
@@ -525,7 +555,6 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	}
 	else
 	{
-		MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 		VerifyRecoverAlignment();
 	}
 
@@ -561,13 +590,15 @@ void ACWPlayerCharacter::TickRecoverBlend()
 
 	const float Alpha = FMath::Clamp(RecoverBlendElapsed / RecoverBlendActiveDuration, 0.f, 1.f);
 
-	const FTransform Blended(
-		FQuat::Slerp(RecoverBlendFromRelativeTransform.GetRotation(), DefaultMeshRelativeTransform.GetRotation(), Alpha),
-		FMath::Lerp(RecoverBlendFromRelativeTransform.GetLocation(), DefaultMeshRelativeTransform.GetLocation(), Alpha),
-		FMath::Lerp(RecoverBlendFromRelativeTransform.GetScale3D(), DefaultMeshRelativeTransform.GetScale3D(), Alpha)
-	);
+	/**
+	 * 매 틱 "기본 포즈"로 다시 세팅한 뒤 남은 오프셋만큼 월드 오프셋을 얹는다 — 상대 트랜스폼을
+	 * 누적으로 계속 보간하지 않고 매번 절대값으로 다시 계산해서, 중간에 오차가 쌓이지 않는다.
+	 */
+	const FVector RemainingOffset = FMath::Lerp(RecoverBlendWorldOffset, FVector::ZeroVector, Alpha);
 
-	GetMesh()->SetRelativeTransform(Blended, false, nullptr, ETeleportType::TeleportPhysics);
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	MeshComponent->AddWorldOffset(RemainingOffset, false, nullptr, ETeleportType::TeleportPhysics);
 
 	if (Alpha >= 1.f)
 	{
@@ -629,18 +660,11 @@ void ACWPlayerCharacter::CheckRagdollRest()
 	}
 
 	/**
-	 * 날아가는 동안 서버가 확인한 위치를 주기적으로 뿌린다.
-	 *
-	 * 시작점을 맞춰도(Multicast_StartRagdoll) 물리 시뮬레이션은 각 머신에서 따로 돌아
-	 * 시간이 지날수록 벌어진다. 이 틱에 얹어서 RagdollCorrectionInterval마다 한 번씩만
-	 * 내보낸다 — 별도 타이머를 새로 만들지 않는다.
+	 * 날아가는 동안 서버가 시뮬레이션한 pelvis 트랜스폼을 이 틱마다 그대로 뿌린다.
+	 * 클라는 pelvis 가 키네마틱이라 이 값을 그대로 목표로 삼는다(발산 없음) — 그래서 이전처럼
+	 * 별도 주기로 누적할 필요 없이 RagdollRestCheckInterval(20Hz)마다 바로 내보낸다.
 	 */
-	RagdollCorrectionElapsed += RagdollRestCheckInterval;
-	if (RagdollCorrectionElapsed >= RagdollCorrectionInterval)
-	{
-		RagdollCorrectionElapsed = 0.f;
-		Multicast_SyncRagdollPosition(GetMesh()->GetSocketLocation(RagdollPivotBone));
-	}
+	Multicast_SyncRagdollPosition(GetMesh()->GetSocketLocation(RagdollPivotBone), GetMesh()->GetSocketRotation(RagdollPivotBone));
 
 	const float PivotSpeed = GetMesh()->GetPhysicsLinearVelocity(RagdollPivotBone).Size();
 	if (PivotSpeed > RagdollRestSpeed)
@@ -654,10 +678,16 @@ void ACWPlayerCharacter::CheckRagdollRest()
 	HitReactionComponent->NotifyLanded();
 }
 
-void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_NetQuantize ServerPelvisLocation)
+void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_NetQuantize ServerPelvisLocation, FRotator ServerPelvisRotation)
 {
 	// 아직 안 날고 있거나 이미 복귀했으면 늦게 도착한 보정이다. 무시한다.
 	if (!bRagdollActive)
+	{
+		return;
+	}
+
+	// 서버 자신이 이 값의 출처다. 되돌려 적용할 이유가 없다.
+	if (HasAuthority())
 	{
 		return;
 	}
@@ -668,22 +698,105 @@ void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_Ne
 		return;
 	}
 
-	const FVector Delta = FVector(ServerPelvisLocation) - MeshComponent->GetSocketLocation(RagdollPivotBone);
-
-	// [진단로그 3/4] 시간이 지나며 서버-내 pelvis 오차가 벌어지는지/줄어드는지 추세를 본다.
-	// 임계값(15cm) 미달로 보정을 건너뛰는 경우도 포함해서 매번 찍는다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 3.비행중보정 Role=%d 서버pelvis=%s 내pelvis=%s Delta크기=%.1f"),
-		*GetName(), (int32)GetLocalRole(), *FVector(ServerPelvisLocation).ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(), Delta.Size());
-
-	// 오차가 작으면 그냥 둔다. 매번 미세하게 당기면 가만히 있어야 할 때도 떨리는 것처럼 보인다.
-	if (Delta.SizeSquared() < FMath::Square(RagdollCorrectionMinDistance))
+	FBodyInstance* PelvisBody = MeshComponent->GetBodyInstance(RagdollPivotBone);
+	if (PelvisBody == nullptr)
 	{
 		return;
 	}
 
-	// 순간이동시키지 않는다. 서버 위치 쪽으로 당기는 임펄스만 살짝 얹어서, 물리 시뮬레이션이
-	// 스스로 그 방향으로 흘러가게 한다. bVelChange 를 켜서 질량과 무관하게 같은 세기로 당긴다.
-	MeshComponent->AddImpulse(Delta * RagdollCorrectionStrength, RagdollPivotBone, true);
+	/**
+	 * pelvis를 키네마틱으로 바꾸는 시점을 여기, "첫 서버 값이 실제로 도착한 순간"으로
+	 * 미룬다(StartRagdoll 참고). 그 전까지는 pelvis도 서버처럼 자연스럽게 임펄스를 받아 날아가고
+	 * 있었으므로, 여기서 처음 키네마틱으로 전환하면서 서버 값에 맞추는 보정은 작다 — StartRagdoll
+	 * 에서부터 못 박아 두던 이전 방식과 달리 "차에 낀 채 파닥이다 펑 날아가는" 현상이 없다.
+	 */
+	if (!bPelvisConvertedToKinematic)
+	{
+		PelvisBody->SetInstanceSimulatePhysics(false);
+
+		/**
+		 * [원인 확정] 물리 시뮬레이션 중이 아닌 바디는 PhysicsBlendWeight 가 0 이라, 매 틱
+		 * 물리→렌더 동기화(PerformBlendPhysicsBones)가 그 본을 그냥 건너뛴다. bUpdateMeshWhenKinematic
+		 * 게이트를 먼저 열어야 bBlendPhysics 가 의미를 가진다 (PhysAnim.cpp PerformBlendPhysicsBones
+		 * 의 `if (bIsSimulatingPhysics || bDriveMeshWhenKinematic || !bUnitScaledRootBone)` 조건 참고).
+		 * bBlendPhysics 는 "시뮬레이션 중이든 아니든 물리 바디 값을 그대로 쓴다"로 강제한다.
+		 */
+		MeshComponent->bUpdateMeshWhenKinematic = true;
+		MeshComponent->bBlendPhysics = true;
+
+		/**
+		 * KinematicBonesUpdateType 기본값(SkipSimulatingBones)은 "시뮬레이션 안 하는 본은
+		 * 애니메이션 포즈로 매 틱 덮어쓴다"는 뜻이다. pelvis를 키네마틱으로 뺀 이상 이 설정이
+		 * 그대로면 AnimBP가 매 틱 pelvis를 정지 포즈로 되돌려 이 함수가 세팅한 값을 지워버린다.
+		 * SkipAllBones로 바꿔서 어떤 본도 애니메이션이 건드리지 못하게 막는다.
+		 */
+		MeshComponent->KinematicBonesUpdateType = EKinematicBonesUpdateToPhysics::SkipAllBones;
+
+		bPelvisConvertedToKinematic = true;
+
+		UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 2.5.pelvis키네마틱화(첫동기화시점) Role=%d 적용후시뮬레이션중=%s"),
+			*GetName(), (int32)GetLocalRole(), PelvisBody->bSimulatePhysics ? TEXT("true(실패)") : TEXT("false(성공)"));
+	}
+
+	// [진단로그 3/4] 서버-내 pelvis 오차 추세를 본다.
+	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 3.비행중동기화 Role=%d 서버pelvis=%s 내pelvis=%s"),
+		*GetName(), (int32)GetLocalRole(), *FVector(ServerPelvisLocation).ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString());
+
+	/**
+	 * [드르륵 현상 수정] 여기서 바로 SetBodyTransform으로 스냅하지 않는다. 그렇게 하면 다음
+	 * 서버 값이 올 때까지(RagdollRestCheckInterval, 50ms) pelvis 가 완전히 멈춰 있다가 한 번에
+	 * 튀는 걸 반복해서, 빠르게 날아가는 구간일수록 계단식으로 끊기는 느낌이 난다.
+	 *
+	 * 대신 "지금 pelvis가 있는 자리"를 시작점으로, 방금 받은 서버 값을 목표점으로 잡아두고,
+	 * TickPelvisInterp 가 짧은 주기(PelvisInterpTickInterval)로 그 사이를 매끄럽게 이어붙인다.
+	 * 서버 값 자체는 여전히 유일한 목표이므로 발산이 누적되지는 않는다 — 그 값에 도달하는
+	 * 방식만 한 번에 스냅에서 짧은 보간으로 바뀐 것이다.
+	 */
+	PelvisInterpStartLocation = PelvisBody->GetUnrealWorldTransform().GetLocation();
+	PelvisInterpStartRotation = PelvisBody->GetUnrealWorldTransform().GetRotation().Rotator();
+	PelvisInterpTargetLocation = ServerPelvisLocation;
+	PelvisInterpTargetRotation = ServerPelvisRotation;
+	PelvisInterpElapsed = 0.f;
+
+	GetWorldTimerManager().SetTimer(
+		PelvisInterpTimerHandle,
+		this,
+		&ACWPlayerCharacter::TickPelvisInterp,
+		PelvisInterpTickInterval,
+		true
+	);
+}
+
+void ACWPlayerCharacter::TickPelvisInterp()
+{
+	if (!bRagdollActive || HasAuthority())
+	{
+		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	FBodyInstance* PelvisBody = MeshComponent != nullptr ? MeshComponent->GetBodyInstance(RagdollPivotBone) : nullptr;
+	if (PelvisBody == nullptr)
+	{
+		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+		return;
+	}
+
+	PelvisInterpElapsed += PelvisInterpTickInterval;
+	const float Alpha = FMath::Clamp(PelvisInterpElapsed / RagdollRestCheckInterval, 0.f, 1.f);
+
+	const FVector InterpLocation = FMath::Lerp(PelvisInterpStartLocation, PelvisInterpTargetLocation, Alpha);
+	const FQuat InterpRotation = FQuat::Slerp(PelvisInterpStartRotation.Quaternion(), PelvisInterpTargetRotation.Quaternion(), Alpha);
+
+	// ETeleportType::None 을 유지해야 관절로 묶인 나머지 바디가 이 짧은 이동에서 나온 속도를
+	// 그대로 이어받아 자연스럽게 끌려온다 (위 Multicast_SyncRagdollPosition_Implementation 참고).
+	PelvisBody->SetBodyTransform(FTransform(InterpRotation, InterpLocation), ETeleportType::None);
+
+	if (Alpha >= 1.f)
+	{
+		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+	}
 }
 
 FVector ACWPlayerCharacter::ResolveRecoverLocation() const

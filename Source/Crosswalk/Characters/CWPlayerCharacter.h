@@ -147,12 +147,15 @@ protected:
 	void Multicast_StartRagdoll(FVector_NetQuantize LaunchVelocity, FVector_NetQuantize ServerActorLocation);
 
 	/**
-	 * 날아가는 도중 서버가 확인한 pelvis 위치를 주기적으로 뿌린다. 위치를 순간이동시키지 않고
-	 * 그 방향으로 살짝 임펄스만 얹어서, 시작점은 같아도 물리 시뮬레이션이 시간이 지나며
-	 * 벌어지는 것을 완화한다 (CheckRagdollRest 참고). 몇 번 빠져도 다음 것이 이어받으므로 Unreliable.
+	 * 날아가는 동안 서버가 시뮬레이션한 pelvis 트랜스폼을 주기적으로 뿌린다.
+	 *
+	 * 클라이언트는 pelvis 본만 물리 시뮬레이션에서 빼고(키네마틱) 이 값을 그대로 목표로 삼는다.
+	 * 물리 애셋의 pelvis 관절을 통해 이 키네마틱 pelvis 를 따라가며 나머지 몸통이 계속 로컬로
+	 * 시뮬레이션된다. 서버 값 자체가 목표라 발산이 누적되지 않는다. 몇 번 빠져도 다음 것이
+	 * 이어받으므로 Unreliable.
 	 */
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_SyncRagdollPosition(FVector_NetQuantize ServerPelvisLocation);
+	void Multicast_SyncRagdollPosition(FVector_NetQuantize ServerPelvisLocation, FRotator ServerPelvisRotation);
 
 	/**
 	 * 래그돌을 풀고 기상 모션을 재생한다. 일어설 자리와 방향은 서버가 정해 넘긴다.
@@ -315,6 +318,19 @@ private:
 	 * 그래서 착지 통보를 이쪽에서 대신 한다. 몸이 멎어야 일어나기 시작하는 게 자연스럽다.
 	 */
 	void CheckRagdollRest();
+
+	/**
+	 * [클라 전용] 키네마틱 pelvis 를 마지막 서버 값에서 최신 서버 값까지 매 틱 조금씩 이어붙인다.
+	 *
+	 * Multicast_SyncRagdollPosition 은 RagdollRestCheckInterval(20Hz)마다만 온다. 그 값을 받을
+	 * 때마다 SetBodyTransform 으로 즉시 스냅하면, 그 사이 pelvis 가 완전히 멈춰 있다가 한 번에
+	 * 튀는 걸 반복해서 빠르게 날아가는 구간일수록 계단식으로 끊기는 느낌이 난다. 대신 새 서버
+	 * 값이 오면 그 순간 pelvis 위치를 시작점으로 잡아두고, 다음 서버 값이 올 때까지 이 함수가
+	 * 짧은 주기(PelvisInterpTickInterval)로 그 사이를 매끄럽게 이어붙인다 — 매번
+	 * SetBodyTransform(..., ETeleportType::None) 을 쓰므로, 관절로 묶인 나머지 몸통도 급격한
+	 * 속도 변화 없이 자연스럽게 끌려온다.
+	 */
+	void TickPelvisInterp();
 
 	/**
 	 * 기상이 끝난 뒤 메시와 카메라 붐이 제자리에 있는지 확인하고, 벗어나면 경고를 남긴다.
@@ -503,9 +519,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RagdollRestSpeed = 60.f;
 
-	/** 멈췄는지 확인하는 주기(초). */
+	/**
+	 * 멈췄는지 확인하는 주기(초). 이 주기가 곧 pelvis 키네마틱 동기화 전송 주기이기도
+	 * 하다 (CheckRagdollRest 참고) — 그래서 기존 0.1(10Hz)보다 촘촘한 0.05(20Hz)로 낮췄다.
+	 * 더 촘촘하게 멈춤을 확인하는 것 자체는 부작용이 없다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
-	float RagdollRestCheckInterval = 0.1f;
+	float RagdollRestCheckInterval = 0.05f;
 
 	/**
 	 * 확인을 시작하기까지 두는 시간(초).
@@ -515,22 +535,11 @@ protected:
 	float RagdollRestCheckDelay = 0.4f;
 
 	/**
-	 * 날아가는 도중 위치 보정을 몇 초마다 뿌릴지. RagdollRestCheckInterval 배수로 맞춰지므로
-	 * 이보다 짧게 잡아도 실제로는 그 주기로만 나간다.
+	 * [클라 전용] TickPelvisInterp 가 pelvis 를 이어붙이는 주기(초). RagdollRestCheckInterval
+	 * 보다 확실히 짧아야 그 사이를 여러 걸음으로 나눠 매끄럽게 이어붙일 수 있다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RagdollCorrectionInterval = 0.1f;
-
-	/** 이 거리(cm)보다 오차가 작으면 보정을 건너뛴다. 매번 미세하게 당기면 떨리는 것처럼 보인다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RagdollCorrectionMinDistance = 15.f;
-
-	/**
-	 * 오차를 임펄스로 환산하는 배율. 값이 클수록 세게 당겨온다.
-	 * 실측 튜닝이 필요한 값이다 — 너무 크면 홱 당겨져 부자연스럽고, 너무 작으면 효과가 없다.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float RagdollCorrectionStrength = 1.2f;
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.005"))
+	float PelvisInterpTickInterval = 0.01f;
 
 	/**
 	 * 복귀 순간이동 후, 메시를 기본 포즈까지 이어붙이는 최소 시간(초). 0이면 즉시 스냅한다.
@@ -743,16 +752,38 @@ private:
 
 	FTimerHandle RagdollRestTimerHandle;
 
-	// CheckRagdollRest 틱(RagdollRestCheckInterval)을 누적해서 RagdollCorrectionInterval마다
-	// 위치 보정을 내보낸다. 서버에서만 의미가 있다.
-	float RagdollCorrectionElapsed = 0.f;
+	/**
+	 * 클라이언트에서 pelvis 를 키네마틱으로 바꿨는지 여부. StartRagdoll 시점엔 아직 바꾸지
+	 * 않는다 — 처음부터 키네마틱으로 굳히면 첫 서버 동기화(RagdollRestCheckInterval, 20Hz)가
+	 * 도착하기 전까지 pelvis 가 완전히 못 박혀 있고, 관절로 묶인 나머지 몸통만 임펄스를 받아
+	 * 그 자리에서 파닥거리다가 첫 값이 오는 순간 훅 튀는 "차에 낀 채 파닥이다 펑 날아가는" 것처럼
+	 * 보이는 문제가 있었다. 대신 pelvis도 서버와 똑같이 임펄스를 받아 자연스럽게 날아가다가,
+	 * Multicast_SyncRagdollPosition 으로 첫 서버 값이 도착하는 그 순간에만 키네마틱으로 전환한다.
+	 */
+	bool bPelvisConvertedToKinematic = false;
+
+	// TickPelvisInterp 가 매 틱 이어붙이는 구간의 시작/목표 값. 서버 값이 새로 올 때마다 갱신된다.
+	FVector PelvisInterpStartLocation = FVector::ZeroVector;
+	FRotator PelvisInterpStartRotation = FRotator::ZeroRotator;
+	FVector PelvisInterpTargetLocation = FVector::ZeroVector;
+	FRotator PelvisInterpTargetRotation = FRotator::ZeroRotator;
+	float PelvisInterpElapsed = 0.f;
+
+	FTimerHandle PelvisInterpTimerHandle;
 
 	FTimerHandle GetUpTimerHandle;
 
 	FTimerHandle RagdollPoseBlendTimerHandle;
 
-	// 복귀 이어붙이기 진행 상태. 캡슐 기준 상대 트랜스폼으로 들고 있는다 (TickRecoverBlend 참고).
-	FTransform RecoverBlendFromRelativeTransform;
+	/**
+	 * 복귀 이어붙이기 진행 상태. 기본 포즈 위치에 더해지는 월드 오프셋(pelvis 기준 실측 오차)으로
+	 * 들고 있는다 (TickRecoverBlend 참고). 예전에는 메시의 상대 트랜스폼 자체를 이어붙였는데,
+	 * 그 시작값을 MeshComponent->GetComponentTransform()으로 구했었다 — 이게 문제였다:
+	 * pelvis 를 키네마틱으로 뺀 뒤로는 컴포넌트 자체 트랜스폼이 물리를 안 따라가고 피격 시작
+	 * 지점 근처에 멈춰 있어서, 기상 시 "피격 시작 지점에서 다시 날아오는" 것처럼 보였다.
+	 * 지금은 pelvis 소켓의 실측 월드 위치로 오차를 구해서 그 문제를 피한다.
+	 */
+	FVector RecoverBlendWorldOffset = FVector::ZeroVector;
 
 	float RecoverBlendElapsed = 0.f;
 
