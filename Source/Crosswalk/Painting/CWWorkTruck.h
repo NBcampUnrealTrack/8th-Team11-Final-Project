@@ -34,8 +34,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnStoredToolsChangedSignature, A
  *   같은 도구를 두 명이 집는 경합은 ACWBaseTool::TryPickUp 이 서버에서 이미 막는다.
  *
  * 보관 중인 도구의 상태
- *   숨기고 콜리전을 내린다. 콜리전을 내려야 트렁크 옆에 선 플레이어가 홀더의 근처 탐색으로
- *   보관 중인 도구를 바로 집어가는 일이 없다. 꺼내는 경로를 이 액터 하나로 묶어둔다.
+ *   ACWBaseTool::SetStored 로 "트렁크에 있다" 를 켜 준다. 도구는 그 값을 복제하면서 자기를 숨기고,
+ *   집기와 충전 대상에서 스스로 빠진다. 꺼내는 경로가 이 액터 하나로 묶이는 것은 그 덕분이다.
+ *   콜리전은 내리지 않는다. 이유는 ACWBaseTool 의 bStored 주석에 적어 두었다.
  *
  * 네트워크
  *   꺼내기/반납 판정은 전부 서버에서 한다. 클라이언트는 캐릭터의 상호작용 RPC 를 거쳐 들어온다.
@@ -61,6 +62,14 @@ public:
 
 	/** 반납할 도구가 있거나 꺼낼 도구가 남아 있을 때만 상호작용 대상이 된다. */
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
+
+	/**
+	 * 거리 판정은 트렁크 문 기준이다.
+	 *
+	 * 차가 길어서 원점으로 재면 트렁크 앞에 서 있어도 3~4 m 로 나온다. 그러면 캐릭터가
+	 * "가장 가까운 대상" 을 고를 때 발밑의 도구에 밀려 차량이 선택되지 않는다.
+	 */
+	virtual FVector GetInteractionLocation_Implementation() const override;
 
 	/**
 	 * 도구를 트렁크에 넣는다. 서버에서만 유효하다.
@@ -113,7 +122,7 @@ private:
 	/** 레벨에 놓인 도구를 전부 트렁크에 넣고, ToolClasses 에 적힌 도구를 추가로 만든다. 서버에서만. */
 	void CollectStageTools();
 
-	/** 보관 중인 도구의 표시 상태를 맞춘다. 숨기고 콜리전을 내린다. */
+	/** 도구에 보관 상태를 알린다. 숨김과 집기 차단은 도구가 알아서 한다. */
 	static void ApplyStoredState(ACWBaseTool* Tool, bool bStored);
 
 	/** 꺼내기 공통 처리. 도구를 트렁크 앞에 꺼내 놓고 홀더에 넘긴다. */

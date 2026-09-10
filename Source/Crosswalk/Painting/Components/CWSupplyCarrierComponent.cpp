@@ -352,6 +352,14 @@ bool UCWSupplyCarrierComponent::CanChargeTool(const ACWBaseTool* Tool) const
 		return false;
 	}
 
+	// 트렁크에 보관 중인 도구는 충전 대상이 아니다. 콜리전이 살아 있어 차량 옆에서는
+	// 오버랩에 잡힌다. 보급은 작업 중인 사람에게 하는 것이고, 안 보이는 도구가 조용히
+	// 통을 먹으면 왜 통이 사라졌는지 알 수가 없다.
+	if (Tool->IsStored())
+	{
+		return false;
+	}
+
 	// 내가 든 도구는 대상이 아니다. 통을 들고 있으면 도구를 들 수 없어 실제로는 생기지 않는 경우지만,
 	// 규칙이 바뀌었을 때 조용히 자기 충전이 열리는 것을 막아 둔다. (기획서 6-6)
 	return Tool->GetHolder() != Cast<APawn>(GetOwner());

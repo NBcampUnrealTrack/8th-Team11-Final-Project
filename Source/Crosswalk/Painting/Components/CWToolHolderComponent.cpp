@@ -221,8 +221,11 @@ ACWBaseTool* UCWToolHolderComponent::FindNearestPickableTool() const
 
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
+		// 트렁크에 보관 중인 도구는 제외한다. 콜리전이 살아 있어 오버랩에는 잡히지만,
+		// 꺼내는 경로는 작업차량 하나여야 한다. 이걸 빼면 트렁크 안 도구가 프롬프트에 뜨고,
+		// 집으면 숨김이 풀리지 않은 채 손에 붙는다. (ACWBaseTool 의 bStored 주석 참고)
 		ACWBaseTool* Tool = Cast<ACWBaseTool>(Overlap.GetActor());
-		if (Tool == nullptr || Tool->IsHeld())
+		if (Tool == nullptr || Tool->IsHeld() || Tool->IsStored())
 		{
 			continue;
 		}
