@@ -31,6 +31,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "SocketSubsystemSteamIP",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelContextProtocol",
 			"Enabled": true
 		},
