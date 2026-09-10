@@ -1583,7 +1583,11 @@ AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) c
 			continue;
 		}
 
-		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), OverlapActor->GetActorLocation());
+		// 거리는 대상이 알려주는 기준점으로 잰다. 작업차량처럼 원점이 다가서는 지점과
+		// 멀리 떨어진 대상이 있어서, 원점으로 재면 트렁크 앞에 서 있는데도 멀다고 나온다.
+		const FVector InteractionLocation = IInterface_Interactable::Execute_GetInteractionLocation(OverlapActor);
+
+		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), InteractionLocation);
 		if (DistanceSquared >= OutDistanceSquared)
 		{
 			continue;

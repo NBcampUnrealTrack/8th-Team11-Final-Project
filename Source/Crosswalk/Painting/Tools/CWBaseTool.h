@@ -77,6 +77,18 @@ public:
 	void SetFocused(bool bNewFocused);
 
 	/**
+	 * 작업차량 트렁크에 넣거나 꺼낸다. 서버에서만 유효하다. ACWWorkTruck 만 부른다.
+	 *
+	 * 보관 중이라는 사실 자체를 복제한다. 예전에는 숨김과 콜리전 해제라는 부작용으로만
+	 * 표현했는데, 그러면 클라이언트가 보관 상태를 알 방법이 없었다. (하단 bStored 주석 참고)
+	 */
+	void SetStored(bool bNewStored);
+
+	/** 지금 트렁크에 들어가 있는가. 보관 중인 도구는 집을 수도 충전할 수도 없다. */
+	UFUNCTION(BlueprintPure, Category = "Tool")
+	bool IsStored() const { return bStored; }
+
+	/**
 	 * 작업한 만큼 페인트를 쓴다. (기획서 5-3)
 	 *
 	 * 서버/클라이언트를 가리지 않고 부른 기계에서 바로 깎는다. 붓질과 같은 모델이다.
@@ -152,6 +164,12 @@ private:
 	void OnRep_Holder();
 
 	UFUNCTION()
+	void OnRep_Stored();
+
+	/** 보관 상태에 맞춰 외형을 맞춘다. 모든 머신이 각자 부른다. */
+	void HandleStoredStateChanged();
+
+	UFUNCTION()
 	void OnRep_PaintAmount();
 
 	/** 값이 실제로 바뀌었을 때만 연출과 델리게이트를 돌린다. 모든 머신이 각자 부른다. */
@@ -223,6 +241,28 @@ private:
 
 	// 마지막으로 알린 잔량. 이것과 다를 때만 델리게이트가 나간다.
 	float LastBroadcastPaintAmount = -1.f;
+
+	/**
+	 * 작업차량 트렁크에 보관 중인가. (ACWWorkTruck)
+	 *
+	 * 왜 따로 복제하는가
+	 *   예전에는 트럭이 SetActorHiddenInGame 과 SetActorEnableCollision 두 개로만 표현했다.
+	 *   그런데 액터 플래그 중 복제되는 것은 bHidden 뿐이고 bActorEnableCollision 은 복제되지 않는다.
+	 *   그래서 클라이언트에서는 보관 중인 도구의 콜리전이 그대로 살아 있었고,
+	 *   UCWToolHolderComponent 의 근처 탐색에 걸려 트렁크 안의 도구가 후보로 올라왔다.
+	 *   그렇게 집힌 도구는 차량의 꺼내기 경로를 거치지 않아 숨김이 풀리지 않은 채 손에 붙는다.
+	 *   ("차량에서 도구를 꺼냈는데 메쉬가 안 보인다")
+	 *
+	 *   상태를 부작용이 아니라 값으로 두고 복제하면 모든 머신이 같은 판단을 한다.
+	 *
+	 * 콜리전을 끄지 않는 이유
+	 *   AActor::IsNetRelevantFor 는 "숨겨져 있고 콜리전도 꺼진" 액터를 무관련으로 보고
+	 *   아예 복제 대상에서 뺀다. 그러면 이 값도 bHidden 도 클라이언트에 도달하지 못한다.
+	 *   콜리전을 켜 둔 채로 이 값으로 걸러야 상태가 제대로 전파된다.
+	 *   도구의 콜리전 응답은 전부 Overlap 이라 켜 두어도 무엇을 막지 않는다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_Stored)
+	bool bStored = false;
 
 	// 하이라이트는 화면 표시용이라 클라이언트마다 따로 계산한다. 리플리케이트하지 않는다.
 	bool bFocused = false;

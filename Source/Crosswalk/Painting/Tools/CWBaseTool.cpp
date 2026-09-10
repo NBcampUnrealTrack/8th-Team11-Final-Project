@@ -38,6 +38,7 @@ void ACWBaseTool::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 
 	DOREPLIFETIME(ACWBaseTool, Holder);
 	DOREPLIFETIME(ACWBaseTool, PaintAmount);
+	DOREPLIFETIME(ACWBaseTool, bStored);
 }
 
 void ACWBaseTool::BeginPlay()
@@ -74,7 +75,8 @@ void ACWBaseTool::Interact_Implementation(APawn* InstigatorPawn)
 
 bool ACWBaseTool::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
-	return !IsHeld();
+	// 트렁크에 들어 있는 도구는 차량을 거쳐서만 나온다.
+	return !IsHeld() && !bStored;
 }
 
 bool ACWBaseTool::TryPickUp(APawn* NewHolder)
@@ -87,6 +89,14 @@ bool ACWBaseTool::TryPickUp(APawn* NewHolder)
 
 	// 1인 1개 제한은 홀더가 본다. 여기서는 "한 도구를 두 명이 동시에 집는" 경우만 막는다.
 	if (NewHolder == nullptr || IsHeld())
+	{
+		return false;
+	}
+
+	// 트렁크 안의 도구는 여기까지 오면 안 된다. 차량이 SetStored(false) 로 꺼낸 뒤에 집혀야
+	// 숨김이 풀린다. 지연이나 버그로 클라이언트가 보관 중인 도구를 요청할 수 있으므로
+	// 마지막 관문을 여기에 둔다.
+	if (bStored)
 	{
 		return false;
 	}
@@ -215,6 +225,36 @@ void ACWBaseTool::HandlePaintAmountChanged()
 
 	OnPaintAmountChanged(PaintAmount, Ratio);
 	OnPaintChanged.Broadcast(this, PaintAmount, Ratio);
+}
+
+void ACWBaseTool::SetStored(bool bNewStored)
+{
+	if (!HasAuthority() || bStored == bNewStored)
+	{
+		return;
+	}
+
+	bStored = bNewStored;
+
+	HandleStoredStateChanged();
+}
+
+void ACWBaseTool::OnRep_Stored()
+{
+	HandleStoredStateChanged();
+}
+
+void ACWBaseTool::HandleStoredStateChanged()
+{
+	// 숨기기만 하고 콜리전은 건드리지 않는다. (헤더 bStored 주석 참고)
+	SetActorHiddenInGame(bStored);
+
+	// 트렁크에 들어가는 순간 하이라이트를 끈다. 보관 중인 도구는 집을 수 없으므로
+	// 테두리가 남아 있으면 집을 수 있는 것처럼 보인다.
+	if (bStored)
+	{
+		SetFocused(false);
+	}
 }
 
 void ACWBaseTool::OnRep_Holder()

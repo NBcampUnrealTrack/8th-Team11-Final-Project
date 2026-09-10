@@ -163,6 +163,11 @@ bool ACWWorkTruck::CanInteract_Implementation(APawn* InstigatorPawn) const
 	return HolderComponent->GetHeldTool() != nullptr || StoredTools.Num() > 0;
 }
 
+FVector ACWWorkTruck::GetInteractionLocation_Implementation() const
+{
+	return GetTrunkLocation();
+}
+
 bool ACWWorkTruck::StoreTool(ACWBaseTool* Tool)
 {
 	if (!HasAuthority() || Tool == nullptr || StoredTools.Contains(Tool))
@@ -257,12 +262,16 @@ void ACWWorkTruck::ApplyStoredState(ACWBaseTool* Tool, bool bStored)
 		return;
 	}
 
-	// 숨김과 콜리전은 액터 단위 플래그라 서버에서 바꾸면 그대로 전파된다.
+	// 보관 상태는 도구가 복제 변수로 들고 있고, 숨김도 도구가 직접 맞춘다.
 	//
-	// 콜리전까지 내리는 이유: 홀더는 근처 오버랩으로 도구를 찾는다. 콜리전이 살아 있으면
-	// 트렁크 옆에 선 플레이어가 보관 중인 도구를 상호작용 없이 바로 집어간다.
-	Tool->SetActorHiddenInGame(bStored);
-	Tool->SetActorEnableCollision(!bStored);
+	// 예전에는 여기서 숨김과 콜리전을 직접 껐다. 트렁크 옆에 선 플레이어가 보관 중인 도구를
+	// 홀더의 근처 탐색으로 집어가는 것을 콜리전으로 막으려던 것인데, 두 가지가 잘못됐다.
+	//   1. bActorEnableCollision 은 복제되지 않아서 클라이언트에서는 콜리전이 그대로 살아 있었다.
+	//      즉 막으려던 경로가 정작 클라이언트에서는 열려 있었다.
+	//   2. "숨김 + 콜리전 없음" 은 AActor::IsNetRelevantFor 가 무관련으로 판정하는 조건이라
+	//      도구가 복제 대상에서 통째로 빠졌다. 그래서 숨김조차 전달되지 않았다.
+	// 지금은 콜리전을 켜 둔 채 ACWBaseTool::IsStored 로 거른다. (ACWBaseTool 의 bStored 주석 참고)
+	Tool->SetStored(bStored);
 }
 
 void ACWWorkTruck::OnRep_StoredTools()
