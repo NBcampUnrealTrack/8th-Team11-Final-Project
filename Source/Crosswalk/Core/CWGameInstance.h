@@ -169,7 +169,8 @@ protected:
 	float SessionOperationTimeout;
 
 private:
-	// 현재 DefaultPlatformService의 Identity/Session 인터페이스를 가져옴
+	// ActivePlatform에 해당하는 OnlineSubsystem 인스턴스의 Identity/Session 인터페이스를 가져옴
+	// (EOS는 기본 서브시스템, Steam은 EOS를 거치지 않는 독립된 서브시스템)
 	void CacheOnlineInterfaces();
 
 	// 로그인 화면에 표시할 상태 메시지를 갱신
@@ -230,6 +231,16 @@ private:
 
 	// 로그인 완료 콜백을 해제
 	void ClearLoginCompleteDelegate();
+
+	// IsLoggedIn()이 true라 OnLoginComplete()를 안 거치고 바로 반환하는 경로(Steam은 항상 이 경로)를 위해
+	// LoggedInDisplayName을 직접 채운다 - 안 하면 Steam 로그인은 닉네임이 계속 비어있게 된다.
+	void RefreshLoggedInDisplayName(int32 LocalUserNum);
+
+	// GameNetDriver 정의가 가리키는 실제 드라이버 클래스를 ActivePlatform에 맞게 바꿔치기한다.
+	// 호스트 Listen()과 참가자 InitNetDriver()가 둘 다 "GameNetDriver"라는 이름을 하드코딩해서 찾기
+	// 때문에(참가자 쪽은 URL 옵션으로 바꿀 방법이 아예 없음), 이름이 아니라 그 이름이 가리키는
+	// 클래스 자체를 트래블 직전에 바꿔서 양쪽 다 대응한다.
+	void ApplyNetDriverClassForActivePlatform();
 
 	// 세션 생성 완료 콜백을 등록
 	void BindCreateSessionCompleteDelegate();
@@ -317,6 +328,10 @@ private:
 
 	// 현재 진행 중인 세션 작업 종류
 	ECWSessionOperation CurrentSessionOperation;
+
+	// 마지막 로그인 시도가 사용한 플랫폼 - CacheOnlineInterfaces가 어느 OnlineSubsystem을
+	// 가져올지 이 값으로 결정한다. 로그인 함수들이 CacheOnlineInterfaces 호출 전에 세팅한다.
+	ECWOnlinePlatform ActivePlatform;
 
 	// 방 코드 중복 발생 시 재생성한 횟수
 	int32 RoomCodeGenerateAttemptCount;

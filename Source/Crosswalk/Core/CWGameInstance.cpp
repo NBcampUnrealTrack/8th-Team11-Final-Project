@@ -5,16 +5,73 @@
 
 #include "Engine/Engine.h"
 #include "Engine/NetDriver.h"
+#include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
+#include "OnlineSubsystemNames.h"
 #include "OnlineSubsystemUtils.h"
 
 namespace CrosswalkSession
 {
 	static const FName RoomCodeKey(TEXT("CW_ROOM_CODE"));
 	static const FName GameSessionName(TEXT("GameSession"));
+
+	// GameNetDriver 정의 자체(호스트 Listen()/참가자 InitNetDriver()가 하드코딩해서 찾는 이름)의
+	// 드라이버 클래스를 트래블 직전에 바꿔치기하기 위한 상수. Config/DefaultEngine.ini의
+	// NetDriverDefinitions에 등록된 실제 값과 반드시 일치해야 한다.
+	static const FName GameNetDriverDefName(TEXT("GameNetDriver"));
+	static const FName EosNetDriverClassName(TEXT("/Script/SocketSubsystemEOS.NetDriverEOSBase"));
+
+	// 평범한 IpNetDriver가 아니라 SocketSubsystemSteamIP 플러그인의 USteamNetDriver를 써야 한다 -
+	// 참가자 실기 테스트에서 확인: Steam 세션이 GetResolvedConnectString()으로 돌려주는 주소는
+	// 리터럴 IP가 아니라 "steam.<SteamID64>:<port>" 형태의 가짜 호스트명인데
+	// (OnlineSessionInterfaceSteam.cpp의 STEAM_URL_PREFIX, ConnectionMethod::P2P 경로 - 우리가
+	// 쓰는 로비 세션은 이 경로로 고정됨), 평범한 IpNetDriver는 기본 OS 소켓 서브시스템으로 이 문자열을
+	// 그대로 DNS 호스트명 취급해서 리졸브를 시도하다 실패한다(로그: "AddressResolution: Result
+	// [Host=steam.76561198413568206] [FAILED] [Error=48]" → "Connection failed; returning to
+	// Entry"). USteamNetDriver::GetSocketSubsystem()은 STEAMIP_SUBSYSTEMNAME 소켓 서브시스템을
+	// 반환하고, InitConnect()가 Host가 STEAM_URL_PREFIX로 시작하면 Steam 소켓을 직접 만들어서 그
+	// 문제를 피해간다(SteamNetDriver.cpp 확인 완료). 호스트 쪽도 Listen()이 이 소켓 서브시스템을
+	// 써야 참가자의 Steam P2P 연결을 실제로 받을 수 있어서 호스트/참가자 둘 다 이 클래스를 쓴다.
+	// Crosswalk.uproject의 Plugins 목록에 SocketSubsystemSteamIP를 활성화해둬야 이 클래스가 존재한다.
+	static const FName SteamNetDriverClassName(TEXT("/Script/SocketSubsystemSteamIP.SteamNetDriver"));
+
+	// Name= 옵션 값에 못 쓰는 문자만 제거한다 (percent-encoding 아님 - 아래 이유로 폐기).
+	// FURL은 옵션 값에 한글/공백을 있는 그대로 허용한다(URL.cpp ValidNetChar 주석: "플레이어
+	// 별명에 공백이 들어갈 수 있어 일부러 허용"). 그런데 AGameModeBase::CanServerTravel은 인코딩
+	// 여부와 무관하게 FURL 문자열에 '%'가 하나라도 있으면 통째로 거부한다 - 실기 테스트로 확인
+	// ("CanServerTravel: FURL ... Contains illegal character '%'", 에픽 로그인으로 방 생성 시
+	// 재현, 방 생성 직후 다시 메뉴로 튕기는 증상의 실제 원인이었음). 그래서 값을 인코딩하는 대신
+	// 옵션 파싱을 깨뜨리는 구분자(?, #, &, =)와 CanServerTravel이 통째로 막는 문자(%, :, \)만
+	// 제거한다 - 한글/공백/그 외 문자는 그대로 둔다.
+	static FString SanitizeNameOption(const FString& Value)
+	{
+		FString Result;
+		Result.Reserve(Value.Len());
+
+		for (int32 Index = 0; Index < Value.Len(); ++Index)
+		{
+			const TCHAR Character = Value[Index];
+
+			switch (Character)
+			{
+			case TEXT('%'):
+			case TEXT('?'):
+			case TEXT('#'):
+			case TEXT('&'):
+			case TEXT('='):
+			case TEXT(':'):
+			case TEXT('\\'):
+				continue;
+			default:
+				Result.AppendChar(Character);
+			}
+		}
+
+		return Result;
+	}
 }
 
 UCWGameInstance::UCWGameInstance()
@@ -25,6 +82,7 @@ UCWGameInstance::UCWGameInstance()
 	, SessionOperationTimeout(30.f)
 	, CurrentFindPurpose(ECWSessionFindPurpose::None)
 	, CurrentSessionOperation(ECWSessionOperation::None)
+	, ActivePlatform(ECWOnlinePlatform::EOS)
 	, RoomCodeGenerateAttemptCount(0)
 	, bSessionOperationInFlight(false)
 	, LoginCompleteDelegate(FOnLoginCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnLoginComplete))
@@ -38,6 +96,17 @@ UCWGameInstance::UCWGameInstance()
 void UCWGameInstance::Init()
 {
 	Super::Init();
+
+	// net.IpConnectionDisableResolution은 ECVF_Cheat라 프로젝트 ini([ConsoleVariables] 섹션)로는
+	// 못 켠다 - 엔진이 로드 시점에 ensure()를 던지며 무시한다(설정 자체가 적용 안 됨), 로컬 개인
+	// 파일(Engine/Config/ConsoleVariables.ini, 팀 깃에 안 들어감)에서만 허용되기 때문이다
+	// (ConfigUtilities.cpp의 OnSetCVarFromIniEntry 확인). 팀 전체에 적용되려면 ini가 아니라
+	// 코드로 직접 설정해야 한다 - USteamNetDriver가 UE5.8의 새 멀티주소 해석 시스템과 안 맞아서
+	// (ApplyNetDriverClassForActivePlatform 주석 참고) 꺼야 하는 CVar다.
+	if (IConsoleVariable* DisableResolutionCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("net.IpConnectionDisableResolution")))
+	{
+		DisableResolutionCVar->Set(1, ECVF_SetByCode);
+	}
 
 	CacheOnlineInterfaces();
 
@@ -111,6 +180,7 @@ void UCWGameInstance::HandleNetworkFailure(
 
 void UCWGameInstance::LoginWithEpic()
 {
+	ActivePlatform = ECWOnlinePlatform::EOS;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -122,6 +192,7 @@ void UCWGameInstance::LoginWithEpic()
 
 	if (IsLoggedIn())
 	{
+		RefreshLoggedInDisplayName(0);
 		SetStatus(TEXT("Already logged in"));
 		OnLoginStateChanged.Broadcast(true, LoggedInDisplayName, ECWLoginFailure::None);
 		return;
@@ -140,6 +211,10 @@ void UCWGameInstance::LoginWithEpic()
 
 void UCWGameInstance::LoginWithSteam()
 {
+	// Steam은 EOS를 거치지 않고 독립된 OnlineSubsystem으로 로그인한다 -
+	// EOS Steam Identity Provider 연동은 우리 소유 Steamworks App ID 등록이 끝나기 전까지 보류.
+	// 그래서 에픽/DevAuth 로그인 유저와는 서로 다른 방 목록을 보게 된다.
+	ActivePlatform = ECWOnlinePlatform::Steam;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -151,6 +226,10 @@ void UCWGameInstance::LoginWithSteam()
 
 	if (IsLoggedIn())
 	{
+		// 네이티브 Steam은 로그인 상태 확인이 즉시 끝나서 항상 이 분기로 들어온다 -
+		// OnLoginComplete()를 안 거치므로 여기서 직접 닉네임을 채우지 않으면 LoggedInDisplayName이
+		// 계속 비어있어 방 입장 시 PlayerState 이름이 "Player"로 고정된다.
+		RefreshLoggedInDisplayName(0);
 		SetStatus(TEXT("Already logged in"));
 		OnLoginStateChanged.Broadcast(true, LoggedInDisplayName, ECWLoginFailure::None);
 		return;
@@ -158,12 +237,13 @@ void UCWGameInstance::LoginWithSteam()
 
 	BindLoginCompleteDelegate();
 
-	SetStatus(TEXT("Steam/EOS AutoLogin requested"));
+	SetStatus(TEXT("Steam AutoLogin requested"));
 	IdentityInterface->AutoLogin(0);
 }
 
 void UCWGameInstance::LoginWithDeveloperTool(const FString& CredentialName)
 {
+	ActivePlatform = ECWOnlinePlatform::EOS;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -175,6 +255,7 @@ void UCWGameInstance::LoginWithDeveloperTool(const FString& CredentialName)
 
 	if (IsLoggedIn())
 	{
+		RefreshLoggedInDisplayName(0);
 		SetStatus(TEXT("Already logged in"));
 		OnLoginStateChanged.Broadcast(true, LoggedInDisplayName, ECWLoginFailure::None);
 		return;
@@ -378,10 +459,14 @@ void UCWGameInstance::CacheOnlineInterfaces()
 {
 	UWorld* World = GetWorld();
 
+	// ActivePlatform이 Steam이면 EOS를 거치지 않고 네이티브 Steam 서브시스템을 직접 가져온다.
+	// NAME_None을 넘기면 기존과 동일하게 DefaultPlatformService(EOS)를 가져온다.
+	const FName SubsystemName = (ActivePlatform == ECWOnlinePlatform::Steam) ? STEAM_SUBSYSTEM : NAME_None;
+
 	// 멀티 PIE에서는 World마다 별도의 OnlineSubsystem 인스턴스를 사용할 수 있음
 	IOnlineSubsystem* OnlineSubsystem = IsValid(World)
-		? Online::GetSubsystem(World)
-		: IOnlineSubsystem::Get();
+		? Online::GetSubsystem(World, SubsystemName)
+		: IOnlineSubsystem::Get(SubsystemName);
 
 	if (OnlineSubsystem == nullptr)
 	{
@@ -398,6 +483,35 @@ void UCWGameInstance::CacheOnlineInterfaces()
 		*OnlineSubsystem->GetSubsystemName().ToString(),
 		*OnlineSubsystem->GetInstanceName().ToString()
 	));
+}
+
+void UCWGameInstance::ApplyNetDriverClassForActivePlatform()
+{
+	if (GEngine == nullptr)
+	{
+		return;
+	}
+
+	FNetDriverDefinition* GameNetDriverDef = GEngine->NetDriverDefinitions.FindByPredicate(
+		[](const FNetDriverDefinition& Def)
+		{
+			return Def.DefName == CrosswalkSession::GameNetDriverDefName;
+		});
+
+	if (GameNetDriverDef == nullptr)
+	{
+		return;
+	}
+
+	// 호스트의 UWorld::Listen()과 참가자의 UPendingNetGame::InitNetDriver()는 둘 다 "GameNetDriver"라는
+	// 정의 이름을 하드코딩해서 찾는다 - 참가자 쪽은 URL 옵션(NetDriverDef=)으로 바꿀 방법이 아예 없어서
+	// (엔진 소스 확인 완료, virtual도 아님) 정의 이름을 유지한 채 그 정의가 가리키는 드라이버 클래스
+	// 자체를 트래블 직전마다 바꿔치기하는 방식으로 호스트/참가자 양쪽을 동시에 처리한다.
+	// Steam은 EOS P2P 소켓(NetDriverEOSBase)을 못 쓴다 - 로그인된 EOS 유저가 없어서 바인드할 로컬
+	// 주소를 못 만들어 "No local user set in LocalBindAddr"로 실패한다.
+	GameNetDriverDef->DriverClassName = (ActivePlatform == ECWOnlinePlatform::Steam)
+		? CrosswalkSession::SteamNetDriverClassName
+		: CrosswalkSession::EosNetDriverClassName;
 }
 
 void UCWGameInstance::SetStatus(const FString& NewStatus)
@@ -835,6 +949,41 @@ void UCWGameInstance::OnLoginComplete(int32 LocalUserNum, bool bWasSuccessful, c
 	OnLoginStateChanged.Broadcast(true, LoggedInDisplayName, ECWLoginFailure::None);
 }
 
+void UCWGameInstance::RefreshLoggedInDisplayName(int32 LocalUserNum)
+{
+	if (!IdentityInterface.IsValid())
+	{
+		return;
+	}
+
+	FString DisplayName = IdentityInterface->GetPlayerNickname(LocalUserNum);
+
+	if (DisplayName.IsEmpty())
+	{
+		TSharedPtr<const FUniqueNetId> UserId = IdentityInterface->GetUniquePlayerId(LocalUserNum);
+
+		if (UserId.IsValid())
+		{
+			TSharedPtr<FUserOnlineAccount> UserAccount = IdentityInterface->GetUserAccount(*UserId);
+
+			if (UserAccount.IsValid())
+			{
+				DisplayName = UserAccount->GetDisplayName();
+			}
+
+			if (DisplayName.IsEmpty())
+			{
+				DisplayName = UserId->ToString();
+			}
+		}
+	}
+
+	if (!DisplayName.IsEmpty())
+	{
+		LoggedInDisplayName = DisplayName;
+	}
+}
+
 void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSuccessful)
 {
 	ClearCreateSessionCompleteDelegate();
@@ -856,7 +1005,25 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 
 		if (World != nullptr)
 		{
-			World->ServerTravel(ListenMapPath + TEXT("?listen"));
+			// GameNetDriver 정의가 가리키는 드라이버 클래스를 ActivePlatform에 맞게 바꿔치기한다
+			// (CreateNamedNetDriver로 같은 이름을 미리 등록해두는 이전 방식은 Listen()이 내부적으로
+			// 호출하는 CreateNamedNetDriver와 이름이 충돌해 NetDriverCreateFailure로 실패했음 - 폐기).
+			ApplyNetDriverClassForActivePlatform();
+
+			// URL에 Name= 옵션이 없으면 PlayerState 이름이 GameMode::DefaultPlayerName("Player")로
+			// 고정된다 - 플랫폼 상관없이 항상 그랬던 문제라 여기서 로그인 닉네임을 실어 보낸다.
+			// 옵션 구분자는 반드시 '?'다 - FURL은 '&'를 옵션 구분자로 인식하지 않는다(엔진 소스
+			// URL.cpp의 FURL 파서, GameplayStatics.cpp의 GrabOption 둘 다 확인 완료). '&'로 이으면
+			// "listen&Name=Daae"가 통째로 옵션 하나로 묶여서 Name= 옵션 자체가 안 읽힌다 - 실기
+			// 로그로 재현/확인함(Server switch level에 Name=이 다른 옵션에 붙어서 나타났음).
+			FString TravelURL = ListenMapPath + TEXT("?listen");
+
+			if (!LoggedInDisplayName.IsEmpty())
+			{
+				TravelURL += TEXT("?Name=") + CrosswalkSession::SanitizeNameOption(LoggedInDisplayName);
+			}
+
+			World->ServerTravel(TravelURL);
 		}
 	}
 }
@@ -1009,7 +1176,23 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 	// CurrentRoomCode를 채운 뒤에 알려야 ViewModel이 빈 값을 읽지 않음
 	CompleteSessionOperation(ECWSessionOperation::JoinRoom, true, ECWSessionFailure::None);
 
-	PlayerController->ClientTravel(ConnectString, TRAVEL_Absolute);
+	// 호스트 쪽 ServerTravel 직전과 같은 이유 - UPendingNetGame::InitNetDriver()도 내부적으로
+	// "GameNetDriver" 정의를 찾아서 쓰기 때문에(엔진 소스 확인 완료, URL 옵션으로 바꿀 방법 없음),
+	// ClientTravel 직전에 그 정의가 가리키는 드라이버 클래스를 여기서도 바꿔치기해야 한다.
+	ApplyNetDriverClassForActivePlatform();
+
+	// 호스트 쪽과 같은 이유로 Name= 옵션을 실어 보낸다 - 없으면 서버에서 PlayerState 이름이
+	// GameMode::DefaultPlayerName("Player")로 고정된다. FURL은 옵션 구분자로 '&'를 인식하지 않고
+	// 옵션마다 '?'로 시작해야 하므로(호스트 쪽과 같은 이유, 위 주석 참고) ConnectString에 이미
+	// 옵션이 있든 없든 항상 '?'로 이어붙인다.
+	FString FinalConnectString = ConnectString;
+
+	if (!LoggedInDisplayName.IsEmpty())
+	{
+		FinalConnectString += TEXT("?Name=") + CrosswalkSession::SanitizeNameOption(LoggedInDisplayName);
+	}
+
+	PlayerController->ClientTravel(FinalConnectString, TRAVEL_Absolute);
 }
 
 void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSuccessful)

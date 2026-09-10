@@ -267,14 +267,24 @@ void ACWPlayerCharacter::Multicast_StartRagdoll_Implementation(
 		return;
 	}
 
-	// 멈춤 판정은 서버만 한다. 머신마다 물리 결과가 조금씩 달라 기준이 갈리면 안 된다.
+	/**
+	 * 멈춤 판정은 서버만 한다. 머신마다 물리 결과가 조금씩 달라 기준이 갈리면 안 된다.
+	 *
+	 * 최초 호출까지 RagdollRestCheckDelay(0.4초)를 기다리지 않는다 - 위치 동기화
+	 * (Multicast_SyncRagdollPosition)도 이 타이머에서 나가는데, 여기서 지연을 주면 맞은 직후
+	 * 0.4초 동안 클라가 서버 값을 한 번도 못 받고 로컬 물리로만 날아가다가 첫 값이 도착하는
+	 * 순간 그동안 벌어진 오차만큼 확 끌려간다("날아가다 어디 걸리는" 느낌의 원인이었다).
+	 * "멈춤" 판정 자체의 유예는 CheckRagdollRest 안에서 RagdollRestCheckStartWorldTime 기준으로
+	 * 따로 건다.
+	 */
+	RagdollRestCheckStartWorldTime = GetWorld()->GetTimeSeconds();
 	GetWorldTimerManager().SetTimer(
 		RagdollRestTimerHandle,
 		this,
 		&ACWPlayerCharacter::CheckRagdollRest,
 		RagdollRestCheckInterval,
 		true,
-		RagdollRestCheckDelay
+		0.f
 	);
 }
 
@@ -369,8 +379,9 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 	// 방금 SetSimulatePhysics(true) 한 메시의 상대 트랜스폼을 계속 덮어쓰려 든다.
 	GetWorldTimerManager().ClearTimer(RecoverBlendTimerHandle);
 
-	// 이전 비행에서 살아남은 보간 타이머가 있으면 정리한다. 같은 이유로 필요하다.
-	GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
+	// 이번 래그돌에서 첫 서버 값을 받을 때 이전 비행의 수신 시각과 비교해 엉뚱하게 긴
+	// 보간 구간을 잡지 않도록 초기화한다 (Multicast_SyncRagdollPosition_Implementation 참고).
+	LastPelvisSyncWorldTime = -1.f;
 
 	/**
 	 * pelvis 를 키네마틱으로 바꾸는 시점은 여기가 아니다. 처음부터 키네마틱으로 굳히면
@@ -420,6 +431,15 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 		FAttachmentTransformRules::KeepWorldTransform,
 		RagdollPivotBone
 	);
+
+	/**
+	 * 붐이 pelvis 에 직접 붙어 있어서, pelvis 위치의 미세한 흔들림(네트워크 보정 등)이 필터
+	 * 없이 그대로 카메라 위치가 된다. 맞은 당사자 화면에서만 유독 버벅여 보이는 이유가 이거다 -
+	 * 남의 캐릭터가 맞을 때는 내 카메라가 내 캐릭터에 붙어 있어 안 보인다 (RagdollCameraLagSpeed
+	 * 선언부 참고). 카메라가 목표를 따라가는 속도만 깎을 뿐 pelvis 자체 값은 안 건드린다.
+	 */
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = RagdollCameraLagSpeed;
 
 	MeshComponent->SetCollisionProfileName(TEXT("Ragdoll"));
 	MeshComponent->SetSimulatePhysics(true);
@@ -486,9 +506,6 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 			false
 		);
 	}
-
-	// pelvis 이어붙이기가 아직 돌고 있었다면 멈춘다. 이제부터는 TickRecoverBlend 가 담당한다.
-	GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
 
 	/**
 	 * 물리를 확실히 내린다.
@@ -574,6 +591,9 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	 */
 	CameraBoom->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
 	CameraBoom->SetRelativeTransform(DefaultCameraBoomRelativeTransform);
+
+	// StartRagdoll에서 켠 래그돌 전용 카메라 랙을 끈다. 평소 조작감(즉각 반응)으로 되돌린다.
+	CameraBoom->bEnableCameraLag = false;
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->StopMovementImmediately();
@@ -668,6 +688,13 @@ void ACWPlayerCharacter::CheckRagdollRest()
 	 */
 	Multicast_SyncRagdollPosition(GetMesh()->GetSocketLocation(RagdollPivotBone), GetMesh()->GetSocketRotation(RagdollPivotBone));
 
+	// 임펄스가 물리에 반영되기 전에 재면 속도가 0 이라 튕겨나가자마자 멈춘 것으로 잘못 잡힌다.
+	// 위치 동기화는 위에서 이미 나갔으니, 이 유예는 "멈췄다" 판정에만 건다.
+	if (GetWorld()->GetTimeSeconds() - RagdollRestCheckStartWorldTime < RagdollRestCheckDelay)
+	{
+		return;
+	}
+
 	const float PivotSpeed = GetMesh()->GetPhysicsLinearVelocity(RagdollPivotBone).Size();
 	if (PivotSpeed > RagdollRestSpeed)
 	{
@@ -753,40 +780,43 @@ void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_Ne
 	 * TickPelvisInterp 가 짧은 주기(PelvisInterpTickInterval)로 그 사이를 매끄럽게 이어붙인다.
 	 * 서버 값 자체는 여전히 유일한 목표이므로 발산이 누적되지는 않는다 — 그 값에 도달하는
 	 * 방식만 한 번에 스냅에서 짧은 보간으로 바뀐 것이다.
+	 *
+	 * [실제 인터넷 너머 참가자 테스트에서 재발견] 이 함수는 Unreliable이라(위 UFUNCTION 선언
+	 * 참고) 같은 기기에서 여러 인스턴스로 테스트할 땐 거의 안 보이던 패킷 지연/유실이 진짜
+	 * 인터넷을 타는 순간 흔해진다. 아래에서 이어붙일 시간을 RagdollRestCheckInterval(고정
+	 * 0.05초)로 못 박아 두면, 값이 늦게 온 만큼 pelvis는 그 전 목표에 도달해 멈춰 있다가,
+	 * 늦게 온 값이 도착하면 실제로는 몇 배 멀어진 거리를 여전히 0.05초 안에 몰아서 따라잡아야
+	 * 해서 "멈췄다 급가속"을 반복한다("툭툭 끊기면서 날아간다"). 그래서 고정값 대신 이번 값을
+	 * 실제로 몇 초 만에 받았는지 재서 그만큼 이어붙인다 - 늦게 온 만큼 보간 구간도 늘어나
+	 * 같은 거리를 같은 속도로 쫓아간다. 너무 짧거나(중복/역전 도착) 너무 긴(연결 끊김급 정체)
+	 * 값은 합리적인 범위로 눌러 극단적인 경우를 걸러낸다.
 	 */
+	const float CurrentWorldTime = GetWorld()->GetTimeSeconds();
+	const float MeasuredInterval = (LastPelvisSyncWorldTime >= 0.f)
+		? (CurrentWorldTime - LastPelvisSyncWorldTime)
+		: RagdollRestCheckInterval;
+	LastPelvisSyncWorldTime = CurrentWorldTime;
+
+	PelvisInterpDuration = FMath::Clamp(MeasuredInterval, PelvisInterpTickInterval, RagdollRestCheckInterval * 4.f);
+
 	PelvisInterpStartLocation = PelvisBody->GetUnrealWorldTransform().GetLocation();
 	PelvisInterpStartRotation = PelvisBody->GetUnrealWorldTransform().GetRotation().Rotator();
 	PelvisInterpTargetLocation = ServerPelvisLocation;
 	PelvisInterpTargetRotation = ServerPelvisRotation;
 	PelvisInterpElapsed = 0.f;
-
-	GetWorldTimerManager().SetTimer(
-		PelvisInterpTimerHandle,
-		this,
-		&ACWPlayerCharacter::TickPelvisInterp,
-		PelvisInterpTickInterval,
-		true
-	);
 }
 
-void ACWPlayerCharacter::TickPelvisInterp()
+void ACWPlayerCharacter::TickPelvisInterp(float DeltaSeconds)
 {
-	if (!bRagdollActive || HasAuthority())
-	{
-		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
-		return;
-	}
-
 	USkeletalMeshComponent* MeshComponent = GetMesh();
 	FBodyInstance* PelvisBody = MeshComponent != nullptr ? MeshComponent->GetBodyInstance(RagdollPivotBone) : nullptr;
 	if (PelvisBody == nullptr)
 	{
-		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
 		return;
 	}
 
-	PelvisInterpElapsed += PelvisInterpTickInterval;
-	const float Alpha = FMath::Clamp(PelvisInterpElapsed / RagdollRestCheckInterval, 0.f, 1.f);
+	PelvisInterpElapsed += DeltaSeconds;
+	const float Alpha = FMath::Clamp(PelvisInterpElapsed / PelvisInterpDuration, 0.f, 1.f);
 
 	const FVector InterpLocation = FMath::Lerp(PelvisInterpStartLocation, PelvisInterpTargetLocation, Alpha);
 	const FQuat InterpRotation = FQuat::Slerp(PelvisInterpStartRotation.Quaternion(), PelvisInterpTargetRotation.Quaternion(), Alpha);
@@ -794,11 +824,6 @@ void ACWPlayerCharacter::TickPelvisInterp()
 	// ETeleportType::None 을 유지해야 관절로 묶인 나머지 바디가 이 짧은 이동에서 나온 속도를
 	// 그대로 이어받아 자연스럽게 끌려온다 (위 Multicast_SyncRagdollPosition_Implementation 참고).
 	PelvisBody->SetBodyTransform(FTransform(InterpRotation, InterpLocation), ETeleportType::None);
-
-	if (Alpha >= 1.f)
-	{
-		GetWorldTimerManager().ClearTimer(PelvisInterpTimerHandle);
-	}
 }
 
 FVector ACWPlayerCharacter::ResolveRecoverLocation() const
@@ -1747,6 +1772,15 @@ void ACWPlayerCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	ApplyCursorFacing(DeltaSeconds);
+
+	// FTimerHandle(100Hz 요청)로 돌리면 실제 프레임레이트가 그보다 낮을 때 매 틱 고정 증가값이
+	// 실제로 흐른 시간보다 항상 적게 잡혀 pelvis가 서버 위치를 영영 못 따라잡았다(로컬 PIE에서도
+	// 재현 - TickPelvisInterp 선언부 주석 참고). Tick()의 실측 DeltaSeconds를 쓰면 프레임레이트와
+	// 무관하게 정확히 흐른 시간만큼만 진행된다.
+	if (bRagdollActive && !HasAuthority() && bPelvisConvertedToKinematic)
+	{
+		TickPelvisInterp(DeltaSeconds);
+	}
 }
 
 void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)

@@ -18,6 +18,16 @@ enum class ECWLoginFailure : uint8
 	Unknown UMETA(DisplayName = "Unknown")
 };
 
+// 로그인에 사용한 온라인 플랫폼 - 어느 OnlineSubsystem 인스턴스를 쓸지 구분하기 위한 타입.
+// Steam은 EOS를 거치지 않고 독립된 백엔드로 운영한다 -
+// 그래서 에픽/DevAuth 유저와 Steam 유저는 서로 다른 방 목록을 본다.
+UENUM(BlueprintType)
+enum class ECWOnlinePlatform : uint8
+{
+	EOS UMETA(DisplayName = "EOS"),
+	Steam UMETA(DisplayName = "Steam")
+};
+
 // 세션 관련 작업 완료 이벤트에서 어떤 작업의 결과인지 구분하기 위한 타입
 UENUM(BlueprintType)
 enum class ECWSessionOperation : uint8
