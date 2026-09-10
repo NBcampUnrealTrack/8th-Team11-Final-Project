@@ -325,12 +325,23 @@ private:
 	 * Multicast_SyncRagdollPosition 은 RagdollRestCheckInterval(20Hz)마다만 온다. 그 값을 받을
 	 * 때마다 SetBodyTransform 으로 즉시 스냅하면, 그 사이 pelvis 가 완전히 멈춰 있다가 한 번에
 	 * 튀는 걸 반복해서 빠르게 날아가는 구간일수록 계단식으로 끊기는 느낌이 난다. 대신 새 서버
-	 * 값이 오면 그 순간 pelvis 위치를 시작점으로 잡아두고, 다음 서버 값이 올 때까지 이 함수가
-	 * 짧은 주기(PelvisInterpTickInterval)로 그 사이를 매끄럽게 이어붙인다 — 매번
-	 * SetBodyTransform(..., ETeleportType::None) 을 쓰므로, 관절로 묶인 나머지 몸통도 급격한
-	 * 속도 변화 없이 자연스럽게 끌려온다.
+	 * 값이 오면 그 순간 pelvis 위치를 시작점으로 잡아두고, 다음 서버 값이 올 때까지 Tick()이 이
+	 * 함수를 매 프레임 호출해 그 사이를 매끄럽게 이어붙인다. 매번 SetBodyTransform(...,
+	 * ETeleportType::None) 을 쓰므로, 관절로 묶인 나머지 몸통도 급격한 속도 변화 없이 자연스럽게
+	 * 끌려온다.
+	 *
+	 * [FTimerHandle 대신 Tick()으로 바꾼 이유] 예전엔 GetWorldTimerManager().SetTimer(...,
+	 * PelvisInterpTickInterval, true)로 별도 100Hz 타이머를 돌렸는데, 실제 프레임레이트가 그보다
+	 * 낮으면(4인 PIE처럼 무거운 상황) 타이머는 한 프레임에 한 번만 불리면서도 PelvisInterpElapsed
+	 * 를 매번 고정값(PelvisInterpTickInterval)만큼만 늘렸다 - 그러면 실제로 흐른 시간보다 항상
+	 * 적게 진행된 것으로 계산되어 Alpha가 다음 서버 값이 오기 전에 1에 못 미치고, pelvis가 서버
+	 * 위치를 영영 못 따라잡는 "턱턱 끊기며 억지로 끌려가는" 현상으로 이어졌다(로컬 PIE 테스트로
+	 * 재현 - 네트워크 지연과 무관하게 나타남). Tick()의 실제 DeltaSeconds로 재면 프레임레이트가
+	 * 얼마든 흐른 시간만큼만 정확히 진행되어 이 문제가 없다.
+	 *
+	 * @param DeltaSeconds 이번 프레임에 실제로 흐른 시간(초). Tick()의 DeltaSeconds를 그대로 넘긴다.
 	 */
-	void TickPelvisInterp();
+	void TickPelvisInterp(float DeltaSeconds);
 
 	/**
 	 * 기상이 끝난 뒤 메시와 카메라 붐이 제자리에 있는지 확인하고, 벗어나면 경고를 남긴다.
@@ -528,15 +539,38 @@ protected:
 	float RagdollRestCheckInterval = 0.05f;
 
 	/**
-	 * 확인을 시작하기까지 두는 시간(초).
-	 * 임펄스가 물리에 반영되기 전에 재면 속도가 0 이라 튕겨나가자마자 멈춘 것으로 잡힌다.
+	 * "멈췄다"고 판정하기까지 두는 유예 시간(초). 임펄스가 물리에 반영되기 전에 재면 속도가
+	 * 0 이라 튕겨나가자마자 멈춘 것으로 잡힌다.
+	 *
+	 * [주의] 예전엔 이 값이 CheckRagdollRest 타이머의 최초 호출 지연이기도 했다 - 그러면
+	 * Multicast_SyncRagdollPosition 도 같이 늦게 나가서, 맞은 직후 0.4초 동안 클라가 서버 값을
+	 * 한 번도 못 받고 순수 로컬 물리로만 날아가다가 첫 값이 도착하는 순간 벌어진 오차만큼 확
+	 * 끌려갔다("날아가다 어디 걸리는" 느낌의 원인). 지금은 CheckRagdollRest 를 지연 없이 즉시
+	 * 돌리고, 이 값은 "멈춤 판정"에만 걸어서 위치 동기화는 처음부터 계속 나가게 한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
 	float RagdollRestCheckDelay = 0.4f;
 
 	/**
-	 * [클라 전용] TickPelvisInterp 가 pelvis 를 이어붙이는 주기(초). RagdollRestCheckInterval
-	 * 보다 확실히 짧아야 그 사이를 여러 걸음으로 나눠 매끄럽게 이어붙일 수 있다.
+	 * [클라 전용] 래그돌 비행 중 카메라 붐에 거는 카메라 랙 속도. 값이 작을수록 카메라가
+	 * 목표(pelvis)를 천천히 쫓아가 더 부드럽다.
+	 *
+	 * [왜 필요한가] 붐이 pelvis 본에 직접 Attach 돼 있어서(StartRagdoll 참고), pelvis 위치에
+	 * 조금이라도 흔들림이 있으면 그게 그대로, 어떤 필터도 없이 카메라 위치가 된다. 맞은
+	 * 당사자 본인 화면에서만 이게 카메라 전체를 흔드는 것처럼 느껴지는 이유가 이것이다 - 남의
+	 * 캐릭터가 맞을 때는 내 카메라는 내 캐릭터(가만히 서 있음)에 붙어 있어서 상대방 메시의
+	 * 미세한 흔들림이 눈에 잘 안 띈다. 이 랙은 카메라가 보여주는 값만 매끄럽게 깎을 뿐,
+	 * pelvis 자체(서버 판정 위치, 다른 플레이어에게 보이는 값)는 그대로 둔다 - 순전히 로컬
+	 * 렌더링 문제라 서버/멀티 동기화와는 무관하다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float RagdollCameraLagSpeed = 10.f;
+
+	/**
+	 * [클라 전용] 보간 구간(PelvisInterpDuration)의 최소 길이(초). Tick()으로 옮기기 전엔
+	 * TickPelvisInterp를 부르는 타이머의 주기였는데, 지금은 그 역할이 없다 - 대신
+	 * Multicast_SyncRagdollPosition_Implementation에서 실측한 보간 구간이 비정상적으로
+	 * 짧아지는 것(중복/역전 도착 등)만 막는 바닥값으로 쓴다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.005"))
 	float PelvisInterpTickInterval = 0.01f;
@@ -753,6 +787,13 @@ private:
 	FTimerHandle RagdollRestTimerHandle;
 
 	/**
+	 * [서버 전용] 이번 래그돌의 CheckRagdollRest 타이머가 시작된 월드 시각. "멈췄다" 판정을
+	 * RagdollRestCheckDelay 만큼 미루기 위한 기준점 - 위치 동기화 자체는 이 지연과 무관하게
+	 * 타이머 시작 즉시 나간다 (CheckRagdollRest 참고).
+	 */
+	float RagdollRestCheckStartWorldTime = -1.f;
+
+	/**
 	 * 클라이언트에서 pelvis 를 키네마틱으로 바꿨는지 여부. StartRagdoll 시점엔 아직 바꾸지
 	 * 않는다 — 처음부터 키네마틱으로 굳히면 첫 서버 동기화(RagdollRestCheckInterval, 20Hz)가
 	 * 도착하기 전까지 pelvis 가 완전히 못 박혀 있고, 관절로 묶인 나머지 몸통만 임펄스를 받아
@@ -769,7 +810,21 @@ private:
 	FRotator PelvisInterpTargetRotation = FRotator::ZeroRotator;
 	float PelvisInterpElapsed = 0.f;
 
-	FTimerHandle PelvisInterpTimerHandle;
+	/**
+	 * 이번 보간 구간을 몇 초에 걸쳐 이어붙일지. 예전에는 RagdollRestCheckInterval(고정값,
+	 * 0.05초)을 그대로 썼는데, 이게 "다음 서버 값이 항상 정확히 그 주기로 온다"는 가정에
+	 * 기대고 있었다 - Steam P2P로 실제 인터넷 너머 참가자와 붙여보니 Multicast_SyncRagdollPosition이
+	 * Unreliable이라 패킷이 몇 개씩 늦거나 빠지는 게 흔했고, 그러면 pelvis가 고정된 0.05초짜리
+	 * 보간 구간을 다 채우고 다음 값이 올 때까지 그 자리에 멈춰 있다가(정지), 값이 도착하면 실제로는
+	 * 몇 배 더 멀어진 거리를 여전히 0.05초 안에 몰아서 따라잡아(급가속) - "툭툭 끊기면서 날아간다"로
+	 * 보였다. 그래서 고정 주기 대신 이전 값을 실제로 받은 시각과의 차이를 매번 재서 쓴다 -
+	 * 늦게 온 만큼 보간 구간도 늘어나므로 같은 거리를 같은 속도로 따라잡게 된다.
+	 */
+	float PelvisInterpDuration = 0.f;
+
+	// 마지막으로 Multicast_SyncRagdollPosition을 받은 월드 시각(초). 음수면 이번 래그돌에서
+	// 아직 한 번도 못 받았다는 뜻이라, 그때는 PelvisInterpDuration을 잴 기준이 없어 기존 고정값을 쓴다.
+	float LastPelvisSyncWorldTime = -1.f;
 
 	FTimerHandle GetUpTimerHandle;
 
