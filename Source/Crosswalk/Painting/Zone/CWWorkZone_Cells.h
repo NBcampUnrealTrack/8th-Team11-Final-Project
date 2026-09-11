@@ -9,6 +9,7 @@ class UBoxComponent;
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UNiagaraSystem;
 class UStaticMeshComponent;
 class UTexture2D;
 
@@ -283,6 +284,14 @@ private:
 	 * @return 실제로 바뀐 칸이 있으면 true
 	 */
 	int32 ApplyStroke(const FCWBrushStroke& Stroke);
+
+	/**
+	 * 붓질 하나가 칸을 실제로 뒤집은 자리에 페인트 튀기는 이펙트를 낸다.
+	 *
+	 * ApplyStroke 에서 부르니 서버·칠한 본인·남의 화면 세 경로가 모두 여기를 지난다.
+	 * 그릴 화면이 없는 데디케이티드 서버만 스스로 걸러낸다.
+	 */
+	void SpawnPaintStrokeFX(const FCWBrushStroke& Stroke);
 
 	/**
 	 * 칠하거나 지운 칸 수만큼 작업자의 도구에서 페인트를 뺀다. (기획서 5-3)
@@ -867,6 +876,24 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual", meta = (ClampMin = "0.0", ClampMax = "1.5"))
 	float PaintFieldWarpCells = 0.7f;
 
+	// 붓이 칸을 바꾼 자리에 터질 파티클. 비워 두면 이펙트가 나오지 않는다.
+	//
+	// 도색(칠하기)과 오염 정리(지우기) 양쪽에서 나간다. 바깥 고리 전용 붓질
+	// (차량 자국·검은색 롤러)만 제외된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX")
+	TObjectPtr<UNiagaraSystem> PaintStrokeFX;
+
+	// 파티클을 다시 터트리기까지의 최소 간격(초).
+	//
+	// 붓질은 칠하는 동안 매 프레임 생긴다. 간격을 두지 않으면 초당 수십 개가 겹쳐
+	// 한 덩어리로 보이고, GPU 시뮬 인스턴스도 그만큼 늘어난다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.0"))
+	float PaintStrokeFXInterval = 0.04f;
+
+	// 파티클 크기 배수. 발자국용 이미터를 가져다 쓰는 만큼 붓 크기에 맞출 수단이 필요하다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.01"))
+	float PaintStrokeFXScale = 1.f;
+
 	// 차량이 이 존의 젖은 페인트를 밟고 지나가면 자국을 남기는가. (3단계 도색 존에서 켠다)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Vehicle")
 	bool bStainsVehicles = false;
@@ -970,6 +997,10 @@ private:
 	bool bPaintDry = false;
 
 	FTimerHandle PaintDryTimerHandle;
+
+	// 도색 이펙트를 마지막으로 터트린 시각. PaintStrokeFXInterval 을 재는 기준이다.
+	// 기계마다 따로 세는 값이라 리플리케이트하지 않는다.
+	float LastPaintStrokeFXTime = -1000.f;
 
 	// Area 크기와 칸 크기. 붓질 한 번에 수백 번 쓰이는 값이라 RebuildGridLayout 에서 한 번만 잡는다.
 	// 런타임에 박스를 늘리면 이 값이 낡는다. 그때는 ResetCells 를 다시 불러야 한다.
