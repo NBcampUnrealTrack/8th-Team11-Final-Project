@@ -50,8 +50,14 @@ public class Crosswalk : ModuleRules
 
         DynamicallyLoadedModuleNames.AddRange(new string[]
         {
-            "OnlineSubsystemEOS",
-            "OnlineSubsystemSteam"
+            "OnlineSubsystemSteam",
+
+            // Steam은 같은 계정으로 인스턴스 2개를 띄워 혼자 검색/참가를 테스트할 수 없다
+            // (엔진 소스 확인 - OnlineAsyncTaskManagerSteam.cpp의 OnLobbyDataUpdate가 로비
+            // 소유자와 요청자의 SteamID가 같으면 콜백 자체를 버림). 로컬에서 세션/UI 로직만
+            // 빠르게 검증하고 싶을 땐 DefaultEngine.ini의 DefaultPlatformService를 Null로
+            // 바꾸면 멀티 PIE로 바로 된다 - 코드 수정 없이 ini 한 줄로 전환.
+            "OnlineSubsystemNull"
         });
     }
 }

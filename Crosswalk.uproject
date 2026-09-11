@@ -23,11 +23,11 @@
 			]
 		},
 		{
-			"Name": "OnlineSubsystemEOS",
+			"Name": "OnlineSubsystemSteam",
 			"Enabled": true
 		},
 		{
-			"Name": "OnlineSubsystemSteam",
+			"Name": "OnlineSubsystemNull",
 			"Enabled": true
 		},
 		{

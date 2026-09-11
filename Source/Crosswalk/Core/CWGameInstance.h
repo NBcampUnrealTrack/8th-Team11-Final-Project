@@ -65,25 +65,33 @@ public:
 	// 게임 종료 시 등록한 온라인 델리게이트를 정리
 	virtual void Shutdown() override;
 
-	// Epic Account Portal을 통해 현재 로컬 유저를 EOS에 로그인
-	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
-	void LoginWithEpic();
-
-	// Steam 클라이언트 인증 정보를 사용해 EOS 로그인을 요청
+	// Steam 클라이언트 인증 정보로 로그인
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
 	void LoginWithSteam();
 
+	/**
+	 * [EOS 제거 브릿지, WBP_Title 정리 전까지만 유지] EOS 전체를 걷어내면서 이 함수들이 실제로
+	 * EOS에 로그인하던 기능은 사라졌다(Crosswalk_EOS_아카이브_기록.md 참고) - 그러나
+	 * CWSessionViewModel/WBP_Title은 UI 담당(현준님) 영역이라 이 세션에서 건드리지 않기로
+	 * 했고, 그 블루프린트가 여전히 이 함수들을 호출하고 있어서 시그니처만 남겨둔다.
+	 *
+	 * 호출되면 CacheOnlineInterfaces()가 지금 기본 OnlineSubsystem(Steam)을 그대로 가져오고,
+	 * 그 인터페이스에 "accountportal"/"developer" 크리덴셜을 넣어 Login()을 시도한다 - Steam
+	 * 쪽에서 이해 못 하는 타입이라 정상적인 로그인 실패 흐름(OnLoginStateChanged 등)으로
+	 * 자연스럽게 실패한다. 별도 "지원 안 함" 처리를 새로 만들지 않고 기존 실패 경로를 그대로
+	 * 태운다. WBP_Title이 정리되면 이 함수들과 LoginWithDeveloperTool을 통째로 지운다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online")
+	void LoginWithEpic();
+
 #pragma region Online Test
 
-	// EOS Developer Authentication Tool 테스트 계정으로 로그인
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
 	void LoginWithDeveloperTool(const FString& CredentialName);
 
-	// Developer Authentication Tool의 Player1 계정으로 로그인
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
 	void LoginAsPlayer1();
 
-	// Developer Authentication Tool의 Player2 계정으로 로그인
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Online Test")
 	void LoginAsPlayer2();
 
@@ -169,9 +177,21 @@ protected:
 	float SessionOperationTimeout;
 
 private:
-	// ActivePlatform에 해당하는 OnlineSubsystem 인스턴스의 Identity/Session 인터페이스를 가져옴
-	// (EOS는 기본 서브시스템, Steam은 EOS를 거치지 않는 독립된 서브시스템)
+	// 기본 OnlineSubsystem(Steam) 인스턴스의 Identity/Session 인터페이스를 가져옴
 	void CacheOnlineInterfaces();
+
+	/**
+	 * 지금 붙어있는 OnlineSubsystem이 Null(로컬 전용)인가.
+	 *
+	 * Null이면 방 광고/검색이 UDP 브로드캐스트라 같은 기기(멀티 PIE) 안에서만 보이고,
+	 * Steam이면 밸브 로비 서버를 거치므로 인터넷 너머까지 보인다. 같은 스팀 계정으로는
+	 * 인스턴스 2개를 띄워도 혼자 검색/참가 테스트가 안 되는데(엔진 소스 확인 -
+	 * OnLobbyDataUpdate가 요청자와 로비 소유자의 SteamID가 같으면 콜백을 버림), Null은 이
+	 * 제약이 없어서 로컬 세션/UI 로직 검증엔 이쪽을 쓴다. CreateSessionWithRoomCode/
+	 * StartFindSessions가 이 값으로 bIsLANMatch/bIsLanQuery를 정한다 - ini의
+	 * DefaultPlatformService만 Null로 바꾸면 코드 수정 없이 전환된다.
+	 */
+	bool IsLanOnlySubsystem() const;
 
 	// 로그인 화면에 표시할 상태 메시지를 갱신
 	void SetStatus(const FString& NewStatus);
@@ -182,10 +202,10 @@ private:
 	// 사용자가 입력한 방 코드의 공백을 제거하고 대문자로 통일
 	FString NormalizeRoomCode(const FString& RoomCode) const;
 
-	// 목적에 따라 EOS 세션 검색을 시작
+	// 목적에 따라 세션 검색을 시작
 	void StartFindSessions(ECWSessionFindPurpose FindPurpose);
 
-	// 확정된 방 코드로 EOS 세션을 생성
+	// 확정된 방 코드로 세션을 생성
 	void CreateSessionWithRoomCode(const FString& RoomCode);
 
 	// 검색 결과 안에 같은 방 코드가 존재하는지 확인
@@ -220,7 +240,7 @@ private:
 	// 세션 작업 실패 처리를 한 곳에서 정리
 	void FailSessionOperation(ECWSessionOperation Operation, ECWSessionFailure Failure, const FString& StatusMessage);
 
-	// EOS 로그인 에러 문자열을 UI용 로그인 실패 타입으로 변환
+	// 로그인 에러 문자열을 UI용 로그인 실패 타입으로 변환
 	ECWLoginFailure MapLoginFailure(const FString& Error) const;
 
 	// 세션 참가 결과를 UI용 세션 실패 타입으로 변환
@@ -233,14 +253,8 @@ private:
 	void ClearLoginCompleteDelegate();
 
 	// IsLoggedIn()이 true라 OnLoginComplete()를 안 거치고 바로 반환하는 경로(Steam은 항상 이 경로)를 위해
-	// LoggedInDisplayName을 직접 채운다 - 안 하면 Steam 로그인은 닉네임이 계속 비어있게 된다.
+	// LoggedInDisplayName을 직접 채운다 - 안 하면 로그인 닉네임이 계속 비어있게 된다.
 	void RefreshLoggedInDisplayName(int32 LocalUserNum);
-
-	// GameNetDriver 정의가 가리키는 실제 드라이버 클래스를 ActivePlatform에 맞게 바꿔치기한다.
-	// 호스트 Listen()과 참가자 InitNetDriver()가 둘 다 "GameNetDriver"라는 이름을 하드코딩해서 찾기
-	// 때문에(참가자 쪽은 URL 옵션으로 바꿀 방법이 아예 없음), 이름이 아니라 그 이름이 가리키는
-	// 클래스 자체를 트래블 직전에 바꿔서 양쪽 다 대응한다.
-	void ApplyNetDriverClassForActivePlatform();
 
 	// 세션 생성 완료 콜백을 등록
 	void BindCreateSessionCompleteDelegate();
@@ -281,7 +295,7 @@ private:
 	// 세션 제거 요청이 끝났을 때 호출
 	void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
 
-	// 호스트 연결이 끊겼을 때 참가자의 EOS 로비 멤버십을 정리
+	// 호스트 연결이 끊겼을 때 참가자의 세션 멤버십을 정리
 	void HandleNetworkFailure(
 		UWorld* World,
 		UNetDriver* NetDriver,
@@ -328,10 +342,6 @@ private:
 
 	// 현재 진행 중인 세션 작업 종류
 	ECWSessionOperation CurrentSessionOperation;
-
-	// 마지막 로그인 시도가 사용한 플랫폼 - CacheOnlineInterfaces가 어느 OnlineSubsystem을
-	// 가져올지 이 값으로 결정한다. 로그인 함수들이 CacheOnlineInterfaces 호출 전에 세팅한다.
-	ECWOnlinePlatform ActivePlatform;
 
 	// 방 코드 중복 발생 시 재생성한 횟수
 	int32 RoomCodeGenerateAttemptCount;
