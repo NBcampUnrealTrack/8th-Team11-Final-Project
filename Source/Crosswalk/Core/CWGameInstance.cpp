@@ -18,25 +18,16 @@ namespace CrosswalkSession
 	static const FName RoomCodeKey(TEXT("CW_ROOM_CODE"));
 	static const FName GameSessionName(TEXT("GameSession"));
 
-	// GameNetDriver 정의 자체(호스트 Listen()/참가자 InitNetDriver()가 하드코딩해서 찾는 이름)의
-	// 드라이버 클래스를 트래블 직전에 바꿔치기하기 위한 상수. Config/DefaultEngine.ini의
-	// NetDriverDefinitions에 등록된 실제 값과 반드시 일치해야 한다.
-	static const FName GameNetDriverDefName(TEXT("GameNetDriver"));
-	static const FName EosNetDriverClassName(TEXT("/Script/SocketSubsystemEOS.NetDriverEOSBase"));
-
-	// 평범한 IpNetDriver가 아니라 SocketSubsystemSteamIP 플러그인의 USteamNetDriver를 써야 한다 -
-	// 참가자 실기 테스트에서 확인: Steam 세션이 GetResolvedConnectString()으로 돌려주는 주소는
-	// 리터럴 IP가 아니라 "steam.<SteamID64>:<port>" 형태의 가짜 호스트명인데
-	// (OnlineSessionInterfaceSteam.cpp의 STEAM_URL_PREFIX, ConnectionMethod::P2P 경로 - 우리가
-	// 쓰는 로비 세션은 이 경로로 고정됨), 평범한 IpNetDriver는 기본 OS 소켓 서브시스템으로 이 문자열을
-	// 그대로 DNS 호스트명 취급해서 리졸브를 시도하다 실패한다(로그: "AddressResolution: Result
-	// [Host=steam.76561198413568206] [FAILED] [Error=48]" → "Connection failed; returning to
-	// Entry"). USteamNetDriver::GetSocketSubsystem()은 STEAMIP_SUBSYSTEMNAME 소켓 서브시스템을
-	// 반환하고, InitConnect()가 Host가 STEAM_URL_PREFIX로 시작하면 Steam 소켓을 직접 만들어서 그
-	// 문제를 피해간다(SteamNetDriver.cpp 확인 완료). 호스트 쪽도 Listen()이 이 소켓 서브시스템을
-	// 써야 참가자의 Steam P2P 연결을 실제로 받을 수 있어서 호스트/참가자 둘 다 이 클래스를 쓴다.
-	// Crosswalk.uproject의 Plugins 목록에 SocketSubsystemSteamIP를 활성화해둬야 이 클래스가 존재한다.
-	static const FName SteamNetDriverClassName(TEXT("/Script/SocketSubsystemSteamIP.SteamNetDriver"));
+	/**
+	 * 우리 게임의 방임을 식별하는 표식.
+	 *
+	 * 개발용 AppID 480(Spacewar)은 전 세계 개발자가 공유해서, 스팀 로비 검색에는 전혀 다른
+	 * 게임의 방들이 같이 잡힌다(실측: 한 번 검색에 11~12개, 대부분 남의 팀 로비 - "code
+	 * P8VJJU", "name OHO's Lobby" 같은 값이 섞여 나옴). 엔진이 파싱 못 하는 키를 가진 방은
+	 * 알아서 걸러지지만 그것만으론 부족해서, 이 표식이 있는 방만 목록/방 코드 매칭에 남긴다.
+	 */
+	static const FName GameIdKey(TEXT("CW_GAME_ID"));
+	static const FString GameIdValue(TEXT("CROSSWALK"));
 
 	// Name= 옵션 값에 못 쓰는 문자만 제거한다 (percent-encoding 아님 - 아래 이유로 폐기).
 	// FURL은 옵션 값에 한글/공백을 있는 그대로 허용한다(URL.cpp ValidNetChar 주석: "플레이어
@@ -82,7 +73,6 @@ UCWGameInstance::UCWGameInstance()
 	, SessionOperationTimeout(30.f)
 	, CurrentFindPurpose(ECWSessionFindPurpose::None)
 	, CurrentSessionOperation(ECWSessionOperation::None)
-	, ActivePlatform(ECWOnlinePlatform::EOS)
 	, RoomCodeGenerateAttemptCount(0)
 	, bSessionOperationInFlight(false)
 	, LoginCompleteDelegate(FOnLoginCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnLoginComplete))
@@ -102,7 +92,7 @@ void UCWGameInstance::Init()
 	// 파일(Engine/Config/ConsoleVariables.ini, 팀 깃에 안 들어감)에서만 허용되기 때문이다
 	// (ConfigUtilities.cpp의 OnSetCVarFromIniEntry 확인). 팀 전체에 적용되려면 ini가 아니라
 	// 코드로 직접 설정해야 한다 - USteamNetDriver가 UE5.8의 새 멀티주소 해석 시스템과 안 맞아서
-	// (ApplyNetDriverClassForActivePlatform 주석 참고) 꺼야 하는 CVar다.
+	// 꺼야 하는 CVar다.
 	if (IConsoleVariable* DisableResolutionCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("net.IpConnectionDisableResolution")))
 	{
 		DisableResolutionCVar->Set(1, ECVF_SetByCode);
@@ -173,14 +163,13 @@ void UCWGameInstance::HandleNetworkFailure(
 		*ErrorString
 	);
 
-	// UE 연결이 끊겨도 EOS 로비 멤버십은 남을 수 있다.
+	// UE 연결이 끊겨도 세션 멤버십은 남을 수 있다.
 	// 남은 멤버십을 정리해 서버 없는 방이 목록에 노출되는 것을 막는다.
 	DestroyRoom();
 }
 
 void UCWGameInstance::LoginWithEpic()
 {
-	ActivePlatform = ECWOnlinePlatform::EOS;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -211,10 +200,6 @@ void UCWGameInstance::LoginWithEpic()
 
 void UCWGameInstance::LoginWithSteam()
 {
-	// Steam은 EOS를 거치지 않고 독립된 OnlineSubsystem으로 로그인한다 -
-	// EOS Steam Identity Provider 연동은 우리 소유 Steamworks App ID 등록이 끝나기 전까지 보류.
-	// 그래서 에픽/DevAuth 로그인 유저와는 서로 다른 방 목록을 보게 된다.
-	ActivePlatform = ECWOnlinePlatform::Steam;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -243,7 +228,6 @@ void UCWGameInstance::LoginWithSteam()
 
 void UCWGameInstance::LoginWithDeveloperTool(const FString& CredentialName)
 {
-	ActivePlatform = ECWOnlinePlatform::EOS;
 	CacheOnlineInterfaces();
 
 	if (!IdentityInterface.IsValid())
@@ -394,8 +378,18 @@ void UCWGameInstance::JoinFirstFoundRoom()
 
 	BindJoinSessionCompleteDelegate();
 
+	// [Steam 엔진 버그 우회] FOnlineSessionSteam::JoinSession은 검색 결과의 bUsesPresence와
+	// bUseLobbiesIfAvailable이 다르면 곧바로 UnknownError로 실패시킨다. 그런데 로비 데이터로
+	// 실제 전송되는 세션 플래그 비트필드에는 bUseLobbiesIfAvailable이 빠져 있어서, 검색으로
+	// 복원된 결과는 항상 bUsesPresence=true / bUseLobbiesIfAvailable=false가 되어 "방은
+	// 목록에 보이는데 입장은 항상 실패"한다. 호스트는 CreateSessionWithRoomCode에서 두 값을
+	// 같게 광고하므로, 여기서도 같게 맞춰준다.
+	FOnlineSessionSearchResult& DesiredSession = SessionSearch->SearchResults[0];
+	DesiredSession.Session.SessionSettings.bUseLobbiesIfAvailable =
+		DesiredSession.Session.SessionSettings.bUsesPresence;
+
 	SetStatus(TEXT("JoinFirstFoundRoom requested"));
-	SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, SessionSearch->SearchResults[0]);
+	SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, DesiredSession);
 }
 
 void UCWGameInstance::DestroyRoom()
@@ -459,18 +453,16 @@ void UCWGameInstance::CacheOnlineInterfaces()
 {
 	UWorld* World = GetWorld();
 
-	// ActivePlatform이 Steam이면 EOS를 거치지 않고 네이티브 Steam 서브시스템을 직접 가져온다.
-	// NAME_None을 넘기면 기존과 동일하게 DefaultPlatformService(EOS)를 가져온다.
-	const FName SubsystemName = (ActivePlatform == ECWOnlinePlatform::Steam) ? STEAM_SUBSYSTEM : NAME_None;
-
 	// 멀티 PIE에서는 World마다 별도의 OnlineSubsystem 인스턴스를 사용할 수 있음
 	IOnlineSubsystem* OnlineSubsystem = IsValid(World)
-		? Online::GetSubsystem(World, SubsystemName)
-		: IOnlineSubsystem::Get(SubsystemName);
+		? Online::GetSubsystem(World)
+		: IOnlineSubsystem::Get();
 
 	if (OnlineSubsystem == nullptr)
 	{
 		SetStatus(TEXT("OnlineSubsystem is null"));
+		IdentityInterface.Reset();
+		SessionInterface.Reset();
 		return;
 	}
 
@@ -485,33 +477,21 @@ void UCWGameInstance::CacheOnlineInterfaces()
 	));
 }
 
-void UCWGameInstance::ApplyNetDriverClassForActivePlatform()
+bool UCWGameInstance::IsLanOnlySubsystem() const
 {
-	if (GEngine == nullptr)
+	const UWorld* World = GetWorld();
+	const IOnlineSubsystem* OnlineSubsystem = IsValid(World)
+		? Online::GetSubsystem(World)
+		: IOnlineSubsystem::Get();
+
+	if (OnlineSubsystem == nullptr)
 	{
-		return;
+		// 서브시스템조차 못 잡은 상황. LAN으로 취급하는 게 안전하다
+		// (로비를 못 여는 것보다, 최소한 같은 망/기기에서라도 붙는 편이 낫다)
+		return true;
 	}
 
-	FNetDriverDefinition* GameNetDriverDef = GEngine->NetDriverDefinitions.FindByPredicate(
-		[](const FNetDriverDefinition& Def)
-		{
-			return Def.DefName == CrosswalkSession::GameNetDriverDefName;
-		});
-
-	if (GameNetDriverDef == nullptr)
-	{
-		return;
-	}
-
-	// 호스트의 UWorld::Listen()과 참가자의 UPendingNetGame::InitNetDriver()는 둘 다 "GameNetDriver"라는
-	// 정의 이름을 하드코딩해서 찾는다 - 참가자 쪽은 URL 옵션(NetDriverDef=)으로 바꿀 방법이 아예 없어서
-	// (엔진 소스 확인 완료, virtual도 아님) 정의 이름을 유지한 채 그 정의가 가리키는 드라이버 클래스
-	// 자체를 트래블 직전마다 바꿔치기하는 방식으로 호스트/참가자 양쪽을 동시에 처리한다.
-	// Steam은 EOS P2P 소켓(NetDriverEOSBase)을 못 쓴다 - 로그인된 EOS 유저가 없어서 바인드할 로컬
-	// 주소를 못 만들어 "No local user set in LocalBindAddr"로 실패한다.
-	GameNetDriverDef->DriverClassName = (ActivePlatform == ECWOnlinePlatform::Steam)
-		? CrosswalkSession::SteamNetDriverClassName
-		: CrosswalkSession::EosNetDriverClassName;
+	return OnlineSubsystem->GetSubsystemName() == NULL_SUBSYSTEM;
 }
 
 void UCWGameInstance::SetStatus(const FString& NewStatus)
@@ -567,13 +547,32 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 	CurrentFindPurpose = FindPurpose;
 
 	SessionSearch = MakeShared<FOnlineSessionSearch>();
-	SessionSearch->MaxSearchResults = 100;
-	SessionSearch->bIsLanQuery = false;
+	SessionSearch->MaxSearchResults = 20;
+	SessionSearch->bIsLanQuery = IsLanOnlySubsystem();   // 광고 방식(CreateSessionWithRoomCode)과 반드시 짝이 맞아야 한다
 	SessionSearch->PingBucketSize = 50;
 
 	SessionSearch->QuerySettings.Set(
 		SEARCH_LOBBIES,
 		true,
+		EOnlineComparisonOp::Equals
+	);
+
+	/**
+	 * [480(Spacewar) 공용 풀 대응, 핵심 수정] QuerySettings에 넣은 키는 클라에서 결과를 받은
+	 * 뒤 걸러내는 게 아니라, FOnlineAsyncTaskSteamFindLobbiesBase::CreateQuery()가
+	 * SteamMatchmakingPtr->AddRequestLobbyListStringFilter()로 그대로 넘겨서 Steam 서버
+	 * 쪽에서 미리 걸러진 채로 응답한다(OnlineSessionAsyncLobbySteam.cpp 확인).
+	 *
+	 * 이게 필요한 이유: 480은 전 세계 개발자가 공유하는 테스트 AppID라 검색에 남의 팀 로비가
+	 * 같이 잡힌다. 그런데 FOnlineAsyncTaskSteamFindLobbiesBase는 잡힌 로비 "전부"의 상세
+	 * 데이터(RequestLobbyData)가 와야 성공 처리하고, 그중 하나라도(죽은 로비 등) 응답이 안
+	 * 오면 타임아웃을 아무리 늘려도(OnlineAsyncTaskSteamFindLobbiesBaseTimeout) 영원히
+	 * 실패한다 - 실측으로 확인(30초로 늘려도 그대로 실패). 검색 시점에 우리 게임 로비만
+	 * 요청하면 애초에 죽은 로비를 기다릴 일이 없어진다.
+	 */
+	SessionSearch->QuerySettings.Set(
+		CrosswalkSession::GameIdKey,
+		CrosswalkSession::GameIdValue,
 		EOnlineComparisonOp::Equals
 	);
 
@@ -593,7 +592,7 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 	}
 
 	FOnlineSessionSettings SessionSettings;
-	SessionSettings.bIsLANMatch = false;
+	SessionSettings.bIsLANMatch = IsLanOnlySubsystem();   // 검색(StartFindSessions)의 bIsLanQuery와 반드시 짝이 맞아야 한다
 	SessionSettings.NumPublicConnections = MaxPublicConnections;
 	SessionSettings.bShouldAdvertise = true;
 	SessionSettings.bAllowJoinInProgress = true;
@@ -604,6 +603,7 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 
 	SessionSettings.Set(SETTING_MAPNAME, ListenMapPath, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::RoomCodeKey, RoomCode, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	SessionSettings.Set(CrosswalkSession::GameIdKey, CrosswalkSession::GameIdValue, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 
 	BindCreateSessionCompleteDelegate();
 
@@ -643,6 +643,14 @@ FCWRoomSummary UCWGameInstance::BuildRoomSummary(const FOnlineSessionSearchResul
 	SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomCodeKey, Summary.RoomCode);
 
 	Summary.HostName = SearchResult.Session.OwningUserName;
+
+	// Null 서브시스템(로컬 멀티 PIE 테스트 전용)은 OwningUserName이 컴퓨터 이름이라 방 목록
+	// UI에 다 안 들어갈 만큼 길다. 실제 스팀 닉네임은 이 문제가 없으니 Null일 때만 줄인다 -
+	// 뒤 4글자만 남기면 같은 기기의 PIE 인스턴스끼리는 여전히 구분된다.
+	if (IsLanOnlySubsystem() && Summary.HostName.Len() > 4)
+	{
+		Summary.HostName = Summary.HostName.Right(4);
+	}
 	Summary.MaxPlayers = SearchResult.Session.SessionSettings.NumPublicConnections;
 	Summary.CurrentPlayers = FMath::Max(0, Summary.MaxPlayers - SearchResult.Session.NumOpenPublicConnections);
 
@@ -695,7 +703,7 @@ void UCWGameInstance::CompleteSessionOperation(ECWSessionOperation Operation, bo
 	 * 진행 중이던 작업이 끝났을 때만 상태를 내린다.
 	 *
 	 * 초기 검증에서 실패한 요청은 BeginSessionOperation 을 지난 적이 없다. 그런데도
-	 * 무조건 플래그를 내리면, 다른 작업이 EOS 콜백을 기다리는 중에 엉뚱한 요청 하나가
+	 * 무조건 플래그를 내리면, 다른 작업이 OSS 콜백을 기다리는 중에 엉뚱한 요청 하나가
 	 * 조기 실패하는 것만으로 그 작업의 in-flight 가 꺼진다. UI 는 한가한 줄 알고
 	 * 다음 요청을 받아버리고, 뒤늦게 도착한 콜백이 그 위에서 다시 돈다.
 	 */
@@ -745,7 +753,7 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 	}
 
 	/**
-	 * EOS 콜백이 끝내 오지 않았다. 등록해 둔 델리게이트를 전부 걷어낸다.
+	 * OSS 콜백이 끝내 오지 않았다. 등록해 둔 델리게이트를 전부 걷어낸다.
 	 *
 	 * 안 걷어내면 한참 뒤에 도착한 응답이 이미 정리된 상태 위에서 다시 돌면서,
 	 * 그 사이에 시작한 다른 작업의 결과를 덮어쓴다.
@@ -1005,11 +1013,6 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 
 		if (World != nullptr)
 		{
-			// GameNetDriver 정의가 가리키는 드라이버 클래스를 ActivePlatform에 맞게 바꿔치기한다
-			// (CreateNamedNetDriver로 같은 이름을 미리 등록해두는 이전 방식은 Listen()이 내부적으로
-			// 호출하는 CreateNamedNetDriver와 이름이 충돌해 NetDriverCreateFailure로 실패했음 - 폐기).
-			ApplyNetDriverClassForActivePlatform();
-
 			// URL에 Name= 옵션이 없으면 PlayerState 이름이 GameMode::DefaultPlayerName("Player")로
 			// 고정된다 - 플랫폼 상관없이 항상 그랬던 문제라 여기서 로그인 닉네임을 실어 보낸다.
 			// 옵션 구분자는 반드시 '?'다 - FURL은 '&'를 옵션 구분자로 인식하지 않는다(엔진 소스
@@ -1057,6 +1060,15 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 		return;
 	}
 
+	// 480 공용 풀 필터링 - 아래 어떤 목적(방 목록/방 코드 중복확인/방 코드 참가)으로 쓰이든
+	// 남의 게임 로비가 섞여 있으면 안 되므로, 갈래를 타기 전에 한 번만 걸러낸다.
+	SessionSearch->SearchResults.RemoveAll([](const FOnlineSessionSearchResult& SearchResult)
+	{
+		FString FoundGameId;
+		SearchResult.Session.SessionSettings.Get(CrosswalkSession::GameIdKey, FoundGameId);
+		return FoundGameId != CrosswalkSession::GameIdValue;
+	});
+
 	if (FinishedPurpose == ECWSessionFindPurpose::CheckRoomCodeForCreate)
 	{
 		if (HasRoomCodeInSearchResults(PendingRoomCode))
@@ -1082,7 +1094,7 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 
 	if (FinishedPurpose == ECWSessionFindPurpose::JoinByRoomCode)
 	{
-		for (const FOnlineSessionSearchResult& SearchResult : SessionSearch->SearchResults)
+		for (FOnlineSessionSearchResult& SearchResult : SessionSearch->SearchResults)
 		{
 			FString FoundRoomCode;
 
@@ -1091,6 +1103,12 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 				if (FoundRoomCode.Equals(PendingJoinRoomCode, ESearchCase::IgnoreCase))
 				{
 					BindJoinSessionCompleteDelegate();
+
+					// [Steam 엔진 버그 우회] JoinFirstFoundRoom과 같은 이유 - 검색 결과의
+					// bUseLobbiesIfAvailable이 로비 데이터 왕복에서 유실돼 항상 false로 복원되고,
+					// bUsesPresence(true)와 어긋나면 JoinSession이 곧바로 UnknownError로 실패한다.
+					SearchResult.Session.SessionSettings.bUseLobbiesIfAvailable =
+						SearchResult.Session.SessionSettings.bUsesPresence;
 
 					SetStatus(FString::Printf(TEXT("JoinSession requested. RoomCode: %s"), *PendingJoinRoomCode));
 					SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, SearchResult);
@@ -1175,11 +1193,6 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 
 	// CurrentRoomCode를 채운 뒤에 알려야 ViewModel이 빈 값을 읽지 않음
 	CompleteSessionOperation(ECWSessionOperation::JoinRoom, true, ECWSessionFailure::None);
-
-	// 호스트 쪽 ServerTravel 직전과 같은 이유 - UPendingNetGame::InitNetDriver()도 내부적으로
-	// "GameNetDriver" 정의를 찾아서 쓰기 때문에(엔진 소스 확인 완료, URL 옵션으로 바꿀 방법 없음),
-	// ClientTravel 직전에 그 정의가 가리키는 드라이버 클래스를 여기서도 바꿔치기해야 한다.
-	ApplyNetDriverClassForActivePlatform();
 
 	// 호스트 쪽과 같은 이유로 Name= 옵션을 실어 보낸다 - 없으면 서버에서 PlayerState 이름이
 	// GameMode::DefaultPlayerName("Player")로 고정된다. FURL은 옵션 구분자로 '&'를 인식하지 않고
