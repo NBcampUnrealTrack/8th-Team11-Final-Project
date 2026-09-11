@@ -8,6 +8,8 @@
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 // FUpdateTextureRegion2D 는 Texture2D.h 에 전방 선언만 있다. 실제로 만들려면 이쪽이 필요하다.
 #include "RHITypes.h"
 #include "TimerManager.h"
@@ -87,6 +89,15 @@ ACWWorkZone_Cells::ACWWorkZone_Cells()
 	// 화면에서 빈 칸을 감추는 것은 스케일 0 이 담당한다. (GetCellInstanceTransform)
 	// 커스텀 데이터를 읽는 머티리얼이 아직 없어도 그림이 깨지지 않게 하기 위해서다.
 	CellMeshes->NumCustomDataFloats = 2;
+
+	// 오염 레이어처럼 블루프린트를 거치지 않고 C++ 클래스를 그대로 배치한 존도
+	// 이펙트가 나오게 기본값을 물려 둔다. 블루프린트에서 다른 값을 지정했으면 그쪽이 이긴다.
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> PaintStrokeFXAsset(
+		TEXT("/Game/CrossWalk/Painting/Zone/FX/NS_PaintStroke.NS_PaintStroke"));
+	if (PaintStrokeFXAsset.Succeeded())
+	{
+		PaintStrokeFX = PaintStrokeFXAsset.Object;
+	}
 }
 
 void ACWWorkZone_Cells::OnConstruction(const FTransform& Transform)
@@ -856,7 +867,52 @@ int32 ACWWorkZone_Cells::ApplyStroke(const FCWBrushStroke& Stroke)
 	// 위에서 모아둔 것들(메쉬 갱신 / 전송 / 스냅샷)을 처리하려면 틱이 돌아야 한다.
 	RefreshTickEnabled();
 
+	// 붓이 진짜로 칸을 뒤집은 순간에만 이펙트를 낸다. 덧칠은 위에서 이미 돌아갔다.
+	SpawnPaintStrokeFX(Stroke);
+
 	return ChangedCellCount;
+}
+
+void ACWWorkZone_Cells::SpawnPaintStrokeFX(const FCWBrushStroke& Stroke)
+{
+	// 작업자가 칸을 실제로 바꾼 붓질이면 낸다. 도색 존의 칠하기와 오염 레이어의 지우기가
+	// 모두 여기 해당된다.
+	//
+	// 바깥 고리 전용 붓질만 뺀다. 차량 자국과 검은색 롤러는 작업이 아니라 더럽히는 쪽이라
+	// 페인트가 튀는 연출이 규칙을 거꾸로 읽히게 만든다.
+	if (PaintStrokeFX == nullptr || Stroke.bSpillOnly)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 붓질은 서버에서도 같은 경로로 적용된다. 그릴 화면이 없는 쪽에서는 여기서 빠진다.
+	if (World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	if (Now - LastPaintStrokeFXTime < PaintStrokeFXInterval)
+	{
+		return;
+	}
+	LastPaintStrokeFXTime = Now;
+
+	// 붓 중심은 커서가 맞은 바닥 지점이라 칸 판 높이와 같다. 파티클이 바닥에 묻히면
+	// 여기서 Z 를 올리는 대신 이미터 쪽 속도·수명을 조정하는 게 맞다.
+	UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		World,
+		PaintStrokeFX,
+		Stroke.Center,
+		FRotator::ZeroRotator,
+		FVector(PaintStrokeFXScale)
+	);
 }
 
 bool ACWWorkZone_Cells::BlocksPaintSpill() const
