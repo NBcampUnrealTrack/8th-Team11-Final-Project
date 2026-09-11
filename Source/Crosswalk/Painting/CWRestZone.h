@@ -144,11 +144,11 @@ protected:
 
 	// 감지 박스를 플레이 중에도 보이게 한다. 바닥 데칼이 생기기 전까지 위치 확인용.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rest|Debug")
-	bool bShowDebugArea = true;
+	bool bShowDebugArea = false;
 
 	// 점유자와 대기 인원을 화면에 띄운다. 서버에서만 대기 인원이 정확하다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rest|Debug")
-	bool bShowDebugOccupant = true;
+	bool bShowDebugOccupant = false;
 
 private:
 	// 지금 회복 중인 1명. 서버가 정하고 전원에게 전파된다.
