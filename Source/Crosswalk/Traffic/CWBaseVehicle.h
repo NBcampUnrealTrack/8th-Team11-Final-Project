@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "Data/CWTrafficVehicleSpawnParams.h"
 #include "Data/CWVehicleMeshVariant.h"
+#include "Data/CWVehicleVariantPick.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 #include "CWBaseVehicle.generated.h"
 
@@ -13,7 +14,9 @@ class ACWBaseVehicle;
 class ACWTrafficLane;
 class UBoxComponent;
 class UCWVehicleStopSyncComponent;
+class UPoseableMeshComponent;
 class USceneComponent;
+class USkeletalMesh;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -162,6 +165,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetCurrentSpeed() const { return CurrentVelocity.Size(); }
 
+	/**
+	 * 바퀴가 지금까지 돈 각도(도). ApplyWheelSpinToBones 가 이 값을 바퀴 본에 꽂는다.
+	 *
+	 * 본에 꽂는 일은 C++ 이 하므로 이 게터는 BP 쪽 참고용으로만 남아 있다.
+	 *
+	 * 복제하지 않는다. 차량 위치·속도가 이미 양쪽에 있어서 각 클라이언트가 같은 식으로
+	 * 돌리면 되고, 어긋나 봐야 바퀴 각도라 아무도 알아채지 못한다. 이 한 줄을 복제하면
+	 * 얻는 것 없이 대역폭과 검증 부담만 는다.
+	 *
+	 * 0~360 으로 감아 둔다. 각도를 무한히 키우면 부동소수 정밀도가 떨어져 회전이 튄다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetWheelSpinDegrees() const { return WheelSpinDegrees; }
+
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetVehicleLength() const;
@@ -308,8 +325,37 @@ private:
 	 */
 	void UpdateTransformOnLane(float StepSpeed = 0.f);
 
-	/** 고른 변형의 메쉬와 콜리전 크기를 반영한다. 인덱스가 범위 밖이면 아무것도 하지 않는다. */
+	/** 지금 뽑혀 있는 차체. 아직 안 뽑았거나 인덱스가 범위 밖이면 널이다. */
+	const FCWVehicleMeshVariant* GetActiveVariant() const;
+
+	/** 고른 차체와 색의 메쉬·콜리전 크기를 반영한다. 뽑은 것이 없으면 아무것도 하지 않는다. */
 	void ApplyMeshVariant();
+
+	/**
+	 * 바퀴 회전각을 이번 프레임 이동만큼 민다. 서버·클라이언트 양쪽에서 돈다.
+	 *
+	 * Tick 맨 앞에서 지난 프레임 속도로 계산한다. 이번 프레임 속도를 쓰려면 튕겨나가는
+	 * 경로와 차선 주행 경로가 각자 속도를 채운 뒤에 불러야 하는데, 그러면 호출 지점이
+	 * 둘로 갈라져 한쪽을 빼먹기 쉽다. 바퀴 각도가 한 프레임 늦는 것은 눈에 보이지 않는다.
+	 */
+	void UpdateWheelSpin(float DeltaSeconds);
+
+	/**
+	 * 누적된 바퀴 각도를 WheelBones 에 얹는다. 순수 연출이라 서버·클라이언트가 각자 돈다.
+	 *
+	 * 각도 계산과 나눠 둔 이유는 화면 밖에서 이쪽만 건너뛰기 위해서다. 각도는 계속
+	 * 누적해야 다시 보일 때 맞는 값이 나온다.
+	 */
+	void ApplyWheelSpinToBones();
+
+	/**
+	 * 지금 씌운 변형의 바퀴 반지름(cm). 변형이 0 이면 차종 BP 의 WheelRadius 로 떨어진다.
+	 *
+	 * 결과를 멤버에 캐시하지 않는 이유: 캐시하면 반지름을 지정한 변형을 한 번 뽑은 차량이
+	 * 재사용될 때 그 값이 남아, 지정하지 않은 변형에 엉뚱한 반지름이 붙는다.
+	 * (콜리전 익스텐트가 같은 구조라 풀링을 도입하면 그쪽도 같이 봐야 한다)
+	 */
+	float GetActiveWheelRadius() const;
 
 	/**
 	 * 콜리전 박스 크기를 바꾸고, 바뀐 높이에 맞춰 박스를 다시 노면 위로 올린다.
@@ -322,9 +368,9 @@ private:
 	 */
 	void ApplyCollisionExtent(const FVector& Extent);
 
-	/** 서버가 고른 변형이 클라이언트에 도착했을 때. */
+	/** 서버가 고른 차체와 색이 클라이언트에 도착했을 때. */
 	UFUNCTION()
-	void OnRep_MeshVariantIndex();
+	void OnRep_VariantPick();
 
 	/**
 	 * 튕겨나간 지점과 방향이 클라이언트에 도착했을 때. 차선 추종을 끊고 그 자세로 맞춘다.
@@ -482,6 +528,28 @@ protected:
 	TObjectPtr<UStaticMeshComponent> VehicleMesh;
 
 	/**
+	 * 바퀴가 도는 차량용 메쉬. VehicleMesh 와 나란히 서고, 변형이 지정한 쪽만 채워진다.
+	 *
+	 * 정적 메쉬를 갈아 끼우는 대신 컴포넌트를 하나 더 둔 이유는, 기존 차종 BP 들이
+	 * VehicleMesh 에 직접 메쉬를 물려 둔 상태이기 때문이다. 타입을 바꿔 버리면 그 BP 들이
+	 * 한꺼번에 빈 차가 되고, 되돌리려면 BP 를 하나씩 다시 열어야 한다.
+	 *
+	 * 메쉬가 안 물린 컴포넌트는 아무것도 그리지 않으므로 쓰지 않는 쪽의 비용은 없다.
+	 *
+	 * 스켈레탈 메쉬 컴포넌트가 아니라 포저블인 이유
+	 *   MegaCity 팩은 메쉬 94종이 각자 자기 스켈레톤을 들고 있다. 애님 블루프린트는
+	 *   스켈레톤 하나에 묶이므로, 그 방식으로 가면 메쉬를 갈아 끼울 때마다 애님이 떨어져
+	 *   바퀴가 멈춘다. 피하려면 94종을 한 스켈레톤으로 재임포트하거나(임포트 때 잡아 둔
+	 *   전방축 보정이 날아간다) 94개 에셋에 호환 스켈레톤을 등록해야 한다.
+	 *
+	 *   포저블 메쉬는 애님 인스턴스도 스켈레톤 바인딩도 없이 본을 직접 돌린다. 본 이름만
+	 *   맞으면 되므로 에셋을 하나도 건드리지 않고 94종이 전부 돈다. 이 차량들이 가진
+	 *   애니메이션은 바퀴 회전뿐이라 애님 그래프로 얻을 것이 애초에 없었다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TObjectPtr<UPoseableMeshComponent> VehicleSkeletalMesh;
+
+	/**
 	 * 정지선 앞에 선 동안 서버-클라 위치 오차를 좁힌다. (보정 담당은 전부 이 컴포넌트 안)
 	 *
 	 * 서버·클라이언트 양쪽에서 돈다. 트랜스폼을 복제하지 않는 구조라 클라이언트 화면의
@@ -510,6 +578,32 @@ protected:
 	/** 차종 기본 주행 속도(cm/s). 플레이어 기본 이동속도 500의 1.5배. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float Speed = 750.f;
+
+	/**
+	 * 차종 기본 바퀴 반지름(cm). 변형이 WheelRadius 를 지정하지 않았을 때 쓰인다.
+	 *
+	 * 기본값 34 는 승용차 어림치이고 실측이 아니다. 차종마다 메쉬 에디터에서 바퀴
+	 * 지름을 재서 절반을 넣는 것이 맞다. 틀려도 주행에는 영향이 없고 바퀴가 미끄러지거나
+	 * 끌려 보일 뿐이다.
+	 *
+	 * 0 이면 바퀴를 돌리지 않는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float WheelRadius = 34.f;
+
+	/**
+	 * 매 틱 돌릴 바퀴 본 이름. 비워 두면 바퀴가 돌지 않는다.
+	 *
+	 * 변형이 아니라 차종 BP 가 들고 있다. MegaCity 팩은 94종이 바퀴 본 이름을 공유해서
+	 * 변형마다 따로 채울 것이 없고, 실제로 갈리는 것은 개수뿐이다. 개수가 다른 차는
+	 * 어차피 길이가 달라 별도 차종 BP 로 가야 하므로(스포너 간격 계산이 GetVehicleLength 를
+	 * 본다) 차종 단위면 충분하다. 승용차 4개, 오토바이 2개, 3축 트럭 6개.
+	 *
+	 * 목록에 없는 이름을 넣으면 그 칸만 조용히 무시된다. 엔진이 경고를 찍기는 하지만
+	 * 차량마다 매 틱이라 로그가 잠기므로, 이름은 메쉬 에디터에서 확인하고 넣는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
+	TArray<FName> WheelBones;
 
 	/**
 	 * 피격 연출 분기에 쓰이는 차종 ID. FCWVehicleHitContext로 전달된다.
@@ -643,20 +737,16 @@ protected:
 	float LaneLateralOffset = 0.f;
 
 	/**
-	 * 서버가 고른 MeshVariants 인덱스. 음수면 아직 고르지 않았다는 뜻이다.
+	 * 서버가 고른 차체와 색. 뽑기 전에는 두 칸 모두 NotPicked 다.
 	 *
 	 * 모든 화면에 같은 차가 보여야 하므로 클라이언트가 각자 굴리면 안 된다.
-	 *
-	 * 기본값을 0이 아니라 음수로 두는 이유
-	 *   초기 복제에서는 CDO 기본값과 같은 값이 아예 전송되지 않고, 전송이 없으면 RepNotify도 없다.
-	 *   기본값이 0이면 0번 변형이 뽑힌 차량만 클라이언트에서 메쉬가 바뀌지 않는다.
-	 *   어떤 유효 인덱스와도 다른 값을 기본값으로 두면 전송과 알림이 항상 보장된다.
+	 * 둘을 한 구조체로 묶어 한 번에 보내는 이유는 FCWVehicleVariantPick 주석 참고.
 	 *
 	 * 같은 액터에 InitializeOnLane 을 다시 부르는 구조가 생기면(지금은 없다) 그 전에 이 값을
-	 * INDEX_NONE 으로 되돌려야 한다. 직전과 같은 인덱스를 다시 뽑으면 값이 안 바뀌어 전송이 생략된다.
+	 * 기본값으로 되돌려야 한다. 직전과 같은 조합을 다시 뽑으면 값이 안 바뀌어 전송이 생략된다.
 	 */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_MeshVariantIndex, Category = "Traffic|Vehicle")
-	int32 MeshVariantIndex = INDEX_NONE;
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_VariantPick, Category = "Traffic|Vehicle")
+	FCWVehicleVariantPick VariantPick;
 
 	/** 패링당해 튕겨나가는 중인 상태. 차선을 벗어나 직진한다. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Parry")
@@ -698,6 +788,15 @@ protected:
 private:
 	/** GetVelocity() 가 돌려주는 값. 서버·클라이언트가 각자 자기 Tick 에서 채운다. */
 	FVector CurrentVelocity = FVector::ZeroVector;
+
+	/**
+	 * 바퀴 누적 회전각(도). 시각 전용이라 복제하지 않는다. (GetWheelSpinDegrees 주석 참고)
+	 *
+	 * 스폰 시 0 으로 시작한다. 같은 차선의 차들이 바퀴 위상까지 똑같이 맞아 도는 것이
+	 * 눈에 띄면 여기에 초기 난수를 넣으면 되는데, 지금 속도와 차간 거리에서는 두 차가
+	 * 한 화면에 나란히 서는 일이 드물어 미뤄 둔다.
+	 */
+	float WheelSpinDegrees = 0.f;
 
 	/**
 	 * 패링당해 발사된 시각(월드 시간, 초). 음수면 아직 발사된 적이 없다는 뜻이다.
