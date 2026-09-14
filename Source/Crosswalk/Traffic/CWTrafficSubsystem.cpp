@@ -9,7 +9,7 @@
 #include "CWTrafficStopLine.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
-#include "Components/SkeletalMeshComponent.h"
+#include "Components/SkinnedMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/NetDriver.h"
 #include "Engine/PackageMapClient.h"
@@ -212,10 +212,14 @@ void UCWTrafficSubsystem::LogVehicleCensus()
 		 * 둘 다 봐야 한다. 차종이 스켈레탈 변형을 뽑으면 정적 메쉬 쪽은 비워지므로,
 		 * 예전처럼 UStaticMeshComponent 만 세면 멀쩡히 보이는 차가 "메쉬 없음" 으로
 		 * 잡혀 진단이 거짓 신호를 낸다.
+		 *
+		 * 스켈레탈 쪽을 USkinnedMeshComponent 로 집는 이유는 차량이 쓰는 것이
+		 * UPoseableMeshComponent 라 USkeletalMeshComponent 가 아니기 때문이다. 둘의
+		 * 공통 부모가 여기이고, 그래서 메쉬 게터도 GetSkinnedAsset 쪽을 쓴다.
 		 */
 		const UStaticMeshComponent* Mesh = Vehicle->FindComponentByClass<UStaticMeshComponent>();
-		const USkeletalMeshComponent* SkelMesh = Vehicle->FindComponentByClass<USkeletalMeshComponent>();
-		if ((Mesh && Mesh->GetStaticMesh()) || (SkelMesh && SkelMesh->GetSkeletalMeshAsset()))
+		const USkinnedMeshComponent* SkelMesh = Vehicle->FindComponentByClass<USkinnedMeshComponent>();
+		if ((Mesh && Mesh->GetStaticMesh()) || (SkelMesh && SkelMesh->GetSkinnedAsset()))
 		{
 			++MeshedCount;
 		}

@@ -3,7 +3,7 @@
 #include "CWBaseVehicle.h"
 
 #include "Components/BoxComponent.h"
-#include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
@@ -53,18 +53,9 @@ ACWBaseVehicle::ACWBaseVehicle()
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// 바퀴가 도는 차종용. 정적 메쉬와 같은 자리에 서고 변형이 지정한 쪽만 채워진다.
-	VehicleSkeletalMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("VehicleSkeletalMesh"));
+	VehicleSkeletalMesh = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("VehicleSkeletalMesh"));
 	VehicleSkeletalMesh->SetupAttachment(VehicleRoot);
 	VehicleSkeletalMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	/**
-	 * 화면에 안 잡히는 동안은 포즈를 돌리지 않는다.
-	 *
-	 * 차량은 화면 밖에서 스폰돼 한참 달려온 뒤에 시야에 들어온다. 그동안의 바퀴 각도는
-	 * 아무도 보지 않는데 애님 평가 비용은 그대로 든다. 다시 보일 때 각도가 튀지만,
-	 * 튀는 그 프레임을 본 사람이 없으므로 드러나지 않는다.
-	 */
-	VehicleSkeletalMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
 
 	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
 	// 이 컴포넌트가 좁힌다. (양쪽에서 도는 이유는 헤더의 StopSyncComponent 주석 참고)
@@ -81,7 +72,7 @@ void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 	DOREPLIFETIME(ACWBaseVehicle, DistanceAlongLane);
 	DOREPLIFETIME(ACWBaseVehicle, SpeedMultiplier);
 	DOREPLIFETIME(ACWBaseVehicle, LaneLateralOffset);
-	DOREPLIFETIME(ACWBaseVehicle, MeshVariantIndex);
+	DOREPLIFETIME(ACWBaseVehicle, VariantPick);
 
 	DOREPLIFETIME(ACWBaseVehicle, bParried);
 	DOREPLIFETIME(ACWBaseVehicle, ParryLaunchSerial);
@@ -193,10 +184,24 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
 
-	// 외형 변형은 서버가 골라 복제한다. 클라이언트가 각자 굴리면 화면마다 다른 차가 보인다.
+	/**
+	 * 외형 변형은 서버가 골라 복제한다. 클라이언트가 각자 굴리면 화면마다 다른 차가 보인다.
+	 *
+	 * 차체를 먼저 균등하게 뽑고 그 안에서 색을 뽑는다. 색까지 한 번에 늘어놓고 뽑으면
+	 * 색이 네 가지인 차체가 한 가지인 차체보다 네 배 자주 나온다. (FCWVehicleVariantPick 주석)
+	 *
+	 * 색 목록이 빈 차체도 뽑힐 수 있다. 그때 Color 는 0 이 되고 ApplyMeshVariant 가
+	 * 정적 메쉬 쪽으로 떨어뜨린다. 유효하지 않은 인덱스를 들고 있는 것이 아니라,
+	 * 애초에 색을 고를 것이 없는 차체다.
+	 */
 	if (HasAuthority() && MeshVariants.Num() > 0)
 	{
-		MeshVariantIndex = FMath::RandHelper(MeshVariants.Num());
+		const int32 FamilyIndex = FMath::RandHelper(MeshVariants.Num());
+		const int32 ColorCount = MeshVariants[FamilyIndex].ColorMeshes.Num();
+
+		VariantPick.Family = static_cast<uint8>(FamilyIndex);
+		VariantPick.Color = ColorCount > 0 ? static_cast<uint8>(FMath::RandHelper(ColorCount)) : 0;
+
 		ApplyMeshVariant();
 	}
 
@@ -207,30 +212,49 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	UpdateTransformOnLane();
 }
 
+const FCWVehicleMeshVariant* ACWBaseVehicle::GetActiveVariant() const
+{
+	if (!VariantPick.IsPicked() || !MeshVariants.IsValidIndex(VariantPick.Family))
+	{
+		return nullptr;
+	}
+
+	return &MeshVariants[VariantPick.Family];
+}
+
 void ACWBaseVehicle::ApplyMeshVariant()
 {
-	if (!MeshVariants.IsValidIndex(MeshVariantIndex))
+	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
+	if (!Variant)
 	{
 		return;
 	}
 
-	const FCWVehicleMeshVariant& Variant = MeshVariants[MeshVariantIndex];
+	/**
+	 * 뽑은 색의 메쉬. 색 목록이 비었거나 그 칸이 비어 있으면 널이고, 그러면 아래에서
+	 * 정적 메쉬 쪽으로 떨어진다. 양쪽 다 비면 BP 가 물려 둔 기본 메쉬가 그대로 남는다.
+	 */
+	USkeletalMesh* ColorMesh = Variant->ColorMeshes.IsValidIndex(VariantPick.Color)
+		? Variant->ColorMeshes[VariantPick.Color]
+		: nullptr;
 
 	/**
-	 * 배열에 빈 칸이 섞여 있으면 그 칸을 뽑은 차량은 BP 기본 메쉬 그대로 달린다.
-	 *
 	 * 지정한 쪽을 채우고 반대쪽은 비운다. 둘 다 남겨 두면 BP 가 물려 둔 기본 메쉬와
 	 * 변형 메쉬가 한 자리에 겹쳐 보인다. 둘 다 비어 있을 때만 아무것도 건드리지 않는다.
+	 *
+	 * SetSkeletalMeshAsset 이 아니라 SetSkinnedAssetAndUpdate 를 쓰는 이유는 앞의 것이
+	 * USkeletalMeshComponent 의 함수이기 때문이다. 포저블 메쉬는 그 아래 USkinnedMeshComponent
+	 * 를 상속하고, 본 배열 재할당(AllocateTransformData)은 이쪽이 대신 불러 준다.
 	 */
-	if (Variant.SkeletalMesh)
+	if (ColorMesh)
 	{
-		VehicleSkeletalMesh->SetSkeletalMeshAsset(Variant.SkeletalMesh);
+		VehicleSkeletalMesh->SetSkinnedAssetAndUpdate(ColorMesh);
 		VehicleMesh->SetStaticMesh(nullptr);
 	}
-	else if (Variant.Mesh)
+	else if (Variant->Mesh)
 	{
-		VehicleMesh->SetStaticMesh(Variant.Mesh);
-		VehicleSkeletalMesh->SetSkeletalMeshAsset(nullptr);
+		VehicleMesh->SetStaticMesh(Variant->Mesh);
+		VehicleSkeletalMesh->SetSkinnedAssetAndUpdate(nullptr);
 	}
 
 	/**
@@ -242,9 +266,9 @@ void ACWBaseVehicle::ApplyMeshVariant()
 	 * 이 값은 GetVehicleLength 를 통해 스포너의 간격 계산에도 들어간다. 다만 스폰 주기가
 	 * 차 길이에 비해 훨씬 길어서(8초면 6000cm 이동) 실제로 간격 제한에 걸리는 일은 없다.
 	 */
-	if (!Variant.BoxExtent.IsNearlyZero())
+	if (!Variant->BoxExtent.IsNearlyZero())
 	{
-		ApplyCollisionExtent(Variant.BoxExtent);
+		ApplyCollisionExtent(Variant->BoxExtent);
 	}
 }
 
@@ -274,9 +298,10 @@ void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
 
 float ACWBaseVehicle::GetActiveWheelRadius() const
 {
-	if (MeshVariants.IsValidIndex(MeshVariantIndex) && MeshVariants[MeshVariantIndex].WheelRadius > 0.f)
+	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
+	if (Variant && Variant->WheelRadius > 0.f)
 	{
-		return MeshVariants[MeshVariantIndex].WheelRadius;
+		return Variant->WheelRadius;
 	}
 
 	return WheelRadius;
@@ -304,9 +329,49 @@ void ACWBaseVehicle::UpdateWheelSpin(float DeltaSeconds)
 
 	// 무한히 키우면 부동소수 정밀도가 떨어져 회전이 눈에 띄게 튄다.
 	WheelSpinDegrees = FMath::Fmod(WheelSpinDegrees, 360.f);
+
+	ApplyWheelSpinToBones();
 }
 
-void ACWBaseVehicle::OnRep_MeshVariantIndex()
+void ACWBaseVehicle::ApplyWheelSpinToBones()
+{
+	if (WheelBones.Num() == 0 || !VehicleSkeletalMesh->GetSkinnedAsset())
+	{
+		// 정적 메쉬 변형을 뽑았거나 차종 BP 가 본 이름을 안 채운 경우다.
+		return;
+	}
+
+	/**
+	 * 화면에 안 잡히는 동안은 본을 건드리지 않는다.
+	 *
+	 * 차량은 화면 밖에서 스폰돼 한참 달려온 뒤에 시야에 들어온다. 그동안의 바퀴 각도는
+	 * 아무도 보지 않는데 포즈 갱신 비용은 그대로 든다. 각도 자체는 위에서 계속 누적하므로
+	 * 다시 보이는 순간의 각도는 맞다. 안 보이는 동안의 중간 프레임만 건너뛴다.
+	 *
+	 * (스켈레탈 메쉬 컴포넌트의 VisibilityBasedAnimTickOption 이 하던 일을 옮겨온 것이다.
+	 *  포저블 메쉬는 애님 틱을 돌지 않으므로 그 옵션이 없다.)
+	 */
+	if (!VehicleSkeletalMesh->WasRecentlyRendered())
+	{
+		return;
+	}
+
+	/**
+	 * Pitch 로 돌린다. 차량이 +X 를 보고 서 있으므로 바퀴 축은 컴포넌트 공간의 Y 축이고,
+	 * 그 축을 도는 회전이 Pitch 다.
+	 *
+	 * 본의 레퍼런스 포즈 회전을 덮어쓰는 절대 지정이다. 바퀴 본이 회전된 채로 바인드된
+	 * 메쉬가 있으면 그 차만 바퀴가 비스듬히 서는데, 그때는 여기서 레퍼런스 회전을 곱하는
+	 * 쪽으로 바꿔야 한다. 지금 팩은 전부 축 정렬이라 필요가 없어서 넣지 않았다.
+	 */
+	const FRotator Spin(WheelSpinDegrees, 0.f, 0.f);
+	for (const FName& BoneName : WheelBones)
+	{
+		VehicleSkeletalMesh->SetBoneRotationByName(BoneName, Spin, EBoneSpaces::ComponentSpace);
+	}
+}
+
+void ACWBaseVehicle::OnRep_VariantPick()
 {
 	ApplyMeshVariant();
 }
