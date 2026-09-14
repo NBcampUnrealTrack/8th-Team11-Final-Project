@@ -68,9 +68,9 @@ public:
 #pragma region SessionRequests
 
 public:
-	// 새로운 공개 세션 생성을 요청
+	// 새로운 세션 생성을 요청. 제목은 목록 표시용이고 비밀방은 목록에서만 숨김
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")
-	void RequestCreateRoom();
+	void RequestCreateRoom(const FString& RoomName, bool bIsPrivate);
 
 	// 현재 참가 가능한 공개 세션 검색을 요청
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")

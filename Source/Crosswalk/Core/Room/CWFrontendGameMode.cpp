@@ -1,13 +1,13 @@
-﻿// CWRoomGameMode.cpp
+﻿// CWFrontendGameMode.cpp
 
-#include "Core/Room/CWRoomGameMode.h"
+#include "Core/Room/CWFrontendGameMode.h"
 #include "CoreMinimal.h"
 #include "Core/CWPlayerState.h"
 #include "Core/Room/CWRoomGameState.h"
 
 #pragma region GameModeLifecycle
 
-ACWRoomGameMode::ACWRoomGameMode()
+ACWFrontendGameMode::ACWFrontendGameMode()
 {
 	// 방에서 인게임으로 이동하는 동안 클라이언트 연결을 유지
 	bUseSeamlessTravel = true;
@@ -20,7 +20,7 @@ ACWRoomGameMode::ACWRoomGameMode()
 		ACWPlayerState::StaticClass();
 }
 
-void ACWRoomGameMode::InitGameState()
+void ACWFrontendGameMode::InitGameState()
 {
 	Super::InitGameState();
 
@@ -48,7 +48,7 @@ void ACWRoomGameMode::InitGameState()
 
 #pragma region StageSelectionValidation
 
-bool ACWRoomGameMode::CanOpenStageSelection() const
+bool ACWFrontendGameMode::CanOpenStageSelection() const
 {
 	const ACWRoomGameState* RoomGameState =
 		GetGameState<ACWRoomGameState>();
@@ -62,7 +62,7 @@ bool ACWRoomGameMode::CanOpenStageSelection() const
 	return RoomGameState->CanStartGame();
 }
 
-bool ACWRoomGameMode::CanStartSelectedStage() const
+bool ACWFrontendGameMode::CanStartSelectedStage() const
 {
 	const ACWRoomGameState* RoomGameState =
 		GetGameState<ACWRoomGameState>();

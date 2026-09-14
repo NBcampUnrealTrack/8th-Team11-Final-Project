@@ -163,7 +163,7 @@ FText UCWSessionViewModel::GetCurrentRoomCodeText() const
 	return FText::FromString(CurrentRoomCode);
 }
 
-void UCWSessionViewModel::RequestCreateRoom()
+void UCWSessionViewModel::RequestCreateRoom(const FString& RoomName, bool bIsPrivate)
 {
 	UCWGameInstance* GameInstance = BoundGameInstance.Get();
 
@@ -173,7 +173,7 @@ void UCWSessionViewModel::RequestCreateRoom()
 	}
 
 	// 방 생성 요청을 GameInstance에 전달
-	GameInstance->CreateRoom();
+	GameInstance->CreateRoom(RoomName, bIsPrivate);
 
 	// 요청이 실제로 시작됐는지 GameInstance의 상태를 다시 읽음
 	SetOperationInFlight(

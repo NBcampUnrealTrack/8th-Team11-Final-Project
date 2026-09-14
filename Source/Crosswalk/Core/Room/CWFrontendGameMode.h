@@ -1,13 +1,15 @@
-﻿// CWRoomGameMode.h
+﻿// CWFrontendGameMode.h
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Core/Stage/CWStageSelectionGameModeBase.h"
-#include "CWRoomGameMode.generated.h"
+#include "CWFrontendGameMode.generated.h"
 
+// 게임 플레이 전 단계를 맡는 GameMode
+// Title 레벨 하나에 메인 메뉴·방 목록·방 대기실·스테이지 선택이 모두 들어감
 UCLASS()
-class CROSSWALK_API ACWRoomGameMode : public ACWStageSelectionGameModeBase
+class CROSSWALK_API ACWFrontendGameMode : public ACWStageSelectionGameModeBase
 {
 	GENERATED_BODY()
 
@@ -15,7 +17,7 @@ class CROSSWALK_API ACWRoomGameMode : public ACWStageSelectionGameModeBase
 
 public:
 	// 방에서 사용할 GameState와 PlayerState 클래스를 지정
-	ACWRoomGameMode();
+	ACWFrontendGameMode();
 
 	// GameState 생성 직후 방 설정값을 주입
 	virtual void InitGameState() override;
