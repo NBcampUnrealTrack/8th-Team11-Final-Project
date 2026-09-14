@@ -198,6 +198,14 @@ protected:
 	UFUNCTION()
 	void HandleParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
+	/**
+	 * 패링 스윙 몽타주를 재생한다.
+	 *
+	 * HandleParrySucceeded 가 모든 머신에서 돌기 때문에 이것도 모든 머신에서 돈다.
+	 * 그래서 내 화면에서도 남의 화면에서도 같은 캐릭터가 같은 시점에 휘두른다.
+	 */
+	void PlayParrySwingMontage();
+
 	//체온이 바뀔 때, 머티리얼의 세기 갱신.
 	UFUNCTION()
 	void HandleTemperatureChanged(UCWTemperatureComponent* InTemperatureComponent, float Temperature, float HeatRatio);
@@ -705,6 +713,16 @@ protected:
 	/** 패링에 성공해 차를 튕겨낸 순간 나는 소리. */
 	UPROPERTY(EditDefaultsOnly, Category = "Sound")
 	TObjectPtr<USoundBase> ParrySuccessSound;
+
+	/**
+	 * 패링 성공 시 재생할 스윙 몬타주. 비워두면 연출만 빠지고 사운드와 판정은 그대로 간다.
+	 *
+	 * 몬타주의 슬롯은 AnimBP 가 가진 슬롯과 이름이 같아야 한다. ABP_Character 에는
+	 * DefaultSlot 하나뿐이라 몬타주 생성 시 기본값을 그대로 두면 맞는다. 이름이 어긋나면
+	 * 재생 시간은 정상으로 나오는데 화면에는 아무것도 보이지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	TObjectPtr<UAnimMontage> ParrySwingMontage;
 
 	/**
 	 * 거리 감쇠 설정. 비워두면 아래 두 값으로 C++ 이 만든 기본 감쇠가 쓰인다.
