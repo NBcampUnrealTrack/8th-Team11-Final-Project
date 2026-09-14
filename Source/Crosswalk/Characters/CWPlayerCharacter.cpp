@@ -1080,6 +1080,15 @@ bool ACWPlayerCharacter::ResolveRagdollBodyAxes(FVector& OutBodyUp, FVector& Out
 
 void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncData)
 {
+	/**
+	 * 스윙은 사운드보다 먼저, 그리고 어느 분기보다 위에서 재생한다.
+	 *
+	 * 아래 두 곳에 return 이 있다. ParrySuccessSound 가 비었을 때와 내가 조종하는
+	 * 캐릭터일 때다. 몬타주를 그 아래에 두면 사운드 애셋을 안 꽂았을 때 스윙까지 사라지고,
+	 * 내 캐릭터만 휘두르지 않는 기묘한 상태가 된다. 연출과 사운드는 서로의 조건이 아니다.
+	 */
+	PlayParrySwingMontage();
+
 	if (ParrySuccessSound == nullptr)
 	{
 		return;
@@ -1107,6 +1116,37 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 		1.f,
 		0.f,
 		ResolveSoundAttenuation()
+	);
+}
+
+void ACWPlayerCharacter::PlayParrySwingMontage()
+{
+	if (ParrySwingMontage == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 메시와 AnimInstance 를 둘 다 확인한다.
+	 *
+	 * 이 함수는 멀티캐스트 델리게이트를 타고 들어오므로, 캐릭터가 파괴되는 중이거나
+	 * AnimBP 가 아직 붙지 않은 프레임에 도착할 수 있다. 기상 몬타주 쪽도 같은 검사를 한다.
+	 */
+	UAnimInstance* AnimInstance = GetMesh() != nullptr ? GetMesh()->GetAnimInstance() : nullptr;
+	if (AnimInstance == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 반환값을 Duration 으로 받는다. 지금은 쓰지 않지만, 스윙 동안 조작을 잠그거나
+	 * 배트를 꺼냈다 넣는 타이밍을 맞출 때 필요한 값이 이것이다. 기본값인 MontageLength 는
+	 * 재생 속도를 반영하지 않아 속도를 바꾸는 순간 어긋난다.
+	 */
+	AnimInstance->Montage_Play(
+		ParrySwingMontage,
+		1.f,
+		EMontagePlayReturnType::Duration
 	);
 }
 
