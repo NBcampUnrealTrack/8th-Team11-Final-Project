@@ -9,9 +9,11 @@
 #include "CWTrafficStopLine.h"
 #include "Interfaces/Interface_ParryReceiver.h"
 
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/NetDriver.h"
 #include "Engine/PackageMapClient.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
@@ -205,10 +207,15 @@ void UCWTrafficSubsystem::LogVehicleCensus()
 		 *
 		 * 이 세 번째 숫자는 버그를 잡는 동안만 필요한 값이다. 그걸 위해 차량의 공개 면을
 		 * 넓혀 두면, 진단이 끝난 뒤에도 아무나 메쉬를 만질 수 있는 통로가 남는다.
-		 * C++ 이 만드는 UStaticMeshComponent 는 VehicleMesh 하나뿐이라 이걸로 충분하다.
+		 * C++ 이 만드는 메쉬 컴포넌트는 VehicleMesh 와 VehicleSkeletalMesh 둘뿐이다.
+		 *
+		 * 둘 다 봐야 한다. 차종이 스켈레탈 변형을 뽑으면 정적 메쉬 쪽은 비워지므로,
+		 * 예전처럼 UStaticMeshComponent 만 세면 멀쩡히 보이는 차가 "메쉬 없음" 으로
+		 * 잡혀 진단이 거짓 신호를 낸다.
 		 */
 		const UStaticMeshComponent* Mesh = Vehicle->FindComponentByClass<UStaticMeshComponent>();
-		if (Mesh && Mesh->GetStaticMesh())
+		const USkeletalMeshComponent* SkelMesh = Vehicle->FindComponentByClass<USkeletalMeshComponent>();
+		if ((Mesh && Mesh->GetStaticMesh()) || (SkelMesh && SkelMesh->GetSkeletalMeshAsset()))
 		{
 			++MeshedCount;
 		}

@@ -3,7 +3,9 @@
 #include "CWBaseVehicle.h"
 
 #include "Components/BoxComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -50,6 +52,20 @@ ACWBaseVehicle::ACWBaseVehicle()
 	VehicleMesh->SetupAttachment(VehicleRoot);
 	VehicleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	// 바퀴가 도는 차종용. 정적 메쉬와 같은 자리에 서고 변형이 지정한 쪽만 채워진다.
+	VehicleSkeletalMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("VehicleSkeletalMesh"));
+	VehicleSkeletalMesh->SetupAttachment(VehicleRoot);
+	VehicleSkeletalMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	/**
+	 * 화면에 안 잡히는 동안은 포즈를 돌리지 않는다.
+	 *
+	 * 차량은 화면 밖에서 스폰돼 한참 달려온 뒤에 시야에 들어온다. 그동안의 바퀴 각도는
+	 * 아무도 보지 않는데 애님 평가 비용은 그대로 든다. 다시 보일 때 각도가 튀지만,
+	 * 튀는 그 프레임을 본 사람이 없으므로 드러나지 않는다.
+	 */
+	VehicleSkeletalMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::OnlyTickPoseWhenRendered;
+
 	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
 	// 이 컴포넌트가 좁힌다. (양쪽에서 도는 이유는 헤더의 StopSyncComponent 주석 참고)
 	StopSyncComponent = CreateDefaultSubobject<UCWVehicleStopSyncComponent>(TEXT("StopSyncComponent"));
@@ -86,6 +102,9 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	 * 판정이 한 프레임 늦는 것이 전부이고, 그 어긋남은 보정량(핑)에 비하면 무시할 만하다.
 	 */
 	RetryPendingHits();
+
+	// 바퀴 각도. 아래 두 경로가 각자 return 으로 빠져나가므로 갈라지기 전에 한 번만 민다.
+	UpdateWheelSpin(DeltaSeconds);
 
 	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
 	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다. (서버 전용)
@@ -197,10 +216,21 @@ void ACWBaseVehicle::ApplyMeshVariant()
 
 	const FCWVehicleMeshVariant& Variant = MeshVariants[MeshVariantIndex];
 
-	// 배열에 빈 칸이 섞여 있으면 그 칸을 뽑은 차량은 BP 기본 메쉬 그대로 달린다.
-	if (Variant.Mesh)
+	/**
+	 * 배열에 빈 칸이 섞여 있으면 그 칸을 뽑은 차량은 BP 기본 메쉬 그대로 달린다.
+	 *
+	 * 지정한 쪽을 채우고 반대쪽은 비운다. 둘 다 남겨 두면 BP 가 물려 둔 기본 메쉬와
+	 * 변형 메쉬가 한 자리에 겹쳐 보인다. 둘 다 비어 있을 때만 아무것도 건드리지 않는다.
+	 */
+	if (Variant.SkeletalMesh)
+	{
+		VehicleSkeletalMesh->SetSkeletalMeshAsset(Variant.SkeletalMesh);
+		VehicleMesh->SetStaticMesh(nullptr);
+	}
+	else if (Variant.Mesh)
 	{
 		VehicleMesh->SetStaticMesh(Variant.Mesh);
+		VehicleSkeletalMesh->SetSkeletalMeshAsset(nullptr);
 	}
 
 	/**
@@ -240,6 +270,40 @@ void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
 	 */
 	const float HalfHeight = Extent.Z * CollisionBox->GetRelativeScale3D().Z;
 	CollisionBox->SetRelativeLocationAndRotation(FVector(0.f, 0.f, HalfHeight), FRotator::ZeroRotator);
+}
+
+float ACWBaseVehicle::GetActiveWheelRadius() const
+{
+	if (MeshVariants.IsValidIndex(MeshVariantIndex) && MeshVariants[MeshVariantIndex].WheelRadius > 0.f)
+	{
+		return MeshVariants[MeshVariantIndex].WheelRadius;
+	}
+
+	return WheelRadius;
+}
+
+void ACWBaseVehicle::UpdateWheelSpin(float DeltaSeconds)
+{
+	const float Radius = GetActiveWheelRadius();
+	if (Radius <= KINDA_SMALL_NUMBER)
+	{
+		// 반지름이 0 인 차종은 바퀴를 돌리지 않는다. 정적 메쉬 차량이 여기로 들어온다.
+		return;
+	}
+
+	/**
+	 * 굴림 조건으로 각속도를 낸다. 바퀴가 원주만큼 나아가면 정확히 한 바퀴다.
+	 *
+	 *   각속도(도/초) = 이동속도 / 원주 * 360
+	 *
+	 * GetCurrentSpeed 는 매 Tick 이 채우는 값이라 서버·클라이언트 양쪽에 있다. 그래서
+	 * 각 클라이언트가 스스로 굴려도 화면마다 크게 다르지 않고, 달라 봐야 바퀴 각도다.
+	 */
+	const float Circumference = 2.f * PI * Radius;
+	WheelSpinDegrees += GetCurrentSpeed() / Circumference * 360.f * DeltaSeconds;
+
+	// 무한히 키우면 부동소수 정밀도가 떨어져 회전이 눈에 띄게 튄다.
+	WheelSpinDegrees = FMath::Fmod(WheelSpinDegrees, 360.f);
 }
 
 void ACWBaseVehicle::OnRep_MeshVariantIndex()

@@ -14,6 +14,8 @@ class ACWTrafficLane;
 class UBoxComponent;
 class UCWVehicleStopSyncComponent;
 class USceneComponent;
+class USkeletalMesh;
+class USkeletalMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -161,6 +163,18 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetCurrentSpeed() const { return CurrentVelocity.Size(); }
+
+	/**
+	 * 바퀴가 지금까지 돈 각도(도). 애님 블루프린트가 이 값을 바퀴 본에 꽂는다.
+	 *
+	 * 복제하지 않는다. 차량 위치·속도가 이미 양쪽에 있어서 각 클라이언트가 같은 식으로
+	 * 돌리면 되고, 어긋나 봐야 바퀴 각도라 아무도 알아채지 못한다. 이 한 줄을 복제하면
+	 * 얻는 것 없이 대역폭과 검증 부담만 는다.
+	 *
+	 * 0~360 으로 감아 둔다. 각도를 무한히 키우면 부동소수 정밀도가 떨어져 회전이 튄다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
+	float GetWheelSpinDegrees() const { return WheelSpinDegrees; }
 
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
@@ -310,6 +324,24 @@ private:
 
 	/** 고른 변형의 메쉬와 콜리전 크기를 반영한다. 인덱스가 범위 밖이면 아무것도 하지 않는다. */
 	void ApplyMeshVariant();
+
+	/**
+	 * 바퀴 회전각을 이번 프레임 이동만큼 민다. 서버·클라이언트 양쪽에서 돈다.
+	 *
+	 * Tick 맨 앞에서 지난 프레임 속도로 계산한다. 이번 프레임 속도를 쓰려면 튕겨나가는
+	 * 경로와 차선 주행 경로가 각자 속도를 채운 뒤에 불러야 하는데, 그러면 호출 지점이
+	 * 둘로 갈라져 한쪽을 빼먹기 쉽다. 바퀴 각도가 한 프레임 늦는 것은 눈에 보이지 않는다.
+	 */
+	void UpdateWheelSpin(float DeltaSeconds);
+
+	/**
+	 * 지금 씌운 변형의 바퀴 반지름(cm). 변형이 0 이면 차종 BP 의 WheelRadius 로 떨어진다.
+	 *
+	 * 결과를 멤버에 캐시하지 않는 이유: 캐시하면 반지름을 지정한 변형을 한 번 뽑은 차량이
+	 * 재사용될 때 그 값이 남아, 지정하지 않은 변형에 엉뚱한 반지름이 붙는다.
+	 * (콜리전 익스텐트가 같은 구조라 풀링을 도입하면 그쪽도 같이 봐야 한다)
+	 */
+	float GetActiveWheelRadius() const;
 
 	/**
 	 * 콜리전 박스 크기를 바꾸고, 바뀐 높이에 맞춰 박스를 다시 노면 위로 올린다.
@@ -482,6 +514,18 @@ protected:
 	TObjectPtr<UStaticMeshComponent> VehicleMesh;
 
 	/**
+	 * 바퀴가 도는 차량용 메쉬. VehicleMesh 와 나란히 서고, 변형이 지정한 쪽만 채워진다.
+	 *
+	 * 정적 메쉬를 갈아 끼우는 대신 컴포넌트를 하나 더 둔 이유는, 기존 차종 BP 들이
+	 * VehicleMesh 에 직접 메쉬를 물려 둔 상태이기 때문이다. 타입을 바꿔 버리면 그 BP 들이
+	 * 한꺼번에 빈 차가 되고, 되돌리려면 BP 를 하나씩 다시 열어야 한다.
+	 *
+	 * 메쉬가 안 물린 컴포넌트는 아무것도 그리지 않으므로 쓰지 않는 쪽의 비용은 없다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TObjectPtr<USkeletalMeshComponent> VehicleSkeletalMesh;
+
+	/**
 	 * 정지선 앞에 선 동안 서버-클라 위치 오차를 좁힌다. (보정 담당은 전부 이 컴포넌트 안)
 	 *
 	 * 서버·클라이언트 양쪽에서 돈다. 트랜스폼을 복제하지 않는 구조라 클라이언트 화면의
@@ -510,6 +554,18 @@ protected:
 	/** 차종 기본 주행 속도(cm/s). 플레이어 기본 이동속도 500의 1.5배. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float Speed = 750.f;
+
+	/**
+	 * 차종 기본 바퀴 반지름(cm). 변형이 WheelRadius 를 지정하지 않았을 때 쓰인다.
+	 *
+	 * 기본값 34 는 승용차 어림치이고 실측이 아니다. 차종마다 메쉬 에디터에서 바퀴
+	 * 지름을 재서 절반을 넣는 것이 맞다. 틀려도 주행에는 영향이 없고 바퀴가 미끄러지거나
+	 * 끌려 보일 뿐이다.
+	 *
+	 * 0 이면 바퀴를 돌리지 않는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float WheelRadius = 34.f;
 
 	/**
 	 * 피격 연출 분기에 쓰이는 차종 ID. FCWVehicleHitContext로 전달된다.
@@ -698,6 +754,15 @@ protected:
 private:
 	/** GetVelocity() 가 돌려주는 값. 서버·클라이언트가 각자 자기 Tick 에서 채운다. */
 	FVector CurrentVelocity = FVector::ZeroVector;
+
+	/**
+	 * 바퀴 누적 회전각(도). 시각 전용이라 복제하지 않는다. (GetWheelSpinDegrees 주석 참고)
+	 *
+	 * 스폰 시 0 으로 시작한다. 같은 차선의 차들이 바퀴 위상까지 똑같이 맞아 도는 것이
+	 * 눈에 띄면 여기에 초기 난수를 넣으면 되는데, 지금 속도와 차간 거리에서는 두 차가
+	 * 한 화면에 나란히 서는 일이 드물어 미뤄 둔다.
+	 */
+	float WheelSpinDegrees = 0.f;
 
 	/**
 	 * 패링당해 발사된 시각(월드 시간, 초). 음수면 아직 발사된 적이 없다는 뜻이다.
