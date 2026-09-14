@@ -21,6 +21,7 @@ public:
 	{
 		return
 			RoomCode == Other.RoomCode &&
+			RoomName == Other.RoomName &&
 			HostName == Other.HostName &&
 			CurrentPlayers == Other.CurrentPlayers &&
 			MaxPlayers == Other.MaxPlayers;
@@ -42,6 +43,10 @@ public:
 	// 플레이어가 입력해서 참가할 방 코드
 	UPROPERTY(BlueprintReadOnly, Category = "Crosswalk|Session")
 	FString RoomCode;
+
+	// 호스트가 입력한 방 제목. 비어 있을 수 있음 - 표시 대체는 UI가 함
+	UPROPERTY(BlueprintReadOnly, Category = "Crosswalk|Session")
+	FString RoomName;
 
 	// 방을 생성한 호스트 이름
 	UPROPERTY(BlueprintReadOnly, Category = "Crosswalk|Session")

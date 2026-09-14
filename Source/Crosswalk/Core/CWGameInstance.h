@@ -99,7 +99,7 @@ public:
 
 	// 방 코드를 생성하고, 중복 여부를 확인한 뒤 세션을 생성
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
-	void CreateRoom();
+	void CreateRoom(const FString& RoomName, bool bIsPrivate);
 
 	// 현재 검색 가능한 공개 세션 목록을 가져옴
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
@@ -147,6 +147,10 @@ public:
 	{
 		return MenuMapPath;
 	}
+
+	// 지금 Room UI 로 착지해도 되는 상태인지 확인
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	bool ShouldEnterRoomPage() const;
 
 protected:
 	// 세션 생성 성공 시 리슨 서버로 이동할 맵 경로
@@ -210,6 +214,9 @@ private:
 
 	// 검색 결과 안에 같은 방 코드가 존재하는지 확인
 	bool HasRoomCodeInSearchResults(const FString& RoomCode) const;
+
+	// 검색 결과가 비밀방인지. 목록 표시 경로에서만 사용
+	bool IsPrivateRoom(const FOnlineSessionSearchResult& SearchResult) const;
 
 	// 검색 결과 한 개를 UI에서 사용할 방 요약 정보로 변환
 	FCWRoomSummary BuildRoomSummary(const FOnlineSessionSearchResult& SearchResult) const;
@@ -303,6 +310,33 @@ private:
 		const FString& ErrorString
 	);
 
+	// 세션 생성 후 실패했을 때 만들어진 세션을 되돌리고 CreateRoom 실패로 끝냄
+	void RollbackCreatedSession(const FString& Reason);
+
+	// 생성 롤백을 마무리하고 CreateRoom 실패를 알림
+	void FinishRollbackAsCreateFailure();
+
+	// 네트워크 실패에서 메뉴로 복구. 사용자용 DestroyRoom 을 타지 않음
+	void RecoverToMenuAfterNetworkFailure();
+
+	// 복구를 시작하기 전에 진행 중이던 사용자 세션 작업을 조용히 끊음
+	void CancelCurrentSessionOperationForRecovery();
+
+	// 네트워크 실패 복구를 마무리하고 메뉴 이동을 예약
+	void FinishNetworkFailureRecovery();
+
+	// 연결이 끊긴 월드에 아직 남아 있으면 메뉴 맵을 새로 엶
+	void TravelToMenuMap();
+
+	// 복구 전용 타임아웃을 시작
+	void StartNetworkFailureRecoveryTimeout();
+
+	// 복구 전용 타임아웃을 해제
+	void ClearNetworkFailureRecoveryTimeout();
+
+	// 복구 응답이 오지 않았을 때 로컬 상태만 정리하고 복구를 끝냄
+	void HandleNetworkFailureRecoveryTimeout();
+
 private:
 	// UI에 표시할 마지막 온라인 처리 상태 메시지
 	UPROPERTY()
@@ -319,6 +353,15 @@ private:
 	// 방 코드 입장 시 검색 완료 후 사용할 임시 방 코드
 	UPROPERTY()
 	FString PendingJoinRoomCode;
+
+	// 세션 생성까지 들고 있을 방 제목
+	// CreateRoom 은 세션을 바로 안 만들고 방 코드 중복 확인을 한 번 돈 뒤에 만든다
+	UPROPERTY()
+	FString PendingRoomName;
+
+	// 세션 생성까지 들고 있을 비밀방 여부
+	UPROPERTY()
+	bool bPendingIsPrivate = false;
 
 	// UI에 표시할 현재 로그인 계정 이름
 	UPROPERTY()
@@ -384,6 +427,24 @@ private:
 
 	// 세션 제거 완료 콜백 객체
 	FOnDestroySessionCompleteDelegate DestroySessionCompleteDelegate;
+
+	// 세션 생성 후 실패해서 되돌리는 중인지 구분
+	// 사용자용 DestroyRoom 과 구분해야 CreateRoom 의 in-flight 를 유지할 수 있음
+	bool bRollingBackFailedCreate = false;
+
+	// 네트워크 실패에서 메뉴로 복구하는 중인지 구분
+	bool bRecoveringFromNetworkFailure = false;
+
+	// 연결이 끊긴 월드
+	// 통합 후에는 Room UI 도 Title 맵 위에 뜨므로 맵 이름으로는 구분되지 않음
+	TWeakObjectPtr<UWorld> NetworkFailureWorld;
+
+	// 종료 중에 예약된 메뉴 이동이 실행되지 않도록 보관하는 핸들
+	FTimerHandle TravelToMenuNextTickHandle;
+
+	// 네트워크 실패 복구의 마감 타이머
+	// 이 경로는 BeginSessionOperation 을 타지 않아 세션 작업 타이머가 돌지 않음
+	FTimerHandle NetworkFailureRecoveryTimeoutHandle;
 
 public:
 	// 로그인 상태가 바뀌었을 때 UI에 결과를 전달

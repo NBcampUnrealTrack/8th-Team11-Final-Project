@@ -5,6 +5,8 @@
 
 #include "Engine/Engine.h"
 #include "Engine/NetDriver.h"
+#include "Engine/World.h"
+#include "GameFramework/GameModeBase.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Online/OnlineSessionNames.h"
@@ -28,6 +30,14 @@ namespace CrosswalkSession
 	 */
 	static const FName GameIdKey(TEXT("CW_GAME_ID"));
 	static const FString GameIdValue(TEXT("CROSSWALK"));
+
+	// 방 목록에 표시할 제목. 비어 있으면 UI가 호스트 이름으로 대체함
+	static const FName RoomNameKey(TEXT("CW_ROOM_NAME"));
+
+	// 비밀방 여부. 목록 표시에서만 걸러내고 방 코드 입장은 그대로 허용함.
+	// bool 대신 int32로 둔다 - 세션 플래그가 로비 데이터 왕복에서 유실된 전례가 있어(#182)
+	// 커스텀 설정도 명시적인 값으로 주고받는다
+	static const FName IsPrivateKey(TEXT("CW_IS_PRIVATE"));
 
 	// Name= 옵션 값에 못 쓰는 문자만 제거한다 (percent-encoding 아님 - 아래 이유로 폐기).
 	// FURL은 옵션 값에 한글/공백을 있는 그대로 허용한다(URL.cpp ValidNetChar 주석: "플레이어
@@ -121,6 +131,14 @@ void UCWGameInstance::Shutdown()
 	NetworkFailureHandle.Reset();
 
 	ClearSessionOperationTimeout();
+	ClearNetworkFailureRecoveryTimeout();
+
+	// 종료 중에 예약된 OpenLevel 이 튀어나오지 않게 취소함
+	GetTimerManager().ClearTimer(TravelToMenuNextTickHandle);
+
+	NetworkFailureWorld.Reset();
+	bRecoveringFromNetworkFailure = false;
+	bRollingBackFailedCreate = false;
 
 	ClearLoginCompleteDelegate();
 	ClearCreateSessionCompleteDelegate();
@@ -164,8 +182,9 @@ void UCWGameInstance::HandleNetworkFailure(
 	);
 
 	// UE 연결이 끊겨도 세션 멤버십은 남을 수 있다.
-	// 남은 멤버십을 정리해 서버 없는 방이 목록에 노출되는 것을 막는다.
-	DestroyRoom();
+	// 남은 멤버십을 정리하고 메뉴까지 돌려보낸다.
+	// 사용자용 DestroyRoom 은 조기 반환 경로가 있어 완료 델리게이트가 오지 않을 수 있으므로 쓰지 않는다.
+	RecoverToMenuAfterNetworkFailure();
 }
 
 void UCWGameInstance::LoginWithEpic()
@@ -266,7 +285,7 @@ void UCWGameInstance::LoginAsPlayer2()
 	LoginWithDeveloperTool(TEXT("Player2"));
 }
 
-void UCWGameInstance::CreateRoom()
+void UCWGameInstance::CreateRoom(const FString& RoomName, bool bIsPrivate)
 {
 	CacheOnlineInterfaces();
 
@@ -292,6 +311,11 @@ void UCWGameInstance::CreateRoom()
 		FailSessionOperation(ECWSessionOperation::CreateRoom, ECWSessionFailure::AlreadyInSession, TEXT("CreateRoom failed: session already exists"));
 		return;
 	}
+
+	// 세션은 방 코드 중복 확인을 한 번 돈 뒤 CreateSessionWithRoomCode 가 만든다.
+	// 그때까지 입력값을 들고 있어야 한다
+	PendingRoomName = RoomName;
+	bPendingIsPrivate = bIsPrivate;
 
 	RoomCodeGenerateAttemptCount = 1;
 	PendingRoomCode = GenerateRoomCode();
@@ -376,6 +400,24 @@ void UCWGameInstance::JoinFirstFoundRoom()
 		return;
 	}
 
+	// 비밀방은 목록에 안 뜨므로 "첫 방 참가" 대상에서도 뺀다
+	int32 TargetIndex = INDEX_NONE;
+
+	for (int32 Index = 0; Index < SessionSearch->SearchResults.Num(); ++Index)
+	{
+		if (!IsPrivateRoom(SessionSearch->SearchResults[Index]))
+		{
+			TargetIndex = Index;
+			break;
+		}
+	}
+
+	if (TargetIndex == INDEX_NONE)
+	{
+		FailSessionOperation(ECWSessionOperation::JoinRoom, ECWSessionFailure::RoomNotFound, TEXT("JoinFirstFoundRoom failed: no public room"));
+		return;
+	}
+
 	BindJoinSessionCompleteDelegate();
 
 	// [Steam 엔진 버그 우회] FOnlineSessionSteam::JoinSession은 검색 결과의 bUsesPresence와
@@ -384,7 +426,7 @@ void UCWGameInstance::JoinFirstFoundRoom()
 	// 복원된 결과는 항상 bUsesPresence=true / bUseLobbiesIfAvailable=false가 되어 "방은
 	// 목록에 보이는데 입장은 항상 실패"한다. 호스트는 CreateSessionWithRoomCode에서 두 값을
 	// 같게 광고하므로, 여기서도 같게 맞춰준다.
-	FOnlineSessionSearchResult& DesiredSession = SessionSearch->SearchResults[0];
+	FOnlineSessionSearchResult& DesiredSession = SessionSearch->SearchResults[TargetIndex];
 	DesiredSession.Session.SessionSettings.bUseLobbiesIfAvailable =
 		DesiredSession.Session.SessionSettings.bUsesPresence;
 
@@ -416,7 +458,18 @@ void UCWGameInstance::DestroyRoom()
 	BindDestroySessionCompleteDelegate();
 
 	SetStatus(TEXT("DestroyRoom requested"));
-	SessionInterface->DestroySession(CrosswalkSession::GameSessionName);
+
+	// 즉시 false 면 완료 델리게이트가 오지 않아 타임아웃까지 Busy 로 잠긴다
+	if (!SessionInterface->DestroySession(CrosswalkSession::GameSessionName))
+	{
+		ClearDestroySessionCompleteDelegate();
+
+		FailSessionOperation(
+			ECWSessionOperation::DestroyRoom,
+			ECWSessionFailure::Unknown,
+			TEXT("DestroyRoom failed to start")
+		);
+	}
 }
 
 FString UCWGameInstance::GetLastStatus() const
@@ -447,6 +500,27 @@ bool UCWGameInstance::IsSessionOperationInFlight() const
 const TArray<FCWRoomSummary>& UCWGameInstance::GetCachedRoomList() const
 {
 	return CachedRoomList;
+}
+
+bool UCWGameInstance::ShouldEnterRoomPage() const
+{
+	const UWorld* World = GetWorld();
+
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	// 세션이 있느냐가 아니라 실제로 연결돼 있느냐를 본다.
+	// 정리에 실패해 OSS에만 남은 세션은 넷드라이버를 만들지 않으므로
+	// 새 월드가 NM_Standalone이 되어 여기서 자동으로 걸러진다.
+	// 넷 모드만으로는 부족하다 - 멀티 PIE를 Listen Server로 띄우면
+	// 세션을 만들기 전에도 NM_ListenServer라 오판한다.
+	const ENetMode NetMode = World->GetNetMode();
+
+	return (NetMode == NM_Client || NetMode == NM_ListenServer)
+		&& SessionInterface.IsValid()
+		&& SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName) != nullptr;
 }
 
 void UCWGameInstance::CacheOnlineInterfaces()
@@ -604,6 +678,8 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 	SessionSettings.Set(SETTING_MAPNAME, ListenMapPath, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::RoomCodeKey, RoomCode, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::GameIdKey, CrosswalkSession::GameIdValue, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	SessionSettings.Set(CrosswalkSession::RoomNameKey, PendingRoomName, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	SessionSettings.Set(CrosswalkSession::IsPrivateKey, bPendingIsPrivate ? 1 : 0, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 
 	BindCreateSessionCompleteDelegate();
 
@@ -636,11 +712,20 @@ bool UCWGameInstance::HasRoomCodeInSearchResults(const FString& RoomCode) const
 	return false;
 }
 
+bool UCWGameInstance::IsPrivateRoom(const FOnlineSessionSearchResult& SearchResult) const
+{
+	int32 IsPrivate = 0;
+	SearchResult.Session.SessionSettings.Get(CrosswalkSession::IsPrivateKey, IsPrivate);
+
+	return IsPrivate != 0;
+}
+
 FCWRoomSummary UCWGameInstance::BuildRoomSummary(const FOnlineSessionSearchResult& SearchResult) const
 {
 	FCWRoomSummary Summary;
 
 	SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomCodeKey, Summary.RoomCode);
+	SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomNameKey, Summary.RoomName);
 
 	Summary.HostName = SearchResult.Session.OwningUserName;
 
@@ -668,6 +753,12 @@ void UCWGameInstance::RefreshCachedRoomList()
 
 	for (const FOnlineSessionSearchResult& SearchResult : SessionSearch->SearchResults)
 	{
+		// 비밀방은 목록에 노출하지 않는다. 방 코드 입장 경로는 이 필터를 타지 않는다
+		if (IsPrivateRoom(SearchResult))
+		{
+			continue;
+		}
+
 		CachedRoomList.Add(BuildRoomSummary(SearchResult));
 	}
 }
@@ -764,6 +855,16 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 	ClearDestroySessionCompleteDelegate();
 
 	CurrentFindPurpose = ECWSessionFindPurpose::None;
+
+	// 롤백 중에 타임아웃이 나면 로컬 상태가 고착되므로 여기서 같이 푼다.
+	// 네트워크 실패 복구는 BeginSessionOperation 을 안 타서 이 타이머가 돌지 않는다 - 전용 타이머가 맡는다.
+	if (bRollingBackFailedCreate)
+	{
+		bRollingBackFailedCreate = false;
+
+		CurrentRoomCode.Empty();
+		PendingRoomCode.Empty();
+	}
 
 	SetStatus(FString::Printf(TEXT("Session operation timed out after %.0fs"), SessionOperationTimeout));
 	CompleteSessionOperation(TimedOutOperation, false, ECWSessionFailure::Timeout);
@@ -1004,31 +1105,248 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 		return;
 	}
 
-	SetStatus(FString::Printf(TEXT("CreateSession success. RoomCode: %s"), *CurrentRoomCode));
-	CompleteSessionOperation(ECWSessionOperation::CreateRoom, true, ECWSessionFailure::None);
+	UWorld* World = GetWorld();
 
-	if (!ListenMapPath.IsEmpty())
+	// 아래 세 경로 모두 세션이 이미 만들어진 뒤의 실패다 - 전부 같은 롤백으로 보낸다
+	if (World == nullptr)
 	{
-		UWorld* World = GetWorld();
+		RollbackCreatedSession(TEXT("world is null"));
+		return;
+	}
 
-		if (World != nullptr)
+	// 넷드라이버가 이미 있으면 Listen 이 NetDriverAlreadyExists 로 실패하므로 미리 막음
+	if (World->GetNetMode() != NM_Standalone)
+	{
+		RollbackCreatedSession(TEXT("world is already networked"));
+		return;
+	}
+
+	// 트래블 대신 현재 월드를 그대로 리슨 서버로 전환한다.
+	// 호스트는 맵을 다시 로딩하지 않으므로 방 화면이 곧바로 열린다.
+	// 현재 월드 URL 을 그대로 쓰고 listen 옵션만 붙여 맵 경로와 포트를 다시 적지 않는다.
+	FURL ListenURL = World->URL;
+	ListenURL.AddOption(TEXT("listen"));
+
+	if (!World->Listen(ListenURL))
+	{
+		RollbackCreatedSession(TEXT("Listen failed"));
+		return;
+	}
+
+	// 트래블을 하지 않으므로 ?Name= 옵션이 소비될 자리가 없다.
+	// 옵션 없이는 PlayerState 이름이 GameMode::DefaultPlayerName("Player")로 고정되므로
+	// 호스트 이름은 여기서 직접 갱신한다. 참가자는 ClientTravel 이 그대로라 손댈 게 없다.
+	if (!LoggedInDisplayName.IsEmpty())
+	{
+		AGameModeBase* GameMode = World->GetAuthGameMode();
+		APlayerController* HostController = UGameplayStatics::GetPlayerController(this, 0);
+
+		if (GameMode != nullptr && HostController != nullptr)
 		{
-			// URL에 Name= 옵션이 없으면 PlayerState 이름이 GameMode::DefaultPlayerName("Player")로
-			// 고정된다 - 플랫폼 상관없이 항상 그랬던 문제라 여기서 로그인 닉네임을 실어 보낸다.
-			// 옵션 구분자는 반드시 '?'다 - FURL은 '&'를 옵션 구분자로 인식하지 않는다(엔진 소스
-			// URL.cpp의 FURL 파서, GameplayStatics.cpp의 GrabOption 둘 다 확인 완료). '&'로 이으면
-			// "listen&Name=Daae"가 통째로 옵션 하나로 묶여서 Name= 옵션 자체가 안 읽힌다 - 실기
-			// 로그로 재현/확인함(Server switch level에 Name=이 다른 옵션에 붙어서 나타났음).
-			FString TravelURL = ListenMapPath + TEXT("?listen");
-
-			if (!LoggedInDisplayName.IsEmpty())
-			{
-				TravelURL += TEXT("?Name=") + CrosswalkSession::SanitizeNameOption(LoggedInDisplayName);
-			}
-
-			World->ServerTravel(TravelURL);
+			GameMode->ChangeName(HostController, LoggedInDisplayName, false);
 		}
 	}
+
+	// 리슨이 실제로 열린 뒤에 알려야 UI 가 방 화면을 여는 시점과 어긋나지 않음
+	SetStatus(FString::Printf(TEXT("CreateSession success. RoomCode: %s"), *CurrentRoomCode));
+	CompleteSessionOperation(ECWSessionOperation::CreateRoom, true, ECWSessionFailure::None);
+}
+
+void UCWGameInstance::RollbackCreatedSession(const FString& Reason)
+{
+	SetStatus(FString::Printf(TEXT("CreateRoom failed: %s"), *Reason));
+
+	// 여기서 CreateRoom 을 끝내지 않는다.
+	// 실패를 먼저 방송하면 UI 는 생성이 끝난 줄 알고 방 만들기 버튼을 다시 연다.
+	// 그런데 내부에서는 아직 DestroySession 이 돌고 있어서 그 사이에 누르면 Busy 가 난다.
+	// 같은 이유로 사용자용 DestroyRoom 도 쓰지 않는다 - BeginSessionOperation 이
+	// in-flight 를 보고 Busy 로 거절해 DestroySession 까지 가지도 못한다.
+	bRollingBackFailedCreate = true;
+
+	if (!SessionInterface.IsValid() ||
+		SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName) == nullptr)
+	{
+		// 되돌릴 세션이 없음
+		FinishRollbackAsCreateFailure();
+		return;
+	}
+
+	BindDestroySessionCompleteDelegate();
+
+	// 즉시 false 면 완료 델리게이트가 오지 않는다 - 타임아웃까지 기다리지 않고 여기서 끝냄
+	if (!SessionInterface->DestroySession(CrosswalkSession::GameSessionName))
+	{
+		ClearDestroySessionCompleteDelegate();
+		FinishRollbackAsCreateFailure();
+	}
+}
+
+void UCWGameInstance::FinishRollbackAsCreateFailure()
+{
+	// 동기 콜백과 실패 반환이 겹치면 두 번 불릴 수 있음
+	if (!bRollingBackFailedCreate)
+	{
+		return;
+	}
+
+	bRollingBackFailedCreate = false;
+
+	CurrentRoomCode.Empty();
+	PendingRoomCode.Empty();
+
+	// DestroyRoom 완료가 아니라 CreateRoom 실패로 끝낸다 - 사용자가 요청한 작업은 생성이었음
+	CompleteSessionOperation(
+		ECWSessionOperation::CreateRoom,
+		false,
+		ECWSessionFailure::Unknown
+	);
+}
+
+void UCWGameInstance::RecoverToMenuAfterNetworkFailure()
+{
+	// 네트워크 실패가 연속으로 들어와도 진행 중인 DestroySession 델리게이트와
+	// 복구 타이머를 다시 덮어쓰지 않는다.
+	if (bRecoveringFromNetworkFailure)
+	{
+		return;
+	}
+
+	bRecoveringFromNetworkFailure = true;
+
+	// 연결이 끊긴 월드를 기억해 둔다.
+	// 통합 후에는 방 화면도 Title 맵 위에 뜨므로 맵 이름으로는 구분되지 않는다.
+	NetworkFailureWorld = GetWorld();
+
+	// 진행 중이던 사용자 작업을 먼저 끊는다.
+	// 아래에서 델리게이트를 다시 바인딩하면 BindDestroySessionCompleteDelegate 가
+	// 기존 핸들을 지워버려 그 작업은 영영 끝나지 않는다.
+	CancelCurrentSessionOperationForRecovery();
+
+	if (!SessionInterface.IsValid() ||
+		SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName) == nullptr)
+	{
+		FinishNetworkFailureRecovery();
+		return;
+	}
+
+	BindDestroySessionCompleteDelegate();
+
+	// 타이머를 요청보다 먼저 건다.
+	// DestroySession 이 완료 델리게이트를 동기로 쏘면 콜백이 타이머를 해제하고 돌아오는데,
+	// 그 뒤에 타이머를 걸면 아무도 끄지 않는 타이머가 남아 복구가 한 번 더 돈다.
+	StartNetworkFailureRecoveryTimeout();
+
+	if (!SessionInterface->DestroySession(CrosswalkSession::GameSessionName))
+	{
+		ClearDestroySessionCompleteDelegate();
+		ClearNetworkFailureRecoveryTimeout();
+		FinishNetworkFailureRecovery();
+	}
+}
+
+void UCWGameInstance::CancelCurrentSessionOperationForRecovery()
+{
+	// 강제로 메뉴로 돌아가는 경로이므로 진행 중이던 작업의 결과는 의미가 없다.
+	// UI 에 실패를 방송하지 않고 조용히 끊는다 - 어차피 화면이 통째로 바뀐다.
+	ClearSessionOperationTimeout();
+
+	ClearCreateSessionCompleteDelegate();
+	ClearFindSessionsCompleteDelegate();
+	ClearJoinSessionCompleteDelegate();
+	ClearDestroySessionCompleteDelegate();
+
+	CurrentFindPurpose = ECWSessionFindPurpose::None;
+	CurrentSessionOperation = ECWSessionOperation::None;
+	bSessionOperationInFlight = false;
+
+	// 생성 롤백이 돌고 있었다면 그것도 여기서 끝난다
+	bRollingBackFailedCreate = false;
+}
+
+void UCWGameInstance::FinishNetworkFailureRecovery()
+{
+	// 동기 콜백과 실패 반환이 겹치면 두 번 불릴 수 있음
+	if (!bRecoveringFromNetworkFailure)
+	{
+		return;
+	}
+
+	ClearNetworkFailureRecoveryTimeout();
+
+	// 정리에 실패해 세션이 남아도 여기서 플래그를 내린다.
+	// 남은 세션이 착지를 오염시키지 않기 때문이다 - 새 월드는 NM_Standalone 이고
+	// ShouldEnterRoomPage 가 넷 모드를 함께 보므로 자동으로 메뉴로 간다.
+	bRecoveringFromNetworkFailure = false;
+
+	CurrentRoomCode.Empty();
+	PendingRoomCode.Empty();
+	PendingJoinRoomCode.Empty();
+	CachedRoomList.Reset();
+
+	OnRoomListUpdated.Broadcast(CachedRoomList);
+
+	// 메뉴로 돌려보내는 것까지가 이 경로의 책임이다.
+	// 사용자용 DestroyRoom 을 안 타므로 완료도 방송되지 않고, 따라서 방 화면의
+	// OpenLevel 도 실행되지 않는다. 여기서 안 옮기면 연결이 끊긴 화면에 그대로 남는다.
+	// 다음 틱으로 미루는 이유는 세션이 없을 때 이 함수가 HandleNetworkFailure 에서
+	// 동기적으로 불릴 수 있는데, 그 시점은 엔진이 연결을 정리하는 중이기 때문이다.
+	TravelToMenuNextTickHandle =
+		GetTimerManager().SetTimerForNextTick(this, &UCWGameInstance::TravelToMenuMap);
+}
+
+void UCWGameInstance::TravelToMenuMap()
+{
+	UWorld* CurrentWorld = GetWorld();
+
+	if (!IsValid(CurrentWorld) || MenuMapPath.IsEmpty())
+	{
+		return;
+	}
+
+	// 맵 이름으로 판별하면 안 된다.
+	// 통합 후에는 방 화면도 Title 맵 위에 뜨므로, 연결이 끊긴 그 월드에서도
+	// "현재 맵 == MenuMapPath" 가 참이라 이동을 건너뛰고 죽은 화면에 남는다.
+	// 월드 객체를 비교한다 - 같은 맵이어도 새로 열어야 넷드라이버와 UI 가 초기화된다.
+	if (CurrentWorld == NetworkFailureWorld.Get())
+	{
+		UGameplayStatics::OpenLevel(this, FName(*MenuMapPath));
+		return;
+	}
+
+	// 엔진이 이미 새 월드로 옮겼다. 그 월드는 NM_Standalone 이라 메뉴 화면이 선택된다
+}
+
+void UCWGameInstance::StartNetworkFailureRecoveryTimeout()
+{
+	ClearNetworkFailureRecoveryTimeout();
+
+	if (SessionOperationTimeout <= 0.f)
+	{
+		return;
+	}
+
+	// 세션 작업 타임아웃과 같은 이유로 게임 인스턴스 타이머를 쓴다 - 월드 타이머는 트래블에 날아감
+	GetTimerManager().SetTimer(
+		NetworkFailureRecoveryTimeoutHandle,
+		this,
+		&UCWGameInstance::HandleNetworkFailureRecoveryTimeout,
+		SessionOperationTimeout,
+		false
+	);
+}
+
+void UCWGameInstance::ClearNetworkFailureRecoveryTimeout()
+{
+	GetTimerManager().ClearTimer(NetworkFailureRecoveryTimeoutHandle);
+}
+
+void UCWGameInstance::HandleNetworkFailureRecoveryTimeout()
+{
+	SetStatus(TEXT("NetworkFailure recovery timed out"));
+
+	// 응답이 끝내 오지 않았다. 남은 델리게이트를 걷어내고 메뉴 복귀는 그대로 진행한다
+	ClearDestroySessionCompleteDelegate();
+	FinishNetworkFailureRecovery();
 }
 
 void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
@@ -1211,6 +1529,20 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSuccessful)
 {
 	ClearDestroySessionCompleteDelegate();
+
+	// 내부 경로 두 개가 같은 콜백을 쓴다. 기존 성공·실패 판정보다 앞에서 갈라야 한다.
+	// 내부 정리는 OSS 성공 여부와 무관하게 로컬 복귀를 계속해야 하기 때문이다.
+	if (bRollingBackFailedCreate)
+	{
+		FinishRollbackAsCreateFailure();
+		return;
+	}
+
+	if (bRecoveringFromNetworkFailure)
+	{
+		FinishNetworkFailureRecovery();
+		return;
+	}
 
 	if (!bWasSuccessful)
 	{

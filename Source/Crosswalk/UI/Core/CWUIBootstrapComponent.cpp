@@ -8,6 +8,7 @@
 #include "UI/Core/CWUIRootWidget.h"
 #include "UI/Core/CWUISubsystem.h"
 #include "UI/Data/CWUIPageConfigDataAsset.h"
+#include "Core/CWGameInstance.h"
 
 #pragma region ActorComponentLifecycle
 
@@ -148,11 +149,26 @@ void UCWUIBootstrapComponent::BeginPlay()
 		}
 	}
 
+	// 어느 화면으로 시작할지 세션 연결 상태로 판정
+	// 고정된 InitialPage 만으로는 방에 들어와 있는 경우를 구분하지 못함
+	ECWUIPage StartPage = InitialPage;
+
+	if (InitialPage != ECWUIPage::None)
+	{
+		const UCWGameInstance* CWGameInstance =
+			OwnerPC->GetGameInstance<UCWGameInstance>();
+
+		if (IsValid(CWGameInstance) && CWGameInstance->ShouldEnterRoomPage())
+		{
+			StartPage = ECWUIPage::Room;
+		}
+	}
+
 	// 시작 Page가 지정된 최초 진입에서만 화면을 표시
-	if (InitialPage != ECWUIPage::None &&
+	if (StartPage != ECWUIPage::None &&
 		UISubsystem->GetCurrentPage() == ECWUIPage::None)
 	{
-		if (!UISubsystem->OpenPage(InitialPage))
+		if (!UISubsystem->OpenPage(StartPage))
 		{
 			UE_LOG(
 				LogCWUI,
