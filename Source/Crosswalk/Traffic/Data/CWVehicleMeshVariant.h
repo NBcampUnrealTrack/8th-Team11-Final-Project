@@ -32,6 +32,19 @@ struct FCWVehicleMeshVariant
 {
 	GENERATED_BODY()
 
+	/**
+	 * 이 차체가 속한 차종 이름. 속도 범위표(FCWVehicleSpeedRow)의 행 이름과 맞춘다.
+	 *
+	 * 비워 두면 차종 BP 의 Speed 를 그대로 쓴다. 표에 없는 이름을 적어도 마찬가지인데,
+	 * 그때는 오타일 가능성이 높으므로 경고를 한 줄 찍는다.
+	 *
+	 * 차체마다 행을 만들라는 뜻이 아니다. 거동이 같은 차체끼리 같은 이름을 적으면 된다 -
+	 * 승용차 BP 의 차체 15 종을 "Sedan / SUV / Van / Sports" 넷으로 묶는 식이다.
+	 * 그 묶음이 곧 속도를 정하는 단위다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic")
+	FName SpeedType;
+
 	/** 씌울 메쉬. 비어 있으면 이 칸을 뽑은 차량은 BP 기본 메쉬 그대로 달린다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic")
 	TObjectPtr<UStaticMesh> Mesh;
