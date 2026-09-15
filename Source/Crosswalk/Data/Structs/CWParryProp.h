@@ -6,6 +6,7 @@
 
 #include "CWParryProp.generated.h"
 
+class UNiagaraSystem;
 class USoundBase;
 class UStaticMesh;
 
@@ -32,6 +33,16 @@ public:
 	/** 이 소품을 휘두를 때 나는 소리. 비우면 이 소품이 뽑힌 패링이 무음이 된다. */
 	UPROPERTY(EditAnywhere, Category = "Prop")
 	TObjectPtr<USoundBase> SwingSound;
+
+	/**
+	 * 이 소품이 차를 쳐낼 때 터지는 이펙트. 비우면 이 소품이 뽑힌 패링만 이펙트 없이 나간다.
+	 *
+	 * 사운드 옆에 두는 이유는 메시와 같다. 배트는 금속 스파크, 형광봉은 빛 번짐처럼
+	 * 소품마다 달라야 하는데, 배열을 따로 두면 인덱스가 어긋났을 때 형광봉에서
+	 * 쇳가루가 튀는 상태가 되고 그건 데이터만 봐서는 못 찾는다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Prop")
+	TObjectPtr<UNiagaraSystem> SwingEffect;
 
 	/**
 	 * 컴포넌트에 적용할 크기.

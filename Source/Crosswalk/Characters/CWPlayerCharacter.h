@@ -207,6 +207,16 @@ protected:
 	void PlayParrySwingMontage();
 
 	/**
+	 * 소품에 맞는 패링 이펙트를 차량 위치에 낸다. 몬타주와 마찬가지로 모든 머신에서 돈다.
+	 *
+	 * @param Prop           ApplyParryProp 이 돌려준 소품. 카탈로그가 비었으면 nullptr 이고
+	 *                       그때는 이펙트 없이 넘어간다.
+	 * @param ParrySyncData  서버가 확정한 위치와 방향과 세기. 이 셋이 없으면 어디에 뭘 향해
+	 *                       얼마나 크게 뿌릴지 알 수 없어서 통째로 받는다.
+	 */
+	void PlayParrySwingEffect(const struct FCWParryProp* Prop, const FCWParrySyncData& ParrySyncData);
+
+	/**
 	 * 서버가 뽑아 보낸 인덱스로 손에 들 소품을 준비한다.
 	 *
 	 * 메시와 크기만 꽂아 두고 보이게 하지는 않는다. 표시는 몬타주에 얹은
@@ -734,6 +744,50 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
 	TObjectPtr<UAnimMontage> ParrySwingMontage;
+
+	/**
+	 * 이펙트를 차량 원점에서 얼마나 띄울지(cm). 차량 로컬이 아니라 월드 기준이다.
+	 *
+	 * FCWParrySyncData::ParryLocation 은 차량의 GetActorLocation() 인데, 차량 콜리전이
+	 * 바닥 기준으로 정렬되어 있어서(ACWBaseVehicle::OnConstruction) 그 점이 지면에 붙어 있다.
+	 * 그대로 뿌리면 바퀴 밑에서 터진다. 차높이 절반쯤 올리는 값이 기본이다.
+	 *
+	 * 차종마다 높이가 다르지만 한 값으로 둔다. 연출용이라 정확할 필요가 없고, 차종별로
+	 * 나눌 상황이 되면 애초에 차량 쪽 ACWBaseVehicle::OnParriedFX 로 옮기는 게 맞다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	FVector ParryEffectOffset = FVector(0.f, 0.f, 80.f);
+
+	/**
+	 * 이펙트에 넘길 세기 파라미터의 이름. 나이아가라 시스템의 User 파라미터와 같아야 한다.
+	 *
+	 * 시스템 쪽에 이 이름의 float User 파라미터가 없으면 아무 일도 일어나지 않는다.
+	 * 경고도 에러도 없으므로, 이펙트가 세기에 반응하지 않으면 철자부터 확인한다.
+	 *
+	 * 비워 두면(NAME_None) 아예 넘기지 않는다. 세기에 반응할 필요가 없는 이펙트에 쓴다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	FName ParryEffectStrengthParameterName = TEXT("Velocity_Multiplier");
+
+	/**
+	 * 세기로 환산할 차량 속도 구간(cm/s). X 이하는 전부 약하게, Y 이상은 전부 강하게 친다.
+	 *
+	 * 원본 속도를 그대로 넘기지 않는 이유가 있다. 받는 쪽 User 파라미터는 대개 곱셈 계수라
+	 * 1 근처의 값을 기대하는데, 여기 들어오는 값은 700~1500 같은 cm/s 다. 그대로 꽂으면
+	 * 파티클이 1000배로 튀어 화면을 덮는다. 환산을 이펙트마다 커브로 잡게 두는 방법도 있지만,
+	 * 사 온 이펙트는 그 커브가 없고 파라미터가 곧바로 곱해지는 구조라 여기서 맞춰 준다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	FVector2D ParryEffectSpeedRange = FVector2D(400.f, 1600.f);
+
+	/**
+	 * 위 구간을 환산해서 넘길 값의 범위. 보통 1 을 사이에 두고 잡는다.
+	 *
+	 * 기본값은 느린 차 0.7배, 빠른 차 1.5배다. 0 부터 시작하지 않는 이유는, 곱셈 계수에
+	 * 0 이 들어가면 그 패링만 이펙트가 통째로 사라지기 때문이다. 느려도 보이긴 해야 한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	FVector2D ParryEffectStrengthRange = FVector2D(0.7f, 1.5f);
 
 	/**
 	 * 손에 소품을 꽂을 컴포넌트를 찾을 때 쓰는 태그. BP_PlayerCharacter 의 BatMesh 에
