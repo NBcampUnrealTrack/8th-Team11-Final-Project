@@ -255,9 +255,6 @@ void ACWBaseWorkZone::SetProgress(float NewProgress)
 
 	Progress = NewClamped;
 
-	// [진단로그] H-3 작업 진행도 기준 실측용 - 측정 끝나면 제거.
-	UE_LOG(LogTemp, Warning, TEXT("[ProgressSync] [%s] 서버 진행도=%.3f"), *GetName(), Progress);
-
 	// 완료 여부를 먼저 정하고 나서 연출과 화면 표시를 갱신해야 한다.
 	// 순서가 반대면 100% 가 된 프레임의 표시가 "미완료" 색으로 그려지고,
 	// 그 뒤로는 진행도가 안 바뀌어 다시 그릴 일이 없으니 영영 그 색으로 남는다.
@@ -310,9 +307,6 @@ void ACWBaseWorkZone::HandleProgressChanged()
 
 void ACWBaseWorkZone::OnRep_Progress()
 {
-	// [진단로그] H-3 작업 진행도 기준 실측용 - 측정 끝나면 제거.
-	UE_LOG(LogTemp, Warning, TEXT("[ProgressSync] [%s] 클라 진행도=%.3f"), *GetName(), Progress);
-
 	// 서버에서 올라온 진행도. 연출과 델리게이트는 클라이언트에서도 같은 경로를 탄다.
 	HandleProgressChanged();
 }
