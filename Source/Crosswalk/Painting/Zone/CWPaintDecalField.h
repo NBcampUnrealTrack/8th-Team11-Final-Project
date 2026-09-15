@@ -92,6 +92,28 @@ private:
 	/** 이 작업자가 자국을 지울 수 있는 도구를 들고 있는가. */
 	bool IsCleanupTool(ECWToolType ToolType) const;
 
+	/**
+	 * 이 자리에 겹치는 자국을 찾아 되살린다. 되살렸으면 true.
+	 *
+	 * 겹친 자리에 새 자국을 또 만들면 개수만 늘고 그림은 그대로다. 대신 이미 있던 자국의
+	 * 남은 양을 되돌려서, 겨우 지워놓은 자리가 다시 더러워지는 것으로 보이게 한다.
+	 *
+	 * 되살릴 때 Id 를 새로 매긴다. 각 머신은 처음 보는 Id 를 지금 퍼지기 시작하는 자국으로
+	 * 다루기 때문에, 번호를 갈아야 재오염이 퍼지는 연출을 다시 탄다.
+	 */
+	bool TryMergeIntoExisting(const FVector& Location, float SpawnDelay);
+
+	/**
+	 * 이 머신이 자국을 처음 본 시각(초). 기록이 없으면 지금 시각으로 새로 남긴다.
+	 *
+	 * 서버 시각을 그대로 쓰지 않는 이유: 머티리얼의 Time 노드는 각 머신의 로컬 월드 시간이라
+	 * 기준이 다르다. 자국을 처음 본 순간부터 퍼지게 하면 지연만큼 늦게 시작할 뿐 그림은 같다.
+	 */
+	float GetLocalSpawnTime(int32 DecalId);
+
+	/** 사라진 자국의 스폰 시각 기록을 버린다. 안 버리면 판이 길어질수록 맵만 쌓인다. */
+	void PruneLocalSpawnTimes();
+
 public:
 	// 자국을 지우는 도구. (검은색 롤러)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal")
@@ -141,6 +163,46 @@ public:
 	float ScatterRadiusPerCan = 45.f;
 
 	/**
+	 * 새 자국을 기존 자국과 합칠 거리. 자국 반경에 대한 비율이다.
+	 *
+	 * 이 안에 이미 자국이 있으면 새로 만들지 않고 그 자국을 되살린다. 사고가 같은 자리에서
+	 * 거듭돼도 개수가 늘지 않는다. 0 이면 합치지 않고 예전처럼 계속 쌓인다.
+	 *
+	 * 1 보다 크게 잡으면 자국이 서로 닿기 전에 합쳐져서 얼룩이 듬성해진다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float MergeRadiusScale = 0.6f;
+
+	/**
+	 * 자국 개수의 상한. 병합이 놓친 경우를 막는 안전망이다.
+	 *
+	 * 자국 하나가 데칼 컴포넌트 하나라 개수가 그대로 그리기 비용이다. 넓은 판에서 사고가
+	 * 거듭되면 병합만으로는 안 잡힌다. 상한에 닿으면 새 자국을 더 만들지 않는다.
+	 *
+	 * 오래된 자국을 버리지 않는 이유: 치우지 않아도 사라지는 자국이 생기면
+	 * 정리가 클리어 조건인 이 존에서 공짜로 넘어가는 길이 된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal", meta = (ClampMin = "1"))
+	int32 MaxDecals = 128;
+
+	/**
+	 * 자국 하나가 다 퍼지는 데 걸리는 시간(초).
+	 *
+	 * 머티리얼이 Progress 파라미터로 마스크를 열어 쓴다. 0 이면 퍼지지 않고 바로 나타난다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal|Grow", meta = (ClampMin = "0.0"))
+	float GrowDuration = 0.35f;
+
+	/**
+	 * 한 사고에서 자국끼리 벌어지는 시간(초). 자국 순서에 비례해 늦게 나타난다.
+	 *
+	 * 전부 같이 퍼지면 덩어리 하나가 부풀어 오르는 것처럼 보인다. 조금씩 어긋나야
+	 * 사방으로 튀어 박히는 것으로 읽힌다. 0 이면 동시에 퍼진다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal|Grow", meta = (ClampMin = "0.0"))
+	float SpawnDelayPerDecal = 0.045f;
+
+	/**
 	 * 자국 하나를 다 지우는 데 걸리는 시간(초). 붓을 계속 대고 있을 때 기준이다.
 	 *
 	 * 체온이 오르면 작업 컴포넌트가 넘겨주는 시간이 줄어들어 그만큼 느려진다.
@@ -176,10 +238,25 @@ private:
 	TArray<TObjectPtr<UDecalComponent>> DecalComponents;
 
 	/**
-	 * 지금까지 한 번에 가장 많이 쌓였던 자국 수. 진행도의 분모다.
+	 * 각 머신이 자국을 처음 본 시각(초). 자국 Id 로 찾는다.
 	 *
-	 * 전체 개수로 나누면 사고가 날 때마다 진행도가 뒤로 갔다가, 지우면 다시 앞으로 간다.
-	 * 그게 의도다. (기획서 4-1 "전체 진행률이 뒤로 가는 것은 사고를 알리는 의도된 동작")
+	 * 리플리케이트하지 않는다. 머티리얼의 Time 노드가 머신마다 다른 로컬 시간을 쓰기 때문에,
+	 * 이 값도 각자 자기 시간축으로 갖고 있어야 퍼짐이 제대로 보인다.
 	 */
-	int32 PeakDecalCount = 0;
+	TMap<int32, float> LocalSpawnTimes;
+
+	// 다음 자국에 매길 번호. 서버에서만 올라간다.
+	int32 NextDecalId = 1;
+
+	/**
+	 * 지금까지 한 번에 가장 많이 쌓였던 자국의 남은 양 합계. 진행도의 분모다.
+	 *
+	 * 개수가 아니라 합계인 이유: 겹친 자국은 새로 만들지 않고 되살리기 때문에, 개수로 세면
+	 * 같은 자리에 거듭난 사고가 진행도에 잡히지 않는다. 되살린 만큼 합계는 늘어난다.
+	 *
+	 * 자국이 모두 온전할 때는 합계가 곧 개수라 예전과 같은 값이 나온다.
+	 * 사고가 나면 진행도가 뒤로 갔다가 지우면 다시 앞으로 가는 것이 의도다.
+	 * (기획서 4-1 "전체 진행률이 뒤로 가는 것은 사고를 알리는 의도된 동작")
+	 */
+	float PeakRemainingTotal = 0.f;
 };

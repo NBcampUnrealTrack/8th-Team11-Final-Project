@@ -22,6 +22,16 @@ struct FCWPaintDecal
 	GENERATED_BODY()
 
 public:
+	/**
+	 * 자국을 가리키는 고유 번호. 서버가 매기고 자국이 사라질 때까지 바뀌지 않는다.
+	 *
+	 * 배열 인덱스를 쓰지 않는 이유: 가운데 자국이 지워지면 RemoveAt 이 뒤를 앞으로 당겨서
+	 * 인덱스가 밀린다. 각 머신이 "이 자국을 언제 처음 봤나" 를 인덱스로 기억하면
+	 * 그 순간 퍼짐 시각이 엉뚱한 자국에 붙는다.
+	 */
+	UPROPERTY()
+	int32 Id = 0;
+
 	// 자국 중심. 지면에 붙인 좌표다.
 	UPROPERTY()
 	FVector_NetQuantize Location = FVector::ZeroVector;
@@ -33,4 +43,13 @@ public:
 	// 얼마나 남았는가. 1 이면 그대로, 0 이면 다 지워져 사라진다.
 	UPROPERTY()
 	float Remaining = 1.f;
+
+	/**
+	 * 자국이 나타나기까지 늦추는 시간(초).
+	 *
+	 * 한 번의 사고로 생긴 자국이 전부 같이 퍼지면 덩어리 하나가 부풀어 오르는 것처럼 보인다.
+	 * 자국마다 조금씩 어긋나게 해서 파팟 하고 튀어 박히는 느낌을 만든다.
+	 */
+	UPROPERTY()
+	float SpawnDelay = 0.f;
 };
