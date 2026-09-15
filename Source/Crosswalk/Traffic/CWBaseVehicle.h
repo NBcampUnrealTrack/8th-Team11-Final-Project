@@ -358,6 +358,22 @@ private:
 	float GetActiveWheelRadius() const;
 
 	/**
+	 * 지금 씌운 변형의 바퀴 본 이름. 변형이 비어 있으면 차종 BP 의 WheelBones 로 떨어진다.
+	 *
+	 * 반지름과 같은 규칙이다. 한 차종 BP 안에 본 구성이 다른 차체가 섞이기 때문에
+	 * (트럭 BP 의 4륜 Truck_01 과 6륜 Truck_02) 차종 값 하나로는 덮을 수 없다.
+	 */
+	const TArray<FName>& GetActiveWheelBones() const;
+
+	/**
+	 * 바퀴 본의 레퍼런스 포즈 회전을 받아 둔다. 메쉬를 씌운 직후에만 부른다.
+	 *
+	 * 이 자세 위에 회전을 얹어야 바퀴가 눕지 않는다. 이유는 ApplyWheelSpinToBones 주석 참고.
+	 * 메쉬에 없는 본은 여기서 걸러내므로, 이름을 잘못 넣어도 경고가 스폰당 한 줄로 끝난다.
+	 */
+	void CacheWheelBoneRestRotations();
+
+	/**
 	 * 콜리전 박스 크기를 바꾸고, 바뀐 높이에 맞춰 박스를 다시 노면 위로 올린다.
 	 *
 	 * 크기와 위치를 따로 부르면 안 된다. 박스 중심은 항상 높이의 절반 지점이라
@@ -545,6 +561,14 @@ protected:
 	 *   포저블 메쉬는 애님 인스턴스도 스켈레톤 바인딩도 없이 본을 직접 돌린다. 본 이름만
 	 *   맞으면 되므로 에셋을 하나도 건드리지 않고 94종이 전부 돈다. 이 차량들이 가진
 	 *   애니메이션은 바퀴 회전뿐이라 애님 그래프로 얻을 것이 애초에 없었다.
+	 *
+	 * 이 슬롯은 BP 에서 비워 둔다. 스폰할 때 ApplyMeshVariant 가 채운다.
+	 *   디테일 창으로 메쉬를 직접 물리면 BP 뷰포트에서 지오메트리가 뭉개져 보인다.
+	 *   UPoseableMeshComponent 는 OnRegister 도 PostEditChangeProperty 도 오버라이드하지 않고
+	 *   bTickInEditor 도 켜지 않아서, 에디터에서는 본 트랜스폼을 채우는 AllocateTransformData 가
+	 *   한 번도 불리지 않는다. 런타임에는 첫 틱의 RefreshBoneTransforms 가 알아서 채우므로
+	 *   게임 화면에서는 멀쩡하다. 에셋이 깨진 것이 아니다 - 메쉬를 눈으로 보려면
+	 *   스켈레탈 메쉬 에디터에서 열어라. (2026-09-15, Police_01 을 이것 때문에 의심했다)
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TObjectPtr<UPoseableMeshComponent> VehicleSkeletalMesh;
@@ -592,15 +616,13 @@ protected:
 	float WheelRadius = 34.f;
 
 	/**
-	 * 매 틱 돌릴 바퀴 본 이름. 비워 두면 바퀴가 돌지 않는다.
+	 * 차종 기본 바퀴 본 이름. 변형이 WheelBones 를 지정하지 않았을 때 쓰인다.
 	 *
-	 * 변형이 아니라 차종 BP 가 들고 있다. MegaCity 팩은 94종이 바퀴 본 이름을 공유해서
-	 * 변형마다 따로 채울 것이 없고, 실제로 갈리는 것은 개수뿐이다. 개수가 다른 차는
-	 * 어차피 길이가 달라 별도 차종 BP 로 가야 하므로(스포너 간격 계산이 GetVehicleLength 를
-	 * 본다) 차종 단위면 충분하다. 승용차 4개, 오토바이 2개, 3축 트럭 6개.
+	 * 양쪽 다 비어 있으면 바퀴가 돌지 않는다.
 	 *
-	 * 목록에 없는 이름을 넣으면 그 칸만 조용히 무시된다. 엔진이 경고를 찍기는 하지만
-	 * 차량마다 매 틱이라 로그가 잠기므로, 이름은 메쉬 에디터에서 확인하고 넣는다.
+	 * MegaCity 팩은 26 차체 중 24개가 FL/FR/RL/RR 로 같아서, 이 값을 부모 BP 에 한 번만
+	 * 넣으면 대부분이 덮인다. 나머지 둘(3축 세미, 오토바이)은 본 구성 자체가 달라
+	 * 변형 쪽에서 따로 지정한다. 자세한 이름은 FCWVehicleMeshVariant::WheelBones 주석 참고.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
 	TArray<FName> WheelBones;
@@ -797,6 +819,21 @@ private:
 	 * 한 화면에 나란히 서는 일이 드물어 미뤄 둔다.
 	 */
 	float WheelSpinDegrees = 0.f;
+
+	/**
+	 * 실제로 돌릴 바퀴 본과 그 레퍼런스 자세. 두 배열은 같은 순서로 짝을 이룬다.
+	 *
+	 * GetActiveWheelBones 를 그대로 쓰지 않고 한 벌 더 두는 이유는 메쉬에 없는 이름을
+	 * 걸러낸 결과이기 때문이다. 매 틱 거르면 그때마다 엔진 경고가 찍힌다.
+	 *
+	 * 메쉬가 바뀔 때마다(ApplyMeshVariant) 다시 채운다. 같은 액터에 다른 변형을 씌우는
+	 * 구조가 생기면 이 두 배열도 반드시 같이 갱신돼야 한다.
+	 */
+	TArray<FName> CachedWheelBones;
+	TArray<FQuat> WheelBoneRestRotations;
+
+	/** 위 두 배열을 한 번이라도 채웠는가. 변형을 쓰지 않는 차종도 첫 틱에 채우기 위한 표시다. */
+	bool bWheelRestCached = false;
 
 	/**
 	 * 패링당해 발사된 시각(월드 시간, 초). 음수면 아직 발사된 적이 없다는 뜻이다.

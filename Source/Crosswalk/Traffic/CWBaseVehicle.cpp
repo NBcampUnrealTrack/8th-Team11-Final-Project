@@ -270,6 +270,9 @@ void ACWBaseVehicle::ApplyMeshVariant()
 	{
 		ApplyCollisionExtent(Variant->BoxExtent);
 	}
+
+	// 메쉬가 바뀌었으니 바퀴 본의 레퍼런스 자세를 다시 받는다. 지금이 포즈가 손타지 않은 유일한 시점이다.
+	CacheWheelBoneRestRotations();
 }
 
 void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
@@ -307,6 +310,56 @@ float ACWBaseVehicle::GetActiveWheelRadius() const
 	return WheelRadius;
 }
 
+void ACWBaseVehicle::CacheWheelBoneRestRotations()
+{
+	CachedWheelBones.Reset();
+	WheelBoneRestRotations.Reset();
+	bWheelRestCached = true;
+
+	if (!VehicleSkeletalMesh->GetSkinnedAsset())
+	{
+		return;
+	}
+
+	for (const FName& BoneName : GetActiveWheelBones())
+	{
+		/**
+		 * 없는 이름을 여기서 걸러낸다.
+		 *
+		 * 거르지 않고 매 틱 SetBoneRotationByName 에 넘기면 엔진이 그때마다 경고를 찍어
+		 * 차량 수 x 바퀴 수 x 프레임만큼 로그가 쌓인다. 한 번만 확인하고 목록에서 빼면
+		 * 경고도 스폰당 한 줄로 끝난다.
+		 */
+		if (VehicleSkeletalMesh->GetBoneIndex(BoneName) == INDEX_NONE)
+		{
+			UE_LOG(LogCWTraffic, Warning, TEXT("[Traffic] %s: 바퀴 본 '%s' 이 이 메쉬에 없다. 이 본은 건너뛴다."),
+				*GetName(), *BoneName.ToString());
+			continue;
+		}
+
+		/**
+		 * 레퍼런스 포즈의 컴포넌트 공간 회전을 받아 둔다.
+		 *
+		 * 메쉬를 막 씌운 직후라 본 포즈가 아직 레퍼런스 그대로다. 여기서 받지 않고
+		 * 주행 중에 받으면 이미 우리가 돌려 놓은 각도가 섞여 들어온다.
+		 */
+		CachedWheelBones.Add(BoneName);
+		WheelBoneRestRotations.Add(
+			VehicleSkeletalMesh->GetBoneTransformByName(BoneName, EBoneSpaces::ComponentSpace).GetRotation());
+	}
+}
+
+const TArray<FName>& ACWBaseVehicle::GetActiveWheelBones() const
+{
+	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
+	if (Variant && Variant->WheelBones.Num() > 0)
+	{
+		return Variant->WheelBones;
+	}
+
+	return WheelBones;
+}
+
 void ACWBaseVehicle::UpdateWheelSpin(float DeltaSeconds)
 {
 	const float Radius = GetActiveWheelRadius();
@@ -335,9 +388,16 @@ void ACWBaseVehicle::UpdateWheelSpin(float DeltaSeconds)
 
 void ACWBaseVehicle::ApplyWheelSpinToBones()
 {
-	if (WheelBones.Num() == 0 || !VehicleSkeletalMesh->GetSkinnedAsset())
+	if (!bWheelRestCached)
 	{
-		// 정적 메쉬 변형을 뽑았거나 차종 BP 가 본 이름을 안 채운 경우다.
+		// 변형을 쓰지 않는 차종 BP 도 있다. 그쪽은 ApplyMeshVariant 를 타지 않으므로 여기서 채운다.
+		CacheWheelBoneRestRotations();
+	}
+
+	const TArray<FName>& Bones = CachedWheelBones;
+	if (Bones.Num() == 0)
+	{
+		// 정적 메쉬 변형을 뽑았거나, 본 이름이 없거나, 넣은 이름이 메쉬에 없는 경우다.
 		return;
 	}
 
@@ -357,17 +417,27 @@ void ACWBaseVehicle::ApplyWheelSpinToBones()
 	}
 
 	/**
-	 * Pitch 로 돌린다. 차량이 +X 를 보고 서 있으므로 바퀴 축은 컴포넌트 공간의 Y 축이고,
-	 * 그 축을 도는 회전이 Pitch 다.
+	 * 레퍼런스 자세 위에 회전을 얹는다. 덮어쓰지 않는다.
 	 *
-	 * 본의 레퍼런스 포즈 회전을 덮어쓰는 절대 지정이다. 바퀴 본이 회전된 채로 바인드된
-	 * 메쉬가 있으면 그 차만 바퀴가 비스듬히 서는데, 그때는 여기서 레퍼런스 회전을 곱하는
-	 * 쪽으로 바꿔야 한다. 지금 팩은 전부 축 정렬이라 필요가 없어서 넣지 않았다.
+	 * SetBoneRotationByName 은 본의 회전을 통째로 갈아 끼운다. 그래서 회전만 넘기면
+	 * 바퀴가 원래 들고 있던 자세가 날아간다. MegaCity 팩은 바퀴 본이 옆을 보도록 돌아간
+	 * 채로 바인드돼 있어서, 각도만 넣으면 바퀴가 누운 채로 돌았다 (2026-09-15 실기).
+	 *
+	 * 곱하는 순서가 중요하다. UE 는 A * B 를 "B 를 먼저, 그 다음 A" 로 해석하므로
+	 * Spin * Rest 는 레퍼런스 자세를 잡은 뒤 그 위에서 돌리는 것이 된다. 반대로 쓰면
+	 * 바퀴 자기 축을 기준으로 돌아 네 바퀴가 제각각 다른 방향으로 구른다.
+	 *
+	 * 축은 컴포넌트 공간의 Y 다. 차량이 +X 를 보고 서 있으니 바퀴 축이 Y 이고, 이 축은
+	 * 본이 어떤 자세로 바인드됐든 상관없이 네 바퀴가 똑같이 쓴다.
+	 *
+	 * 부호가 음수인 이유는 Pitch 양수가 +Z 를 -X 로 보내기 때문이다. 바퀴 꼭대기는 차가
+	 * 전진할 때 앞(+X)으로 가야 한다. 거꾸로 구르면 이 부호만 뒤집으면 된다.
 	 */
-	const FRotator Spin(WheelSpinDegrees, 0.f, 0.f);
-	for (const FName& BoneName : WheelBones)
+	const FQuat Spin = FRotator(-WheelSpinDegrees, 0.f, 0.f).Quaternion();
+	for (int32 Index = 0; Index < Bones.Num(); ++Index)
 	{
-		VehicleSkeletalMesh->SetBoneRotationByName(BoneName, Spin, EBoneSpaces::ComponentSpace);
+		const FQuat Rotation = Spin * WheelBoneRestRotations[Index];
+		VehicleSkeletalMesh->SetBoneRotationByName(Bones[Index], Rotation.Rotator(), EBoneSpaces::ComponentSpace);
 	}
 }
 
