@@ -12,7 +12,9 @@
 
 class ACWBaseVehicle;
 class ACWTrafficLane;
+class UDataTable;
 class UBoxComponent;
+class UCWVehicleAudioComponent;
 class UCWVehicleStopSyncComponent;
 class UPoseableMeshComponent;
 class USceneComponent;
@@ -152,6 +154,9 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier * (bParried ? ParriedSpeedMultiplier : 1.f); }
+
+	/** 차종 기본 주행 속도(cm/s). 개체 편차가 곱해지기 전의 값이다. */
+	float GetSpeed() const { return Speed; }
 
 	/**
 	 * 지금 실제로 내고 있는 속도(cm/s). 앞차에 막혀 느려졌으면 그만큼 낮고, 서 있으면 0 이다.
@@ -330,6 +335,15 @@ private:
 
 	/** 고른 차체와 색의 메쉬·콜리전 크기를 반영한다. 뽑은 것이 없으면 아무것도 하지 않는다. */
 	void ApplyMeshVariant();
+
+	/**
+	 * 뽑힌 차체의 차종 이름으로 속도 범위표를 찾아 SpeedMultiplier 를 굴린다.
+	 *
+	 * 서버에서만 부른다. 결과는 복제되는 SpeedMultiplier 로 건너가므로 클라이언트는
+	 * 굴리지 않는다 - 양쪽이 각자 굴리면 같은 차가 화면마다 다른 속도로 달린다.
+	 * 이름이 비었거나 표에 없으면 차종 BP 의 Speed 를 그대로 쓴다.
+	 */
+	void RollSpeedForVariant(FName SpeedType, const UDataTable* SpeedTable);
 
 	/**
 	 * 바퀴 회전각을 이번 프레임 이동만큼 민다. 서버·클라이언트 양쪽에서 돈다.
@@ -587,6 +601,15 @@ protected:
 	TObjectPtr<UCWVehicleStopSyncComponent> StopSyncComponent;
 
 	/**
+	 * 엔진음·경적·도플러 담당. 소리는 연출이라 복제하지 않고 각자 화면에서 운다.
+	 *
+	 * 애셋은 여기에 지정하지 않는다. 차종마다 다른 소리를 쓰고, 어떤 차가 어떤 소리를
+	 * 내는지는 C++ 기본값보다 차량 BP 에서 보는 편이 빠르다. (컴포넌트 주석 참고)
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
+	TObjectPtr<UCWVehicleAudioComponent> AudioComponent;
+
+	/**
 	 * 외형만 다른 변형 목록. 스폰할 때 서버가 하나를 골라 씌운다.
 	 *
 	 * 같은 차종 안에서 눈에 보이는 차만 갈아 끼우는 용도다. 속도나 피격 프로파일이 다른 차는
@@ -602,6 +625,10 @@ protected:
 	/** 차종 기본 주행 속도(cm/s). 플레이어 기본 이동속도 500의 1.5배. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float Speed = 750.f;
+
+	// 개체별 속도 편차는 여기 없다. 차종별 범위는 데이터 테이블(FCWVehicleSpeedRow)이 들고
+	// 있고 스포너가 스폰할 때 뽑는다. 같은 값을 두 곳에서 정하면 어느 쪽이 이겼는지
+	// 추적이 안 되므로, Speed 는 "범위를 안 정했을 때 쓰는 기본값" 하나로만 남긴다.
 
 	/**
 	 * 차종 기본 바퀴 반지름(cm). 변형이 WheelRadius 를 지정하지 않았을 때 쓰인다.
