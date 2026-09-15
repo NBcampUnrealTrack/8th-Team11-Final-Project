@@ -71,6 +71,31 @@ public:
 	virtual bool BlocksParry() const { return false; }
 
 	/**
+	 * 이 존에서 작업하는 동안 조준(커서 방향 회전)을 멈추는가.
+	 *
+	 * 차징처럼 "어디를 칠할지 정해놓고 버틴다" 는 작업만 true 를 돌려준다.
+	 * 그런 존은 누르는 순간 대상 범위가 확정되는데, 그 뒤로도 몸이 커서를 따라 돌면
+	 * 화면에 보이는 조준과 실제로 칠해질 자리가 어긋난다.
+	 *
+	 * 이동 잠금과 달리 별도 훅이 필요한 이유: 이동은 ConsumeDirectionInput 으로 입력을
+	 * 삼켜서 막지만, 커서 회전은 입력이 아니라 매 프레임 도는 연출이라 삼킬 것이 없다.
+	 *
+	 * 게이지나 칸을 칠하는 존은 조준이 곧 붓 위치라 막으면 안 된다.
+	 */
+	virtual bool BlocksAiming() const { return false; }
+
+	/**
+	 * 지금 차징 단계. 0 이면 차징 중이 아니거나 아직 최소 홀드를 못 채웠다.
+	 *
+	 * 애니메이션이 자세를 고르는 데 쓴다. 차징 개념이 없는 존은 그대로 두면 된다.
+	 * 차징 상태는 누르는 본인 기계에만 있으므로 이 값도 그 기계에서만 의미가 있다.
+	 */
+	virtual int32 GetChargeLevel() const { return 0; }
+
+	/** 게이지 채움용 0~1. 풀차징 시간 대비 얼마나 눌렀는가. */
+	virtual float GetChargeRatio() const { return 0.f; }
+
+	/**
 	 * 이 존이 체온 상승을 스스로 보고하는가.
 	 *
 	 * 기본은 false 다. 작업 컴포넌트가 ApplyWork 에 넘긴 시간만큼 체온을 올려준다.
@@ -117,6 +142,20 @@ public:
 	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
 	 */
 	virtual void ReceiveBrushStrokes(UCWWorkerComponent* Worker, const TArray<FCWBrushStroke>& Strokes) {}
+
+	/**
+	 * 소유 클라이언트가 붓을 놓으며 확정한 칸 번호들을 서버가 받는다.
+	 *
+	 * 붓질 배열과 같은 이유로 클라이언트가 직접 올린다. 차징은 누르는 본인 기계에서만 돌아서
+	 * 서버는 몇 단계까지 찼는지, 어느 칸을 겨눴는지를 알 방법이 없다. 서버가 리플리케이트된
+	 * 값으로 따로 재면 핑만큼 늦게 시작해 단계가 한 칸씩 어긋난다.
+	 *
+	 * 좌표가 아니라 칸 번호를 보내는 이유: 칸 배열은 Area 크기에서 계산되는 값이라 모든
+	 * 기계에서 같다. 번호 하나가 자리를 정확히 가리키므로 좌표를 실어 보낼 이유가 없다.
+	 *
+	 * 테두리 존만 오버라이드한다.
+	 */
+	virtual void ReceiveBorderCells(UCWWorkerComponent* Worker, const TArray<int32>& CellIndices) {}
 
 	/** 이 도구로 이 존을 작업할 수 있는가. AcceptedTools 가 비어 있으면 도구 종류는 안 가린다. (맨손은 언제나 불가) */
 	UFUNCTION(BlueprintPure, Category = "Work")

@@ -375,24 +375,12 @@ bool UCWWorkerComponent::ConsumeDirectionInput(const FVector2D& MoveInput)
 		return false;
 	}
 
-	// 소유 클라이언트에서는 먼저 로컬로 적용해 방향 전환이 즉시 보이게 한다.
-	// 서버 값이 리플리케이트되면 그쪽으로 정정된다.
-	const bool bConsumed = TargetZone->ConsumeDirectionInput(MoveInput);
-
-	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
-	{
-		Server_SubmitDirectionInput(TargetZone, MoveInput);
-	}
-
-	return bConsumed;
-}
-
-void UCWWorkerComponent::Server_SubmitDirectionInput_Implementation(ACWBaseWorkZone* Zone, FVector2D MoveInput)
-{
-	if (Zone != nullptr)
-	{
-		Zone->ConsumeDirectionInput(MoveInput);
-	}
+	// 이동 잠금은 본인 기계에서만 판단한다. 서버로 보내지 않는다.
+	//
+	// 예전에는 매 프레임 Server_SubmitDirectionInput 을 보냈다. 미니게임이 꼭짓점에서
+	// 방향키를 받아야 했기 때문인데, 그 미니게임이 없어지면서 서버가 이 입력으로 할 일이
+	// 사라졌다. 그대로 두면 차징 중 WASD 를 누르는 내내 신뢰 RPC 가 초당 수십 개씩 나간다.
+	return TargetZone->ConsumeDirectionInput(MoveInput);
 }
 
 void UCWWorkerComponent::SetHeldTool(ECWToolType NewTool, ACWBaseTool* NewToolActor)
@@ -614,9 +602,54 @@ void UCWWorkerComponent::Server_SubmitBrushStrokes_Implementation(ACWBaseWorkZon
 	}
 }
 
+void UCWWorkerComponent::SubmitBorderCells(ACWBaseWorkZone* Zone, const TArray<int32>& CellIndices)
+{
+	if (Zone == nullptr || CellIndices.Num() == 0)
+	{
+		return;
+	}
+
+	// 리슨 서버 호스트는 자기 자신이 서버다. RPC 를 태우면 한 프레임을 돌아가기만 한다.
+	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
+	{
+		Zone->ReceiveBorderCells(this, CellIndices);
+		return;
+	}
+
+	Server_SubmitBorderCells(Zone, CellIndices);
+}
+
+void UCWWorkerComponent::Server_SubmitBorderCells_Implementation(ACWBaseWorkZone* Zone, const TArray<int32>& CellIndices)
+{
+	if (Zone != nullptr)
+	{
+		Zone->ReceiveBorderCells(this, CellIndices);
+	}
+}
+
 bool UCWWorkerComponent::IsParryBlocked() const
 {
-	return TargetZone != nullptr && TargetZone->BlocksParry();
+	// bWorking 을 같이 본다. 대상 존이 잡혔다는 것만으로 막으면, 차징 존 옆에 서 있기만 해도
+	// 패링이 안 된다. 대상 존은 근처에 있기만 해도 잡히기 때문이다.
+	//
+	// bWorking 은 리플리케이트되는 값이라 서버와 클라이언트의 판단이 갈리지 않는다.
+	// 차징 누적 시간은 로컬 값이므로 그걸로 판단하면 안 된다.
+	return bWorking && TargetZone != nullptr && TargetZone->BlocksParry();
+}
+
+bool UCWWorkerComponent::IsAimingBlocked() const
+{
+	return bWorking && TargetZone != nullptr && TargetZone->BlocksAiming();
+}
+
+int32 UCWWorkerComponent::GetChargeLevel() const
+{
+	return (TargetZone != nullptr) ? TargetZone->GetChargeLevel() : 0;
+}
+
+float UCWWorkerComponent::GetChargeRatio() const
+{
+	return (TargetZone != nullptr) ? TargetZone->GetChargeRatio() : 0.f;
 }
 
 bool UCWWorkerComponent::IsLocalWorker() const
