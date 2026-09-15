@@ -1546,8 +1546,8 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 		return;
 	}
 
-	// 테두리 스케치 미니게임 중이면 WASD 는 선의 방향 전환에 쓰이고 캐릭터는 제자리에 선다.
-	// 미니게임이 없는 존이나 평소에는 false 가 돌아와 그냥 이동한다.
+	// 테두리 붓을 차징하는 동안에는 존이 이동 입력을 삼키고 캐릭터는 제자리에 선다.
+	// 차징이 없는 존이나 평소에는 false 가 돌아와 그냥 이동한다.
 	if (WorkerComponent->ConsumeDirectionInput(MoveInput))
 	{
 		return;
@@ -1765,8 +1765,9 @@ void ACWPlayerCharacter::Parry()
 		return;
 	}
 
-	// 테두리 미니게임처럼 입력을 붙잡는 작업 중에는 패링이 막힌다.
-	// 그 상태에서 패링까지 되면 못 피하는 위험이 상쇄되어 미니게임의 긴장이 사라진다.
+	// 테두리 붓을 차징하는 동안에는 패링이 막힌다.
+	// 못 움직이는데 튕겨내기까지 되면 차징의 위험 부담이 상쇄되어 긴장이 사라진다.
+	// 손을 떼면 그 프레임에 풀린다. 릴리즈 붓질 중에는 패링이 된다.
 	if (WorkerComponent->IsParryBlocked())
 	{
 		UE_LOG(LogTemp, Verbose, TEXT("[%s] 작업 중이라 패링 입력을 무시합니다."), *GetName());
@@ -1849,6 +1850,17 @@ void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)
 	 * (HandleHitLockChanged 경로의 SetActorRotation) 여기서 매 프레임 덮으면 그 정렬과 싸운다.
 	 */
 	if (IsActionLocked())
+	{
+		return;
+	}
+
+	/**
+	 * 차징처럼 대상 범위가 이미 확정된 작업 중에는 몸을 돌리지 않는다.
+	 *
+	 * 테두리 차징은 누르는 순간 어느 칸을 칠할지 정해진다. 그 뒤로도 커서를 따라 몸이 돌면
+	 * 화면에 보이는 조준과 실제로 칠해질 자리가 어긋나고, 프리뷰가 계속 흔들린다.
+	 */
+	if (WorkerComponent != nullptr && WorkerComponent->IsAimingBlocked())
 	{
 		return;
 	}

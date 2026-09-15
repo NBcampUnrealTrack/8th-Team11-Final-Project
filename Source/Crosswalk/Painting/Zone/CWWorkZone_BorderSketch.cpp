@@ -2,25 +2,31 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
-#include "Painting/Screens/CWBorderSketchWidget.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Net/UnrealNetwork.h"
 #include "Painting/Components/CWWorkerComponent.h"
+#include "Painting/Tools/CWBaseTool.h"
+#include "UObject/ConstructorHelpers.h"
 
 ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 {
-	// 작업 키를 떼도 선이 계속 나아가야 하므로 존 자체가 틱을 돈다.
+	// 작업 키를 뗀 것은 ApplyWork 가 끊기는 것으로만 알 수 있다. 그걸 재려면 존이 틱을 돌아야 한다.
 	PrimaryActorTick.bCanEverTick = true;
 
 	// 횡단보도 테두리 한 줄 정도의 기본 크기. 레벨에서 조절한다.
 	Area->SetBoxExtent(FVector(400.f, 60.f, 20.f));
 
-	// 한 바퀴를 다 돌아야 완료다. 부모 기본값(0.98)은 격자 칸 존을 위한 값이라 여기서는 맞지 않는다.
+	// 칸을 하나도 남기지 않아야 완료다. 부모 기본값(0.985)은 칸이 수천 개인 도색 존을 위한
+	// 여유분이라, 칸이 수십 개뿐인 여기서는 마지막 한 칸이 그냥 건너뛰어진다.
 	CompleteThreshold = 1.f;
 
 	// 이 존은 라인 테두리 도구 전용이다. 기본값으로 넣어 두면 배치할 때 빼먹을 일이 없다.
@@ -33,353 +39,444 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	// 레벨에서 끄고 싶으면 인스턴스에서 내리면 된다.
 	bBlocksPaintSpill = true;
 
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
+
+	// 기본 머티리얼은 불투명이라 반투명 연출이 나오지 않는다.
+	// 형태는 바로 보이게 해두고, 반투명 머티리얼은 컴포넌트 Details 의 Materials 슬롯에서 교체한다.
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(
+		TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+
 	BorderMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BorderMeshes"));
 	BorderMeshes->SetupAttachment(Area);
 	BorderMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	// 반투명 가이드가 그림자를 드리우면 바닥에 얼룩처럼 보인다.
 	BorderMeshes->SetCastShadow(false);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	PaintedMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PaintedMeshes"));
+	PaintedMeshes->SetupAttachment(Area);
+	PaintedMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PaintedMeshes->SetCastShadow(false);
+
+	PreviewMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PreviewMeshes"));
+	PreviewMeshes->SetupAttachment(Area);
+	PreviewMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PreviewMeshes->SetCastShadow(false);
+
+	PreviewBlockedMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PreviewBlockedMeshes"));
+	PreviewBlockedMeshes->SetupAttachment(Area);
+	PreviewBlockedMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PreviewBlockedMeshes->SetCastShadow(false);
+
 	if (PlaneMesh.Succeeded())
 	{
 		BorderMeshes->SetStaticMesh(PlaneMesh.Object);
+		PaintedMeshes->SetStaticMesh(PlaneMesh.Object);
+		PreviewMeshes->SetStaticMesh(PlaneMesh.Object);
+		PreviewBlockedMeshes->SetStaticMesh(PlaneMesh.Object);
 	}
 
-	// 기본 머티리얼은 불투명이라 반투명 연출이 나오지 않는다.
-	// 형태는 바로 보이게 해두고, 반투명 머티리얼은 컴포넌트 Details 의 Materials 슬롯에서 교체한다.
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(
-		TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	if (BasicMaterial.Succeeded())
 	{
 		BorderMeshes->SetMaterial(0, BasicMaterial.Object);
+		PaintedMeshes->SetMaterial(0, BasicMaterial.Object);
+		PreviewMeshes->SetMaterial(0, BasicMaterial.Object);
+		PreviewBlockedMeshes->SetMaterial(0, BasicMaterial.Object);
 	}
+}
 
-	// 애셋을 만들지 않아도 미니게임이 보이도록 C++ 위젯을 기본값으로 둔다.
-	// WBP 로 꾸미고 싶으면 이 클래스를 부모로 하는 위젯 BP 를 만들어 여기에 지정하면 된다.
-	WidgetClass = UCWBorderSketchWidget::StaticClass();
+void ACWWorkZone_BorderSketch::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACWWorkZone_BorderSketch, PaintedCellFlags);
 }
 
 void ACWWorkZone_BorderSketch::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
-	FitBorderToArea();
+	// 에디터에서 Area 나 칸 길이를 바꾸면 바로 보이게 한다.
+	RebuildCells();
 }
 
 void ACWWorkZone_BorderSketch::BeginPlay()
 {
 	Super::BeginPlay();
 
-	BorderMaterial = BorderMeshes->CreateAndSetMaterialInstanceDynamic(0);
+	// OnConstruction 이 이미 만들었지만 다시 만든다.
+	// 스폰 경로에 따라 OnConstruction 이 돌지 않는 경우가 있고, 칸 배열이 비어 있으면
+	// 이 존은 아무 일도 하지 않는 채로 조용히 서 있게 된다.
+	RebuildCells();
 
-	// 시작 모습은 전환 없이 바로 맞춘다. 이미 완료된 상태로 시작할 수도 있다.
-	PaintedBlend = IsCompleted() ? 1.f : 0.f;
-	UpdateBorderVisual(0.f);
+	SetupMaterials();
+
+	if (HasAuthority())
+	{
+		PaintedCellFlags.Init(0, Cells.Num());
+
+		// 시작 진행도가 있으면 그만큼의 칸을 미리 칠해 둔다. (부모의 InitialProgress)
+		//
+		// 부모는 Progress 값 하나만 넣어주는데, 이 존은 "어느 칸이 칠해졌는가" 가 진짜 상태이고
+		// 진행도는 거기서 계산되는 결과다. 그대로 두면 진행도만 1 이고 테두리는 전부
+		// 가이드 색인 상태가 되어, 다 그려진 선을 가이드로 쓰려는 용도가 깨진다.
+		const int32 InitialPaintedCount =
+			FMath::Clamp(FMath::RoundToInt(InitialProgress * Cells.Num()), 0, Cells.Num());
+		for (int32 CellIndex = 0; CellIndex < InitialPaintedCount; ++CellIndex)
+		{
+			PaintedCellFlags[CellIndex] = 1;
+		}
+
+		RefreshProgressFromCells();
+	}
+	else if (PaintedCellFlags.Num() != Cells.Num())
+	{
+		// 서버 값이 아직 안 왔을 수 있다. 빈 상태로 두면 인덱스가 어긋나므로 크기만 맞춰 둔다.
+		// 값이 도착하면 OnRep 이 통째로 덮는다.
+		PaintedCellFlags.Init(0, Cells.Num());
+	}
+
+	// 시작 상태는 연출 없이 그대로 켠다. 레벨을 열자마자 이미 그려져 있던 선이
+	// 눈앞에서 한 칸씩 그려지면 방금 누가 칠한 것처럼 보인다.
+	RevealedCellFlags = PaintedCellFlags;
+
+	RefreshPaintedInstances();
 }
 
 void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 도색 완료 전환은 모든 인스턴스에서 돌아야 한다.
-	UpdateBorderVisual(DeltaSeconds);
+	// 차징을 먼저 처리한다. 이 프레임에 릴리즈됐으면 프리뷰도 같은 프레임에 사라져야 한다.
+	TickCharge(DeltaSeconds);
 
-	// 서버가 완료를 확정했으면 로컬 잠금은 역할을 다했다.
-	// 이후에는 CanWorkNow 가 알아서 막으므로 잠금을 들고 있을 이유가 없다.
-	if (bLocallyCompleted && IsCompleted())
-	{
-		bLocallyCompleted = false;
-	}
+	TickCellReveal(DeltaSeconds);
 
-	// 위젯 표시는 OnRep 에만 기대지 않고 매 프레임 현재 상태로 다시 맞춘다.
-	// 서버가 한 업데이트 안에서 상태를 껐다 켜면 OnRep 이 아예 안 오는 경우가 있고,
-	// 그때 OnRep 만 믿으면 UI 가 잘못된 상태로 굳는다.
-	// Show/HideWidget 은 이미 맞는 상태면 바로 빠져나오므로 비용은 없다.
-	RefreshWidget();
-
-	if (!bMinigameActive)
-	{
-		return;
-	}
-
-	// 도구를 놓거나 존에서 벗어나면 UI 를 내리고 멈춘다. 진행도는 남으므로 이어서 할 수 있다.
-	if (!IsWorkerEligible())
-	{
-		StopMinigame();
-		return;
-	}
-
-	// 페인트가 떨어지면 미니게임을 닫는다. (기획서 5-4)
-	//
-	// 선은 작업 키를 떼도 계속 나아가므로, 작업 컴포넌트의 소진 게이트(ApplyWork 를 끊는 것)로는
-	// 여기까지 막지 못한다. 그대로 두면 잔량 0 인 도구로 테두리를 공짜로 다 그릴 수 있다.
-	//
-	// UI 만 닫고 끝내면 안 된다. 미니게임 중에는 WASD 가 선 방향 전환에 묶여 캐릭터가 제자리에
-	// 서 있어서, 이동 잠금을 함께 풀지 않으면 못 움직이는 채로 차에 치인다.
-	// StopMinigame 이 bMinigameActive 를 내리면 ConsumeDirectionInput 이 이동 입력을 놓아주므로
-	// 잠금도 같이 풀린다. 그려둔 진행도는 남으니 충전하고 돌아오면 이어서 그린다.
-	//
-	// StopMinigame 이 ActiveWorker 를 지우므로 보고를 먼저 보낸다.
-	if (ActiveWorker != nullptr && !ActiveWorker->HasPaintForWork())
-	{
-		ActiveWorker->NotifyZonePaintDepleted();
-		StopMinigame();
-		return;
-	}
-
-	// 꼭짓점에서는 올바른 방향키가 들어올 때까지 선이 멈춰 있는다.
-	if (!bWaitingAtCorner && ActiveWorker != nullptr)
-	{
-		const bool bBoosting = GetWorld()->TimeSince(LastBoostTime) <= 2.f * DeltaSeconds;
-
-		// 체온이 높으면 선도 느려진다. (체온 기획서 4.2)
-		//
-		// 작업 컴포넌트가 계수를 곱해 넘겨주는 시간은 ApplyWork 로만 오는데, 이 존은 진행이
-		// 여기 Tick 에서 돌아서 그 시간을 쓰지 않는다. 그래서 계수를 직접 물어와 곱한다.
-		const float EffectiveSeconds = DeltaSeconds
-			* (bBoosting ? BoostMultiplier : 1.f)
-			* ActiveWorker->GetWorkSpeedFactor();
-
-		// 선이 나아간 만큼 체온이 오른다. 부스트 중이면 그만큼 더 오른다.
-		// 꼭짓점에서 멈춰 있는 동안에는 진행이 없으므로 이 블록에 들어오지 않아 체온도 안 오른다.
-		//
-		// AdvanceLine 보다 먼저 부르는 이유:
-		// 선이 한 바퀴를 채우면 AdvanceLine 안에서 미니게임이 끝나면서 ActiveWorker 가 지워진다.
-		// 뒤에서 부르면 그 프레임에 null 포인터를 건드린다.
-		ActiveWorker->SubmitWorkHeat(EffectiveSeconds);
-
-		// AdvanceLine 이 미니게임을 끝내면서 ActiveWorker 와 DrawnLength 를 건드릴 수 있다.
-		// 아래에서 쓸 값은 미리 붙잡아 둔다.
-		UCWWorkerComponent* const DrawingWorker = ActiveWorker;
-		const float LengthBefore = DrawnLength;
-
-		AdvanceLine(DrawSpeed * EffectiveSeconds);
-
-		// 그린 만큼 페인트를 쓴다. (기획서 5-3)
-		//
-		// 서버에서는 여기서 빼지 않는다. 올라온 진행도 보고를 받아 ReceiveReportedProgress 가
-		// 이미 같은 양을 빼기 때문이다. 리슨 서버 호스트는 두 경로를 모두 타므로
-		// 여기서도 빼면 혼자만 두 배로 소모한다.
-		const float TotalLength = GetTotalLength();
-		if (!HasAuthority() && TotalLength > 0.f)
-		{
-			ConsumePaintForProgress(DrawingWorker, (DrawnLength - LengthBefore) / TotalLength);
-		}
-	}
-
-	ReportProgressIfDue(false);
+	UpdatePreview(DeltaSeconds);
 }
 
-void ACWWorkZone_BorderSketch::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void ACWWorkZone_BorderSketch::TickCharge(float DeltaSeconds)
 {
-	HideWidget();
+	if (!bCharging)
+	{
+		return;
+	}
 
-	Super::EndPlay(EndPlayReason);
+	// 도구를 놓거나, 차에 치이거나, 존을 벗어나면 차징을 버린다. 페인트는 나가지 않는다.
+	if (!IsChargingWorkerEligible())
+	{
+		AbortCharge();
+		return;
+	}
+
+	// ApplyWork 가 끊겼으면 키를 뗀 것이다. (ReleaseGraceSeconds 주석 참고)
+	//
+	// 유예를 프레임 시간과 같이 본다. 고정값만 쓰면 프레임이 그 값보다 길어지는 순간
+	// (설정값 0.05 기준 20 FPS) 누르고 있는데도 매 프레임 릴리즈로 잡혀서,
+	// 사양이 낮은 기계에서만 차징이 아예 안 되는 버그가 된다.
+	const float ReleaseGrace = FMath::Max(ReleaseGraceSeconds, DeltaSeconds * 2.f);
+	if (GetWorld()->TimeSince(LastApplyWorkTime) > ReleaseGrace)
+	{
+		ReleaseCharge();
+		return;
+	}
+
+	// 단계가 오른 프레임에만 알린다. 매 프레임 부르면 연출이 계속 다시 시작된다.
+	const int32 CurrentLevel = GetChargeLevel();
+	if (CurrentLevel != LastReportedChargeLevel)
+	{
+		LastReportedChargeLevel = CurrentLevel;
+
+		if (IsLocalCharger())
+		{
+			OnChargeLevelChanged(CurrentLevel);
+
+			// 풀차징은 따로 알린다. "더 눌러도 소용없다" 를 손끝으로 알 수 있어야
+			// 언제 놓을지 판단할 수 있고, 그게 이 존의 재미다.
+			const bool bFullCharge = (CurrentLevel >= ChargeThresholds.Num());
+			PlayLocalChargeSound(bFullCharge ? ChargeFullSound : ChargeLevelUpSound, ChargingWorker);
+
+			if (bFullCharge && ChargeFullFX != nullptr && ChargingWorker->GetOwner() != nullptr)
+			{
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+					GetWorld(),
+					ChargeFullFX,
+					ChargingWorker->GetOwner()->GetActorLocation(),
+					FRotator::ZeroRotator);
+			}
+
+			ShowChargeDebug(TEXT("단계"), CurrentLevel, 0);
+		}
+	}
 }
 
 void ACWWorkZone_BorderSketch::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
 {
-	// 미니게임은 그리는 본인 기계에서만 돈다.
-	// 서버가 원격 플레이어 몫까지 돌리면 같은 게임이 두 벌 돌아가며 서로 어긋난다.
+	// 차징은 누르는 본인 기계에서만 돈다.
+	//
+	// 서버가 원격 플레이어 몫까지 같이 재면 차징이 두 벌 돌아간다. 서버 쪽은 bWorking 이
+	// 리플리케이트되는 것을 보고 시작하므로 핑만큼 늦게 출발하고, 그만큼 단계가 덜 찬 채로
+	// 릴리즈된다. 그래서 4칸을 노렸는데 3칸만 칠해지는 일이 생긴다.
+	// 서버는 릴리즈 때 올라오는 칸 목록만 받는다. (ReceiveBorderCells)
 	if (Worker == nullptr || !Worker->IsLocalWorker() || !CanWorkNow(Worker->GetHeldTool()))
 	{
 		return;
 	}
 
-	// 이미 한 바퀴를 끝냈으면 서버가 완료를 확정해 줄 때까지 다시 시작하지 않는다.
-	if (bLocallyCompleted)
+	const float Now = GetWorld()->GetTimeSeconds();
+
+	// 릴리즈 붓질이 끝나기 전에는 다음 차징을 받지 않는다.
+	// 없으면 키를 연타해서 모션을 건너뛰고 1칸씩 계속 찍을 수 있다.
+	if (Now < ReleaseEndTime)
 	{
 		return;
 	}
 
-	if (!bMinigameActive)
+	if (!bCharging)
 	{
-		StartMinigame(Worker);
+		BeginCharge(Worker, WorldLocation);
 	}
-	else if (ActiveWorker != Worker)
+	else if (ChargingWorker != Worker)
 	{
-		// 이미 다른 사람이 그리는 중이면 끼어들지 않는다.
+		// 이미 다른 사람이 차징 중이면 끼어들지 않는다.
 		// 도구가 1인 1개라 보통 일어나지 않지만, 도구가 늘어나면 여기서 걸린다.
 		return;
 	}
 
-	// 작업 키를 누르고 있는 동안 선이 빨라진다.
-	LastBoostTime = GetWorld()->GetTimeSeconds();
+	LastApplyWorkTime = Now;
+
+	// 넘어온 시간에는 이미 체온 계수가 곱해져 있다. 더울수록 차징이 느려진다.
+	ChargeSeconds += DeltaSeconds;
 }
 
 bool ACWWorkZone_BorderSketch::ConsumeDirectionInput(const FVector2D& MoveInput)
 {
-	if (!bMinigameActive)
-	{
-		return false;
-	}
-
-	// 이동 입력은 누르고 있는 내내 매 프레임 들어온다.
-	// 한 프레임이라도 끊겼다면 키를 뗐다가 새로 누른 것이다.
-	const float Now = GetWorld()->GetTimeSeconds();
-	const bool bContinuedHold = (Now - LastDirectionInputTime) <= DirectionInputHoldWindow;
-	LastDirectionInputTime = Now;
-
-	if (!bContinuedHold)
-	{
-		bSuppressCancelUntilRelease = false;
-	}
-
-	// 이 함수는 서버와 그리는 클라이언트 양쪽에서 돈다.
-	// 클라이언트 쪽 변경은 예측이고, 서버 값이 리플리케이트되면 정정된다.
-	// 꼭짓점에서 올바른 방향이면 선을 돌린다. 이 입력만 소비하므로 캐릭터는 제자리에 선다.
-	if (bWaitingAtCorner)
-	{
-		const FVector2D RequiredInput = GetRequiredCornerInput();
-		if (!RequiredInput.IsNearlyZero() && GetDominantAxis(MoveInput).Equals(RequiredInput, 0.01f))
-		{
-			++CurrentSegmentIndex;
-			bWaitingAtCorner = false;
-
-			// 전환에 쓴 키는 보통 몇 프레임 더 눌려 있다.
-			// 그걸 중단으로 받으면 방향을 꺾자마자 작업이 끊긴다.
-			bSuppressCancelUntilRelease = true;
-
-			return true;
-		}
-	}
-
-	// 미니게임 중에는 이동 입력을 전부 여기서 소비한다. 캐릭터는 제자리에 선다.
+	// 차징 중과 릴리즈 모션 동안에는 이동 입력을 전부 삼킨다. 캐릭터는 제자리에 선다.
 	//
-	// 이동 입력을 중단 신호로도 쓰던 때는 방향을 꺾자마자 작업이 끊기고,
-	// 꼭짓점에서 키를 잘못 누르면 UI 가 닫혀 조작이 계속 튕겼다.
-	// 중단은 전용 입력(CancelWork) 하나로만 받는다.
-	return true;
+	// 여기서 입력을 방향 전환 같은 다른 용도로 쓰지 않는다. 못 움직인다는 사실 자체가
+	// 이 존의 위험 부담이고, 이동으로 빠져나갈 구멍을 주면 그게 없어진다.
+	return bCharging || GetWorld()->GetTimeSeconds() < ReleaseEndTime;
 }
 
 void ACWWorkZone_BorderSketch::CancelWork()
 {
-	// 미니게임 상태는 전부 로컬이라 이 기계에서 바로 끄면 된다.
-	// 서버 확정을 기다릴 이유가 없다. UI 는 누른 프레임에 사라진다.
-	StopMinigame();
+	// 차징 상태는 전부 로컬이라 이 기계에서 바로 끄면 된다. 서버 확정을 기다릴 이유가 없다.
+	AbortCharge();
 }
 
-void ACWWorkZone_BorderSketch::GetFullPath(TArray<FVector2D>& OutPoints) const
+int32 ACWWorkZone_BorderSketch::GetChargeLevel() const
 {
-	OutPoints.Reset(GetSegmentCount() + 1);
-	for (int32 PointIndex = 0; PointIndex <= GetSegmentCount(); ++PointIndex)
+	int32 Level = 0;
+	for (int32 ThresholdIndex = 0; ThresholdIndex < ChargeThresholds.Num(); ++ThresholdIndex)
 	{
-		OutPoints.Add(GetPathPoint(PointIndex));
-	}
-}
-
-void ACWWorkZone_BorderSketch::GetDrawnPath(TArray<FVector2D>& OutPoints) const
-{
-	OutPoints.Reset(GetSegmentCount() + 1);
-	OutPoints.Add(GetPathPoint(0));
-
-	float Remaining = DrawnLength;
-
-	for (int32 SegmentIndex = 0; SegmentIndex < GetSegmentCount(); ++SegmentIndex)
-	{
-		const float SegmentLength = GetSegmentLength(SegmentIndex);
-
-		// 이 변을 완전히 지났으면 끝점을 그대로 찍고 다음 변으로 넘어간다.
-		if (Remaining >= SegmentLength)
+		if (ChargeSeconds >= ChargeThresholds[ThresholdIndex])
 		{
-			OutPoints.Add(GetPathPoint(SegmentIndex + 1));
-			Remaining -= SegmentLength;
-			continue;
+			Level = ThresholdIndex + 1;
 		}
-
-		if (Remaining > 0.f)
-		{
-			const FVector2D SegmentStart = GetPathPoint(SegmentIndex);
-			const FVector2D SegmentEnd = GetPathPoint(SegmentIndex + 1);
-			OutPoints.Add(SegmentStart + (SegmentEnd - SegmentStart) * (Remaining / SegmentLength));
-		}
-
-		break;
 	}
+
+	return Level;
 }
 
-FVector2D ACWWorkZone_BorderSketch::GetRequiredCornerInput() const
+float ACWWorkZone_BorderSketch::GetChargeRatio() const
 {
-	if (!bWaitingAtCorner || CurrentSegmentIndex + 1 >= GetSegmentCount())
+	if (ChargeThresholds.Num() == 0)
 	{
-		return FVector2D::ZeroVector;
+		return 0.f;
 	}
 
-	const FVector2D NextDirection = GetSegmentDirection(CurrentSegmentIndex + 1);
+	const float FullChargeSeconds = ChargeThresholds.Last();
 
-	// 화면 좌표는 Y 가 아래로 증가하지만 이동 입력은 W(앞)가 +Y 다. Y 부호를 뒤집는다.
-	return FVector2D(NextDirection.X, -NextDirection.Y);
+	return (FullChargeSeconds > 0.f) ? FMath::Clamp(ChargeSeconds / FullChargeSeconds, 0.f, 1.f) : 1.f;
 }
 
-void ACWWorkZone_BorderSketch::ReportProgressIfDue(bool bForce)
+void ACWWorkZone_BorderSketch::GetChargeTargetCells(TArray<int32>& OutCells) const
 {
-	if (ActiveWorker == nullptr)
+	CollectCellRun(ChargeAnchorCell, bChargeForward, GetChargeLevel(), OutCells);
+}
+
+void ACWWorkZone_BorderSketch::CollectCellRun(int32 AnchorCell, bool bForward, int32 Count,
+	TArray<int32>& OutCells) const
+{
+	OutCells.Reset();
+
+	if (Count <= 0 || !Cells.IsValidIndex(AnchorCell))
 	{
 		return;
 	}
 
-	const float Now = GetWorld()->GetTimeSeconds();
-	if (!bForce && Now - LastProgressReportTime < ProgressReportInterval)
+	// 칸이 단계보다 적은 아주 작은 존이면 한 바퀴가 전부다.
+	// 여기서 자르지 않으면 고리를 넘어가 같은 칸이 두 번 들어온다.
+	const int32 TargetCount = FMath::Min(Count, Cells.Num());
+	const int32 Step = bForward ? 1 : -1;
+
+	for (int32 Offset = 0; Offset < TargetCount; ++Offset)
+	{
+		OutCells.Add(WrapCellIndex(AnchorCell + Step * Offset));
+	}
+}
+
+bool ACWWorkZone_BorderSketch::ComputeChargeForward(const UCWWorkerComponent* Worker, int32 AnchorCell) const
+{
+	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
+	if (WorkerActor == nullptr || !Cells.IsValidIndex(AnchorCell))
+	{
+		return true;
+	}
+
+	FVector LocalForward = GetActorTransform().InverseTransformVector(WorkerActor->GetActorForwardVector());
+	LocalForward.Z = 0.f;
+
+	// 접선과 거의 수직이면 내적이 0 근처라 부호가 애매하다. 그때는 인덱스가 늘어나는 쪽으로 둔다.
+	return FVector::DotProduct(LocalForward, GetCellTangent(AnchorCell)) >= 0.f;
+}
+
+int32 ACWWorkZone_BorderSketch::GetPaintedCellCount() const
+{
+	int32 PaintedCount = 0;
+	for (const uint8 Flag : PaintedCellFlags)
+	{
+		PaintedCount += (Flag != 0) ? 1 : 0;
+	}
+
+	return PaintedCount;
+}
+
+bool ACWWorkZone_BorderSketch::IsCellPainted(int32 CellIndex) const
+{
+	return PaintedCellFlags.IsValidIndex(CellIndex) && PaintedCellFlags[CellIndex] != 0;
+}
+
+FString ACWWorkZone_BorderSketch::GetDebugDetailText() const
+{
+	return FString::Printf(TEXT(" 칸 %d/%d"), GetPaintedCellCount(), Cells.Num());
+}
+
+void ACWWorkZone_BorderSketch::BeginCharge(UCWWorkerComponent* Worker, const FVector& WorldLocation)
+{
+	ChargingWorker = Worker;
+	bCharging = true;
+	ChargeSeconds = 0.f;
+	LastReportedChargeLevel = 0;
+
+	const int32 NearestCell = FindNearestCell(WorldLocation);
+
+	// 진행 방향은 차징이 시작될 때 한 번만 정하고 중간에 다시 보지 않는다.
+	// 매 프레임 다시 정하면 접선과 거의 수직으로 서 있을 때 부호가 계속 뒤집혀 칠할 칸이 좌우로 튄다.
+	bChargeForward = ComputeChargeForward(Worker, NearestCell);
+
+	ChargeAnchorCell = FindSnappedAnchor(NearestCell, bChargeForward);
+
+	if (IsLocalCharger())
+	{
+		OnChargeStarted();
+	}
+}
+
+void ACWWorkZone_BorderSketch::ReleaseCharge()
+{
+	TArray<int32> TargetCells;
+	GetChargeTargetCells(TargetCells);
+
+	const int32 Level = GetChargeLevel();
+	const bool bLocal = IsLocalCharger();
+	UCWWorkerComponent* const Worker = ChargingWorker;
+
+	int32 PaintedCount = 0;
+	bool bPaintShort = false;
+
+	if (Worker != nullptr && TargetCells.Num() > 0)
+	{
+		if (HasAuthority())
+		{
+			// 서버(리슨 서버 호스트 포함)는 바로 확정한다. 올려보낼 곳이 자기 자신이다.
+			PaintedCount = ApplyBorderCells(Worker, TargetCells, bPaintShort);
+		}
+		else
+		{
+			// 본인 화면에 먼저 칠하고 칸 번호만 올린다. 서버 왕복을 기다리면 붓질이 늦게
+			// 나가고, 그 사이 차를 피하려고 움직이는 순간과 겹쳐 조작이 어긋난 것처럼 느껴진다.
+			//
+			// 예측이 빗나가도 되돌릴 코드가 필요 없다. 서버가 확정한 값이 통째로 내려와
+			// OnRep_PaintedCells 에서 덮는다.
+			PaintedCount = PredictBorderCells(Worker, TargetCells, bPaintShort);
+
+			// 걸러낸 결과가 아니라 겨눈 칸을 그대로 올린다.
+			// 서버는 자기가 가진 칸 상태와 잔량으로 다시 판단해야 한다. 여기서 걸러 보내면
+			// 그 사이 남이 칠한 칸을 서버가 알아차릴 기회가 없다.
+			Worker->SubmitBorderCells(this, TargetCells);
+		}
+	}
+
+	ResetChargeState();
+
+	// 붓질 모션이 끝날 때까지 이동을 잠근다. 패링은 이 동안에도 된다.
+	ReleaseEndTime = GetWorld()->GetTimeSeconds() + ReleaseSeconds;
+
+	if (bLocal)
+	{
+		// 단계 0 은 최소 홀드를 못 채운 허탕이다. 이 경우에도 반드시 반응이 나가야 한다.
+		// 아무 일도 안 일어나면 입력이 씹힌 것으로 느껴진다.
+		OnChargeReleased(Level, PaintedCount, bPaintShort);
+
+		// 아무것도 안 나갔으면 마른 붓 소리를 낸다. 칸이 나갔으면 붓질 소리는 점등이 낸다.
+		// (그쪽은 월드에서 일어나는 일이라 전원에게 들려야 한다)
+		if (PaintedCount == 0)
+		{
+			PlayLocalChargeSound(ReleaseFailSound, Worker);
+		}
+
+		const TCHAR* EventName = TEXT("릴리즈");
+		if (Level <= 0)
+		{
+			EventName = TEXT("허탕(최소 홀드 미달)");
+		}
+		else if (bPaintShort && PaintedCount == 0)
+		{
+			EventName = TEXT("헛스윙(페인트 부족)");
+		}
+		else if (PaintedCount == 0)
+		{
+			EventName = TEXT("헛스윙(이미 칠해진 칸)");
+		}
+		else if (bPaintShort)
+		{
+			EventName = TEXT("일부만 도색(페인트 부족)");
+		}
+
+		ShowChargeDebug(EventName, Level, PaintedCount);
+	}
+}
+
+void ACWWorkZone_BorderSketch::AbortCharge()
+{
+	if (!bCharging)
 	{
 		return;
 	}
 
-	LastProgressReportTime = Now;
+	const bool bLocal = IsLocalCharger();
 
-	// 서버에 올리는 건 숫자 하나뿐이다. 되돌아오는 값을 게임플레이에 쓰지 않으므로 정정이 없다.
-	ActiveWorker->ReportWorkProgress(this, DrawnLength / GetTotalLength());
-}
+	ResetChargeState();
 
-bool ACWWorkZone_BorderSketch::IsLocalDrawer() const
-{
-	if (ActiveWorker == nullptr)
+	// 릴리즈 모션을 걸지 않는다. 차에 치여 날아가는 중에 붓질 모션이 나오면 안 된다.
+	if (bLocal)
 	{
-		return false;
+		ShowChargeDebug(TEXT("중단"), 0, 0);
 	}
-
-	const APawn* WorkerPawn = Cast<APawn>(ActiveWorker->GetOwner());
-
-	return WorkerPawn != nullptr && WorkerPawn->IsLocallyControlled();
 }
 
-void ACWWorkZone_BorderSketch::StartMinigame(UCWWorkerComponent* Worker)
+void ACWWorkZone_BorderSketch::ResetChargeState()
 {
-	ActiveWorker = Worker;
-	bMinigameActive = true;
-	bWaitingAtCorner = false;
-	bSuppressCancelUntilRelease = false;
-
-	// 선 상태는 로컬이라 이 기계에는 남아 있지 않을 수 있다.
-	// (다른 사람이 그리다 만 것을 이어받는 경우, 또는 이 존을 처음 만지는 경우)
-	// 모두가 공유하는 진행도에서 선 위치를 역산해 이어 그린다.
-	DrawnLength = FMath::Clamp(GetProgress(), 0.f, 1.f) * GetTotalLength();
-
-	CurrentSegmentIndex = 0;
-	while (CurrentSegmentIndex < GetSegmentCount() - 1
-		&& DrawnLength >= GetSegmentEndLength(CurrentSegmentIndex))
-	{
-		++CurrentSegmentIndex;
-	}
-
-	RefreshWidget();
+	bCharging = false;
+	ChargeSeconds = 0.f;
+	ChargeAnchorCell = INDEX_NONE;
+	LastReportedChargeLevel = 0;
+	ChargingWorker = nullptr;
 }
 
-void ACWWorkZone_BorderSketch::StopMinigame()
+bool ACWWorkZone_BorderSketch::IsChargingWorkerEligible() const
 {
-	// 어떤 이유로 멈추든(완주 · 취소 · 존 이탈) 마지막 진행도는 올려보낸다.
-	// 안 그러면 마지막 보고 이후에 그린 만큼이 버려져서, 다시 왔을 때 조금 뒤로 밀려 있다.
-	// ActiveWorker 를 지우기 전에 해야 한다. 보고 경로가 그걸 통해 나간다.
-	ReportProgressIfDue(true);
-
-	bMinigameActive = false;
-	ActiveWorker = nullptr;
-
-	RefreshWidget();
-}
-
-bool ACWWorkZone_BorderSketch::IsWorkerEligible() const
-{
-	const UCWWorkerComponent* Worker = ActiveWorker;
+	const UCWWorkerComponent* Worker = ChargingWorker;
 	if (Worker == nullptr)
 	{
 		return false;
@@ -391,8 +488,14 @@ bool ACWWorkZone_BorderSketch::IsWorkerEligible() const
 		return false;
 	}
 
-	// 차량에 치여 다운된 동안에는 미니게임도 중단된다.
+	// 차량에 치여 다운된 동안에는 차징도 중단된다.
 	if (Worker->IsWorkBlocked())
+	{
+		return false;
+	}
+
+	// 차징하는 사이에 다른 사람이 마지막 칸을 칠했거나, 앞 단계가 되돌아가 존이 잠겼을 수 있다.
+	if (IsCompleted() || IsLocked())
 	{
 		return false;
 	}
@@ -403,199 +506,765 @@ bool ACWWorkZone_BorderSketch::IsWorkerEligible() const
 		return false;
 	}
 
+	// 차징 중에는 스스로 움직이지 못하지만 넉백 등으로 밀려날 수는 있다.
 	return GetSquaredDistanceToPoint(WorkerActor->GetActorLocation()) <= FMath::Square(WorkRange);
 }
 
-void ACWWorkZone_BorderSketch::AdvanceLine(float Amount)
+int32 ACWWorkZone_BorderSketch::FindSnappedAnchor(int32 AnchorCell, bool bForward) const
 {
-	const float SegmentEndLength = GetSegmentEndLength(CurrentSegmentIndex);
-	const float NewLength = DrawnLength + Amount;
-
-	if (NewLength < SegmentEndLength)
+	if (!Cells.IsValidIndex(AnchorCell))
 	{
-		DrawnLength = NewLength;
-		return;
+		return AnchorCell;
 	}
 
-	// 꼭짓점에 딱 맞춰 세운다. 넘어간 만큼은 버린다. (그래야 꼭짓점을 지나쳐 그려지지 않는다)
-	DrawnLength = SegmentEndLength;
+	// 시작 칸이 이미 칠해져 있으면 진행 방향으로 조금 훑어 빈 칸을 찾는다. (차징 붓 기획서 2.3)
+	// 훑어본 범위가 전부 칠해져 있으면 원래 칸을 그대로 둔다. 그 릴리즈는 헛손질이 된다.
+	const int32 Step = bForward ? 1 : -1;
+	const int32 SearchCount = FMath::Min(AnchorSnapCells, Cells.Num() - 1);
 
-	if (CurrentSegmentIndex >= GetSegmentCount() - 1)
+	for (int32 Offset = 0; Offset <= SearchCount; ++Offset)
 	{
-		// 마지막 변 끝 = 시작점 복귀 = 한 바퀴 완주.
-		// StopMinigame 이 100% 를 즉시 신뢰 채널로 올려보낸다.
-		bLocallyCompleted = true;
-		StopMinigame();
-		return;
+		const int32 CandidateCell = WrapCellIndex(AnchorCell + Step * Offset);
+		if (!IsCellPainted(CandidateCell))
+		{
+			return CandidateCell;
+		}
 	}
 
-	bWaitingAtCorner = true;
+	return AnchorCell;
 }
 
-void ACWWorkZone_BorderSketch::RefreshWidget()
+FVector ACWWorkZone_BorderSketch::GetCellTangent(int32 CellIndex) const
 {
-	// 도구를 든 본인 화면에만 띄운다. 나머지 플레이어는 진행도/완료만 공유받는다.
-	if (bMinigameActive && IsLocalDrawer())
+	if (Cells.Num() < 2 || !Cells.IsValidIndex(CellIndex))
 	{
-		ShowWidget();
+		return FVector::ZeroVector;
 	}
-	else
-	{
-		HideWidget();
-	}
+
+	// 다음 칸을 향하는 방향. 모서리 칸에서는 대각선이 되지만 부호는 여전히 맞다.
+	FVector Tangent = Cells[WrapCellIndex(CellIndex + 1)].Center - Cells[CellIndex].Center;
+	Tangent.Z = 0.f;
+
+	return Tangent.GetSafeNormal();
 }
 
-void ACWWorkZone_BorderSketch::ShowWidget()
+float ACWWorkZone_BorderSketch::GetCellPaintCost() const
 {
-	if (Widget != nullptr || WidgetClass == nullptr)
-	{
-		return;
-	}
-
-	const APawn* WorkerPawn = (ActiveWorker != nullptr) ? Cast<APawn>(ActiveWorker->GetOwner()) : nullptr;
-	APlayerController* PlayerController = (WorkerPawn != nullptr) ? Cast<APlayerController>(WorkerPawn->GetController()) : nullptr;
-	if (PlayerController == nullptr)
-	{
-		return;
-	}
-
-	Widget = CreateWidget<UCWBorderSketchWidget>(PlayerController, WidgetClass);
-	if (Widget == nullptr)
-	{
-		return;
-	}
-
-	Widget->SetZone(this);
-
-	// AddToViewport 가 아니라 AddToPlayerScreen 을 쓰는 이유:
-	// 화면 분할 협동에서 도구를 든 플레이어의 화면에만 떠야 한다.
-	Widget->AddToPlayerScreen(10);
+	// 존 하나를 다 칠하면 정확히 PaintCostFull 이 든다. (차징 붓 기획서 2.6)
+	return (Cells.Num() > 0) ? (PaintCostFull / Cells.Num()) : 0.f;
 }
 
-void ACWWorkZone_BorderSketch::HideWidget()
+bool ACWWorkZone_BorderSketch::IsLocalCharger() const
 {
-	if (Widget == nullptr)
+	return ChargingWorker != nullptr && ChargingWorker->IsLocalWorker();
+}
+
+void ACWWorkZone_BorderSketch::ShowChargeDebug(const TCHAR* Event, int32 Level, int32 PaintedCount) const
+{
+	if (!bShowDebugCharge || GEngine == nullptr)
 	{
 		return;
 	}
 
-	Widget->RemoveFromParent();
-	Widget = nullptr;
+	GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
+		FString::Printf(TEXT("[테두리] %s  단계=%d  칠한칸=%d  차징=%.2f초"),
+			Event, Level, PaintedCount, ChargeSeconds));
 }
 
-void ACWWorkZone_BorderSketch::FitBorderToArea()
+void ACWWorkZone_BorderSketch::RebuildCells()
 {
+	Cells.Reset();
 	BorderMeshes->ClearInstances();
+	PaintedMeshes->ClearInstances();
+
+	// 칸 배열이 새로 만들어지면 프리뷰의 칸 번호는 더 이상 같은 자리를 가리키지 않는다.
+	// 캐시까지 비워야 다음 프레임에 다시 만든다.
+	PreviewMeshes->ClearInstances();
+	PreviewBlockedMeshes->ClearInstances();
+	PreviewReadyCells.Reset();
+	PreviewBlockedCells.Reset();
+
+	// 점등 상태도 같은 이유로 버린다. 옛 칸 번호는 새 격자에서 다른 자리를 가리킨다.
+	RevealedCellFlags.Reset();
+	PendingRevealCells.Reset();
 
 	const FVector AreaExtent = Area->GetUnscaledBoxExtent();
 	const float SizeX = AreaExtent.X * 2.f;
 	const float SizeY = AreaExtent.Y * 2.f;
+	if (SizeX <= KINDA_SMALL_NUMBER || SizeY <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
 
 	// 존이 아주 얇을 때 테두리끼리 겹쳐 사각형이 뭉개지지 않도록 두께를 제한한다.
-	const float Thickness = FMath::Min(BorderThickness, FMath::Min(SizeX, SizeY) * 0.5f);
-	const float Inset = Thickness * 0.5f;
+	CellThickness = FMath::Min(BorderThickness, FMath::Min(SizeX, SizeY) * 0.5f);
+	const float Inset = CellThickness * 0.5f;
 
+	// X 축 변은 모서리까지 꽉 채우고, Y 축 변이 그 사이를 잇는다.
+	// 모서리를 양쪽이 나눠 갖게 하면 두 칸이 겹쳐서 그 자리만 진해 보인다.
+	const float NearY = -AreaExtent.Y + Inset;
+	const float FarY = AreaExtent.Y - Inset;
+	const float RightX = AreaExtent.X - Inset;
+	const float LeftX = -AreaExtent.X + Inset;
+	const float SideHalfY = FMath::Max(AreaExtent.Y - CellThickness, 0.f);
+
+	// 고리 한 바퀴. 이 순서가 곧 칸 인덱스라 모든 기계에서 같아야 한다.
+	AppendSideCells(FVector(-AreaExtent.X, NearY, 0.f), FVector(AreaExtent.X, NearY, 0.f), true);
+	AppendSideCells(FVector(RightX, -SideHalfY, 0.f), FVector(RightX, SideHalfY, 0.f), false);
+	AppendSideCells(FVector(AreaExtent.X, FarY, 0.f), FVector(-AreaExtent.X, FarY, 0.f), true);
+	AppendSideCells(FVector(LeftX, SideHalfY, 0.f), FVector(LeftX, -SideHalfY, 0.f), false);
+
+	for (const FCWBorderCell& Cell : Cells)
+	{
+		BorderMeshes->AddInstance(MakeCellTransform(Cell, GuideHeightOffset));
+	}
+}
+
+void ACWWorkZone_BorderSketch::AppendSideCells(const FVector& Start, const FVector& End, bool bAlongX)
+{
+	const FVector Delta = End - Start;
+	const float SideLength = Delta.Size();
+	if (SideLength <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// 변 안에서 균등하게 나눈다. 그래서 실제 칸 길이는 CellLength 근처에서 조금씩 달라진다.
+	// 딱 맞아떨어지는 칸을 깔고 남는 자투리를 두면, 그 자투리 한 칸만 유독 짧아 눈에 띈다.
+	const int32 CellCount = FMath::Max(1, FMath::RoundToInt(SideLength / FMath::Max(CellLength, 1.f)));
+	const float ActualLength = SideLength / CellCount;
+	const FVector Direction = Delta / SideLength;
+
+	for (int32 Index = 0; Index < CellCount; ++Index)
+	{
+		FCWBorderCell& Cell = Cells.AddDefaulted_GetRef();
+		Cell.Center = Start + Direction * (ActualLength * (Index + 0.5f));
+		Cell.Length = ActualLength;
+		Cell.bAlongX = bAlongX;
+	}
+}
+
+int32 ACWWorkZone_BorderSketch::FindNearestCell(const FVector& WorldLocation) const
+{
+	if (Cells.Num() == 0)
+	{
+		return INDEX_NONE;
+	}
+
+	const FVector LocalLocation = GetActorTransform().InverseTransformPosition(WorldLocation);
+
+	// 높이는 보지 않는다. 커서가 도로면을 찍든 캐릭터 허리 높이를 찍든 같은 칸이어야 한다.
+	int32 NearestIndex = INDEX_NONE;
+	float NearestDistanceSquared = TNumericLimits<float>::Max();
+
+	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
+	{
+		const FVector Offset = Cells[CellIndex].Center - LocalLocation;
+		const float DistanceSquared = Offset.X * Offset.X + Offset.Y * Offset.Y;
+		if (DistanceSquared < NearestDistanceSquared)
+		{
+			NearestDistanceSquared = DistanceSquared;
+			NearestIndex = CellIndex;
+		}
+	}
+
+	return NearestIndex;
+}
+
+int32 ACWWorkZone_BorderSketch::WrapCellIndex(int32 CellIndex) const
+{
+	if (Cells.Num() == 0)
+	{
+		return INDEX_NONE;
+	}
+
+	// % 는 음수를 음수로 내므로 한 번 더 더해서 올린다.
+	return ((CellIndex % Cells.Num()) + Cells.Num()) % Cells.Num();
+}
+
+void ACWWorkZone_BorderSketch::UpdatePreview(float DeltaSeconds)
+{
+	TArray<int32> ReadyCells;
+	TArray<int32> BlockedCells;
+
+	UCWWorkerComponent* const Worker = FindLocalWorker();
+
+	if (ShouldShowPreview(Worker))
+	{
+		TArray<int32> TargetCells;
+
+		if (bCharging)
+		{
+			GetChargeTargetCells(TargetCells);
+
+			// 아직 최소 홀드를 못 채웠으면 단계가 0 이라 목록이 비어 있다.
+			// 그래도 첫 칸은 보여준다. 어디를 겨누고 있는지 안 보이면 조준할 방법이 없다.
+			// 0.3초를 넘기는 순간 이 칸이 확정색으로 바뀌면서 최소 홀드가 눈에 보인다.
+			if (TargetCells.Num() == 0)
+			{
+				CollectCellRun(ChargeAnchorCell, bChargeForward, 1, TargetCells);
+				BlockedCells = TargetCells;
+			}
+		}
+		else
+		{
+			// 상시 조준 표시. 지금 누르면 어느 칸이 나가는지를 늘 보여준다.
+			// 차징 중에는 앵커가 얼어 있으므로 여기 계산은 누르기 전에만 돈다.
+			const int32 NearestCell = FindNearestCell(Worker->GetWorkLocation());
+			const bool bForward = ComputeChargeForward(Worker, NearestCell);
+
+			CollectCellRun(FindSnappedAnchor(NearestCell, bForward), bForward, 1, TargetCells);
+		}
+
+		if (BlockedCells.Num() == 0)
+		{
+			// 살 수 있는 칸과 아닌 칸으로 가른다. 실제 릴리즈와 같은 함수를 쓰므로
+			// 화면에 흰색으로 보인 칸은 반드시 칠해지고, 회색은 반드시 안 칠해진다.
+			bool bPaintShort = false;
+			FilterAffordableCells(Worker, TargetCells, ReadyCells, bPaintShort);
+
+			for (const int32 CellIndex : TargetCells)
+			{
+				if (!ReadyCells.Contains(CellIndex))
+				{
+					BlockedCells.Add(CellIndex);
+				}
+			}
+		}
+	}
+
+	ApplyPreviewCells(ReadyCells, BlockedCells);
+	UpdatePreviewPulse(DeltaSeconds);
+}
+
+bool ACWWorkZone_BorderSketch::ShouldShowPreview(const UCWWorkerComponent* Worker) const
+{
+	if (Worker == nullptr || Cells.Num() == 0 || IsCompleted() || IsLocked())
+	{
+		return false;
+	}
+
+	// 차량에 치여 쓰러져 있는 동안에는 조준이 의미가 없다.
+	if (Worker->IsWorkBlocked())
+	{
+		return false;
+	}
+
+	// 붓질 모션이 도는 동안에는 띄우지 않는다. 붓이 나가는 중에 다음 조준이 겹치면
+	// 방금 칠한 것인지 앞으로 칠할 것인지 구분이 안 된다.
+	if (GetWorld()->GetTimeSeconds() < ReleaseEndTime)
+	{
+		return false;
+	}
+
+	// 차징 중이면 그 차징이 이 플레이어의 것이어야 한다.
+	if (bCharging)
+	{
+		return ChargingWorker == Worker;
+	}
+
+	// 작업 컴포넌트가 이 존을 대상으로 잡았을 때만 띄운다.
+	// 그쪽이 이미 거리와 도구를 다 보고 고른 값이라, 같은 판정을 여기서 또 하지 않는다.
+	return Worker->GetTargetZone() == this && CanWorkNow(Worker->GetHeldTool());
+}
+
+UCWWorkerComponent* ACWWorkZone_BorderSketch::FindLocalWorker()
+{
+	// 데디케이티드 서버에는 볼 사람이 없다.
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return nullptr;
+	}
+
+	const UWorld* World = GetWorld();
+	const APlayerController* PlayerController = (World != nullptr) ? World->GetFirstPlayerController() : nullptr;
+	const APawn* LocalPawn = (PlayerController != nullptr) ? PlayerController->GetPawn() : nullptr;
+
+	if (LocalPawn == nullptr)
+	{
+		CachedLocalWorker = nullptr;
+		return nullptr;
+	}
+
+	// 캐릭터가 바뀌지 않았으면 찾아둔 것을 그대로 쓴다. 매 프레임 컴포넌트를 뒤질 이유가 없다.
+	if (CachedLocalWorker == nullptr || CachedLocalWorker->GetOwner() != LocalPawn)
+	{
+		CachedLocalWorker = LocalPawn->FindComponentByClass<UCWWorkerComponent>();
+	}
+
+	return CachedLocalWorker;
+}
+
+void ACWWorkZone_BorderSketch::ApplyPreviewCells(const TArray<int32>& ReadyCells, const TArray<int32>& BlockedCells)
+{
+	// 목록이 그대로면 인스턴스를 다시 만들지 않는다. 프리뷰는 매 프레임 계산되는데
+	// 실제로 바뀌는 것은 플레이어가 움직이거나 단계가 오를 때뿐이다.
+	if (PreviewReadyCells == ReadyCells && PreviewBlockedCells == BlockedCells)
+	{
+		return;
+	}
+
+	PreviewReadyCells = ReadyCells;
+	PreviewBlockedCells = BlockedCells;
+
+	PreviewMeshes->ClearInstances();
+	for (const int32 CellIndex : PreviewReadyCells)
+	{
+		if (Cells.IsValidIndex(CellIndex))
+		{
+			PreviewMeshes->AddInstance(MakeCellTransform(Cells[CellIndex],
+				GuideHeightOffset + PaintedHeightOffset + PreviewHeightOffset));
+		}
+	}
+
+	PreviewBlockedMeshes->ClearInstances();
+	for (const int32 CellIndex : PreviewBlockedCells)
+	{
+		if (Cells.IsValidIndex(CellIndex))
+		{
+			PreviewBlockedMeshes->AddInstance(MakeCellTransform(Cells[CellIndex],
+				GuideHeightOffset + PaintedHeightOffset + PreviewHeightOffset));
+		}
+	}
+}
+
+void ACWWorkZone_BorderSketch::UpdatePreviewPulse(float DeltaSeconds)
+{
+	if (PreviewMaterial == nullptr)
+	{
+		return;
+	}
+
+	// 띄울 것이 없으면 위상을 되감고 끝낸다. 다음에 뜰 때 늘 같은 밝기에서 시작한다.
+	//
+	// 여기서 빠져나가지 않으면 레벨에 놓인 모든 테두리 존이, 아무도 근처에 없어도
+	// 매 프레임 머티리얼 파라미터를 쓴다.
+	if (PreviewReadyCells.Num() == 0)
+	{
+		PreviewPulseTime = 0.f;
+		return;
+	}
+
+	PreviewPulseTime += DeltaSeconds;
+
+	// 칠해질 칸만 깜빡인다. 칠해지지 않을 칸은 가만히 둬서 둘이 한눈에 갈린다.
+	const float Pulse = 0.5f * (1.f + FMath::Sin(PreviewPulseTime * PreviewPulseSpeed * 2.f * PI));
+	const float PulsedOpacity = PreviewOpacity * FMath::Lerp(1.f - PreviewPulseDepth, 1.f, Pulse);
+
+	PreviewMaterial->SetScalarParameterValue(OpacityParameterName, PulsedOpacity);
+}
+
+void ACWWorkZone_BorderSketch::ReceiveBorderCells(UCWWorkerComponent* Worker, const TArray<int32>& CellIndices)
+{
+	if (!HasAuthority() || Worker == nullptr)
+	{
+		return;
+	}
+
+	// 도구와 존 상태만 본다. 거리는 보지 않는다.
+	//
+	// 붓을 놓은 시점과 이 패킷이 도착한 시점 사이에 플레이어는 이미 움직였다. 차를 피하려고
+	// 물러난 만큼 거리가 벌어지는데, 그걸로 거절하면 "제대로 칠했는데 안 칠해지는" 일이
+	// 핑이 높은 사람에게만 생긴다. 협동 PvE 라 굳이 막을 이유도 없다.
+	if (!CanWorkNow(Worker->GetHeldTool()))
+	{
+		return;
+	}
+
+	// 잔량 부족 여부는 여기서 쓰지 않는다. 올려보낸 클라이언트가 자기 예측에서 이미 같은
+	// 판정을 하고 연출을 냈다. 서버가 그걸 다시 알려줄 이유가 없다.
+	bool bPaintShort = false;
+	ApplyBorderCells(Worker, CellIndices, bPaintShort);
+}
+
+void ACWWorkZone_BorderSketch::FilterAffordableCells(const UCWWorkerComponent* Worker,
+	const TArray<int32>& CellIndices, TArray<int32>& OutCells, bool& bOutPaintShort) const
+{
+	OutCells.Reset();
+	bOutPaintShort = false;
+
+	if (Worker == nullptr)
+	{
+		return;
+	}
+
+	const float CellCost = GetCellPaintCost();
+
+	// 페인트를 쓰지 않는 도구(빗자루 등)는 잔량 개념이 없으므로 제한을 두지 않는다.
+	const ACWBaseTool* Tool = Worker->GetHeldToolActor();
+	float PaintBudget = TNumericLimits<float>::Max();
+	if (Tool != nullptr && Tool->UsesPaint())
+	{
+		PaintBudget = Tool->GetPaintAmount();
+	}
+
+	for (const int32 CellIndex : CellIndices)
+	{
+		if (!Cells.IsValidIndex(CellIndex))
+		{
+			continue;
+		}
+
+		// 이미 칠해진 칸은 페인트도 진행도도 쓰지 않는다. 차징 범위에 들어와도 그냥 지나간다.
+		if (IsCellPainted(CellIndex))
+		{
+			continue;
+		}
+
+		// 남은 페인트로 더 못 사면 거기서 끊는다. 뒤 칸을 건너뛰고 더 싼 칸을 찾지 않는다.
+		// 칸 비용은 전부 같으므로 어차피 하나도 못 산다.
+		//
+		// 여유를 한 톨 두는 이유: 잔량은 칸을 칠할 때마다 조금씩 빼서 만든 값이라 부동소수점
+		// 오차가 쌓인다. 가득 찬 통으로 존 하나가 딱 끝나야 하는데(PaintCostFull 규약),
+		// 정확히 비교하면 마지막 칸에서 오차 한 톨 때문에 못 사는 일이 생긴다.
+		if (PaintBudget + KINDA_SMALL_NUMBER < CellCost)
+		{
+			// 통에 뭐라도 남아 있으면 그것으로 이 칸 하나는 칠하고 통을 비운다.
+			//
+			// 이게 없으면 칸 하나 값에 못 미치는 자투리가 통에 갇힌다. 마지막 한 칸을
+			// 남겨두고 그 자투리 때문에 보충하러 다녀와야 하는데, 끝내기 직전에 그 왕복을
+			// 시키는 것은 벌에 가깝다. 통 하나당 최대 한 칸치를 더 주는 셈이라 밸런싱에
+			// 미치는 영향은 작고, "통 하나로 존 하나" 관계도 그대로 유지된다.
+			//
+			// 넘치게 청구되는 몫은 도구가 0 에서 잘라낸다. (ACWBaseTool::SetPaintAmount)
+			if (PaintBudget > KINDA_SMALL_NUMBER)
+			{
+				PaintBudget = 0.f;
+				OutCells.Add(CellIndex);
+			}
+
+			// 잔량이 바닥나 여기서 끊겼다는 신호다. 보충하러 갈 때라는 것을 알려야 한다.
+			// 잔량이 0 은 아니어서 기존 "페인트 없음" 알림(IsPaintDepleted)에는 안 걸린다.
+			bOutPaintShort = true;
+			break;
+		}
+
+		PaintBudget -= CellCost;
+		OutCells.Add(CellIndex);
+	}
+}
+
+int32 ACWWorkZone_BorderSketch::ApplyBorderCells(UCWWorkerComponent* Worker, const TArray<int32>& CellIndices,
+	bool& bOutPaintShort)
+{
+	bOutPaintShort = false;
+
+	if (!HasAuthority())
+	{
+		return 0;
+	}
+
+	TArray<int32> AffordableCells;
+	FilterAffordableCells(Worker, CellIndices, AffordableCells, bOutPaintShort);
+
+	const float ProgressBefore = GetProgress();
+
+	int32 PaintedCount = 0;
+	for (const int32 CellIndex : AffordableCells)
+	{
+		if (PaintCell(CellIndex))
+		{
+			++PaintedCount;
+		}
+	}
+
+	if (PaintedCount > 0)
+	{
+		RefreshProgressFromCells();
+
+		// 붓이 지나간 순서 그대로 켠다. 여기서 순서를 잃으면 점등이 붓질로 안 읽힌다.
+		EnqueueRevealCells(AffordableCells);
+
+		// 칠한 만큼 페인트를 쓴다. 요청한 양이 아니라 실제로 오른 진행도를 넘긴다.
+		ConsumePaintForProgress(Worker, GetProgress() - ProgressBefore);
+	}
+
+	return PaintedCount;
+}
+
+int32 ACWWorkZone_BorderSketch::PredictBorderCells(const UCWWorkerComponent* Worker, const TArray<int32>& CellIndices,
+	bool& bOutPaintShort)
+{
+	bOutPaintShort = false;
+
+	if (HasAuthority())
+	{
+		return 0;
+	}
+
+	TArray<int32> AffordableCells;
+	FilterAffordableCells(Worker, CellIndices, AffordableCells, bOutPaintShort);
+
+	for (const int32 CellIndex : AffordableCells)
+	{
+		if (PaintedCellFlags.IsValidIndex(CellIndex))
+		{
+			PaintedCellFlags[CellIndex] = 1;
+		}
+	}
+
+	EnqueueRevealCells(AffordableCells);
+
+	return AffordableCells.Num();
+}
+
+bool ACWWorkZone_BorderSketch::PaintCell(int32 CellIndex)
+{
+	if (!HasAuthority() || !PaintedCellFlags.IsValidIndex(CellIndex) || PaintedCellFlags[CellIndex] != 0)
+	{
+		return false;
+	}
+
+	PaintedCellFlags[CellIndex] = 1;
+
+	return true;
+}
+
+void ACWWorkZone_BorderSketch::RefreshProgressFromCells()
+{
+	if (!HasAuthority() || Cells.Num() == 0)
+	{
+		return;
+	}
+
+	SetProgress(static_cast<float>(GetPaintedCellCount()) / static_cast<float>(Cells.Num()));
+}
+
+void ACWWorkZone_BorderSketch::RefreshPaintedInstances()
+{
+	// 바뀐 칸만 골라 넣지 않고 매번 통째로 다시 만든다.
+	// 칸이 수십 개라 비용이 없고, 인스턴스 인덱스와 칸 인덱스를 따로 짝지어 관리하지 않아도 된다.
+	PaintedMeshes->ClearInstances();
+
+	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
+	{
+		if (RevealedCellFlags.IsValidIndex(CellIndex) && RevealedCellFlags[CellIndex] != 0)
+		{
+			PaintedMeshes->AddInstance(MakeCellTransform(Cells[CellIndex], GuideHeightOffset + PaintedHeightOffset));
+		}
+	}
+}
+
+void ACWWorkZone_BorderSketch::TickCellReveal(float DeltaSeconds)
+{
+	if (PendingRevealCells.Num() == 0)
+	{
+		return;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (Now < NextRevealTime)
+	{
+		return;
+	}
+
+	RevealCell(PendingRevealCells[0]);
+	PendingRevealCells.RemoveAt(0);
+
+	// 다음 칸까지의 간격. 프레임이 길어져 밀렸어도 한 프레임에 한 칸씩만 켠다.
+	// 밀린 만큼 몰아서 켜면 붓질이 아니라 뭉텅이로 보인다.
+	NextRevealTime = Now + CellRevealInterval;
+
+	RefreshPaintedInstances();
+}
+
+void ACWWorkZone_BorderSketch::EnqueueRevealCells(const TArray<int32>& OrderedCells)
+{
+	if (OrderedCells.Num() == 0)
+	{
+		return;
+	}
+
+	const bool bWasIdle = (PendingRevealCells.Num() == 0);
+
+	for (const int32 CellIndex : OrderedCells)
+	{
+		if (!Cells.IsValidIndex(CellIndex) || !IsCellPainted(CellIndex))
+		{
+			continue;
+		}
+
+		if (RevealedCellFlags.IsValidIndex(CellIndex) && RevealedCellFlags[CellIndex] != 0)
+		{
+			continue;
+		}
+
+		PendingRevealCells.AddUnique(CellIndex);
+	}
+
+	if (PendingRevealCells.Num() == 0)
+	{
+		return;
+	}
+
+	/**
+	 * 붓질 한 번으로 나올 수 없는 양이면 연출 없이 즉시 켠다.
+	 *
+	 * 늦게 들어와 존 전체를 한꺼번에 받는 경우가 이쪽이다. 그걸 한 칸씩 켜면 남이 이미
+	 * 오래전에 칠해둔 선이 내 눈앞에서 그려지는 것처럼 보인다.
+	 */
+	const int32 MaxStrokeCells = FMath::Max(1, ChargeThresholds.Num());
+	if (CellRevealInterval <= 0.f || PendingRevealCells.Num() > MaxStrokeCells)
+	{
+		for (const int32 CellIndex : PendingRevealCells)
+		{
+			RevealCell(CellIndex);
+		}
+
+		PendingRevealCells.Reset();
+		RefreshPaintedInstances();
+		return;
+	}
+
+	if (bWasIdle)
+	{
+		// 첫 칸은 기다리지 않는다. 손을 뗀 프레임에 붓이 닿아야 한다.
+		NextRevealTime = GetWorld()->GetTimeSeconds();
+
+		// 붓이 그어지는 소리는 월드에서 일어나는 일이라 전원에게 들린다.
+		// 칸마다 내면 4연타로 들리므로 점등이 시작될 때 한 번만 낸다.
+		if (ReleaseSound != nullptr && Cells.IsValidIndex(PendingRevealCells[0]))
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, ReleaseSound, GetCellWorldLocation(PendingRevealCells[0]));
+		}
+	}
+}
+
+void ACWWorkZone_BorderSketch::SyncRevealQueueToFlags()
+{
+	if (RevealedCellFlags.Num() != Cells.Num())
+	{
+		RevealedCellFlags.SetNumZeroed(Cells.Num());
+	}
+
+	// 서버가 예측을 되돌렸으면 켜둔 칸을 즉시 끈다. 여기는 연출을 넣지 않는다.
+	// 잘못 켰던 것을 무르는 자리라, 천천히 꺼지면 오히려 눈에 더 띈다.
+	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
+	{
+		if (!IsCellPainted(CellIndex))
+		{
+			RevealedCellFlags[CellIndex] = 0;
+		}
+	}
+
+	PendingRevealCells.RemoveAll([this](int32 CellIndex)
+	{
+		return !IsCellPainted(CellIndex);
+	});
+
+	// 아직 켜지도 대기하지도 않은 칸을 모은다. 남이 칠했거나 늦게 들어와 새로 알게 된 칸이다.
+	TArray<int32> NewCells;
+	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
+	{
+		if (IsCellPainted(CellIndex) && RevealedCellFlags[CellIndex] == 0
+			&& !PendingRevealCells.Contains(CellIndex))
+		{
+			NewCells.Add(CellIndex);
+		}
+	}
+
+	EnqueueRevealCells(NewCells);
+}
+
+void ACWWorkZone_BorderSketch::RevealCell(int32 CellIndex)
+{
+	if (!RevealedCellFlags.IsValidIndex(CellIndex) || RevealedCellFlags[CellIndex] != 0)
+	{
+		return;
+	}
+
+	RevealedCellFlags[CellIndex] = 1;
+
+	if (CellPaintFX != nullptr)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			GetWorld(),
+			CellPaintFX,
+			GetCellWorldLocation(CellIndex),
+			FRotator::ZeroRotator,
+			FVector(CellPaintFXScale));
+	}
+}
+
+FVector ACWWorkZone_BorderSketch::GetCellWorldLocation(int32 CellIndex) const
+{
+	if (!Cells.IsValidIndex(CellIndex))
+	{
+		return GetActorLocation();
+	}
+
+	FVector LocalLocation = Cells[CellIndex].Center;
+	LocalLocation.Z += GuideHeightOffset + PaintedHeightOffset;
+
+	return GetActorTransform().TransformPosition(LocalLocation);
+}
+
+void ACWWorkZone_BorderSketch::PlayLocalChargeSound(USoundBase* Sound, const UCWWorkerComponent* Worker) const
+{
+	// 작업자를 인자로 받는 이유: 릴리즈 실패음은 차징 상태를 정리한 뒤에 난다.
+	// 그때 ChargingWorker 는 이미 비어 있어서, 멤버를 보면 소리가 조용히 사라진다.
+	if (Sound == nullptr || Worker == nullptr || !Worker->IsLocalWorker())
+	{
+		return;
+	}
+
+	const AActor* WorkerActor = Worker->GetOwner();
+	if (WorkerActor == nullptr)
+	{
+		return;
+	}
+
+	UGameplayStatics::PlaySoundAtLocation(this, Sound, WorkerActor->GetActorLocation());
+}
+
+FTransform ACWWorkZone_BorderSketch::MakeCellTransform(const FCWBorderCell& Cell, float ZOffset) const
+{
 	// /Engine/BasicShapes/Plane 은 100x100 이라 크기를 100 으로 나누면 그대로 배율이 된다.
-	// 긴 변은 모서리까지 꽉 채우고, 짧은 변이 그 사이를 잇는다.
-	const FVector LongBarScale(SizeX / 100.f, Thickness / 100.f, 1.f);
-	const FVector ShortBarScale(Thickness / 100.f, SizeY / 100.f, 1.f);
+	const FVector Scale = Cell.bAlongX
+		? FVector(Cell.Length / 100.f, CellThickness / 100.f, 1.f)
+		: FVector(CellThickness / 100.f, Cell.Length / 100.f, 1.f);
 
-	BorderMeshes->AddInstance(FTransform(FRotator::ZeroRotator,
-		FVector(0.f, -AreaExtent.Y + Inset, GuideHeightOffset), LongBarScale));
-	BorderMeshes->AddInstance(FTransform(FRotator::ZeroRotator,
-		FVector(0.f, AreaExtent.Y - Inset, GuideHeightOffset), LongBarScale));
-	BorderMeshes->AddInstance(FTransform(FRotator::ZeroRotator,
-		FVector(-AreaExtent.X + Inset, 0.f, GuideHeightOffset), ShortBarScale));
-	BorderMeshes->AddInstance(FTransform(FRotator::ZeroRotator,
-		FVector(AreaExtent.X - Inset, 0.f, GuideHeightOffset), ShortBarScale));
+	FVector Location = Cell.Center;
+	Location.Z += ZOffset;
+
+	return FTransform(FRotator::ZeroRotator, Location, Scale);
 }
 
-void ACWWorkZone_BorderSketch::UpdateBorderVisual(float DeltaSeconds)
+void ACWWorkZone_BorderSketch::SetupMaterials()
 {
-	if (BorderMaterial == nullptr)
+	GuideMaterial = BorderMeshes->CreateAndSetMaterialInstanceDynamic(0);
+	if (GuideMaterial != nullptr)
 	{
-		return;
+		GuideMaterial->SetVectorParameterValue(ColorParameterName, GuideColor);
+		GuideMaterial->SetScalarParameterValue(OpacityParameterName, GuideOpacity);
 	}
 
-	const float TargetBlend = IsCompleted() ? 1.f : 0.f;
-	const float CurrentProgress = GetProgress();
-
-	// 전환이 끝났고 진행도도 그대로면 머티리얼을 건드릴 이유가 없다.
-	if (FMath::IsNearlyEqual(PaintedBlend, TargetBlend) && FMath::IsNearlyEqual(AppliedProgress, CurrentProgress))
+	PaintedMaterial = PaintedMeshes->CreateAndSetMaterialInstanceDynamic(0);
+	if (PaintedMaterial != nullptr)
 	{
-		return;
+		PaintedMaterial->SetVectorParameterValue(ColorParameterName, PaintedColor);
+		PaintedMaterial->SetScalarParameterValue(OpacityParameterName, PaintedOpacity);
 	}
 
-	if (PaintTransitionSeconds > 0.f)
+	PreviewMaterial = PreviewMeshes->CreateAndSetMaterialInstanceDynamic(0);
+	if (PreviewMaterial != nullptr)
 	{
-		PaintedBlend = FMath::FInterpConstantTo(PaintedBlend, TargetBlend, DeltaSeconds, 1.f / PaintTransitionSeconds);
-	}
-	else
-	{
-		PaintedBlend = TargetBlend;
+		PreviewMaterial->SetVectorParameterValue(ColorParameterName, PreviewColor);
+		PreviewMaterial->SetScalarParameterValue(OpacityParameterName, PreviewOpacity);
 	}
 
-	BorderMaterial->SetVectorParameterValue(ColorParameterName, FMath::Lerp(GuideColor, PaintedColor, PaintedBlend));
-	BorderMaterial->SetScalarParameterValue(OpacityParameterName, FMath::Lerp(GuideOpacity, PaintedOpacity, PaintedBlend));
-	BorderMaterial->SetScalarParameterValue(ProgressParameterName, CurrentProgress);
-
-	AppliedProgress = CurrentProgress;
-}
-
-FVector2D ACWWorkZone_BorderSketch::GetPathPoint(int32 PointIndex) const
-{
-	const float Height = RectHeightRatio;
-
-	switch (PointIndex)
+	PreviewBlockedMaterial = PreviewBlockedMeshes->CreateAndSetMaterialInstanceDynamic(0);
+	if (PreviewBlockedMaterial != nullptr)
 	{
-	case 0:  return FVector2D(0.f, Height * 0.5f);	// 시작점 (왼쪽 변 중앙)
-	case 1:  return FVector2D(0.f, 0.f);			// 좌상
-	case 2:  return FVector2D(1.f, 0.f);			// 우상
-	case 3:  return FVector2D(1.f, Height);			// 우하
-	case 4:  return FVector2D(0.f, Height);			// 좌하
-	default: return FVector2D(0.f, Height * 0.5f);	// 시작점으로 복귀
+		PreviewBlockedMaterial->SetVectorParameterValue(ColorParameterName, PreviewBlockedColor);
+		PreviewBlockedMaterial->SetScalarParameterValue(OpacityParameterName, PreviewOpacity);
 	}
 }
 
-FVector2D ACWWorkZone_BorderSketch::GetSegmentDirection(int32 SegmentIndex) const
+void ACWWorkZone_BorderSketch::OnRep_PaintedCells()
 {
-	const FVector2D Delta = GetPathPoint(SegmentIndex + 1) - GetPathPoint(SegmentIndex);
+	// 예측이 빗나간 칸은 여기서 꺼지고, 남이 칠한 칸은 점등 대기열로 들어간다.
+	SyncRevealQueueToFlags();
 
-	return Delta.GetSafeNormal();
-}
-
-float ACWWorkZone_BorderSketch::GetSegmentLength(int32 SegmentIndex) const
-{
-	return (GetPathPoint(SegmentIndex + 1) - GetPathPoint(SegmentIndex)).Size();
-}
-
-float ACWWorkZone_BorderSketch::GetSegmentEndLength(int32 SegmentIndex) const
-{
-	float Total = 0.f;
-	for (int32 Index = 0; Index <= SegmentIndex; ++Index)
-	{
-		Total += GetSegmentLength(Index);
-	}
-
-	return Total;
-}
-
-float ACWWorkZone_BorderSketch::GetTotalLength() const
-{
-	return GetSegmentEndLength(GetSegmentCount() - 1);
-}
-
-FVector2D ACWWorkZone_BorderSketch::GetDominantAxis(const FVector2D& Input)
-{
-	if (Input.IsNearlyZero())
-	{
-		return FVector2D::ZeroVector;
-	}
-
-	if (FMath::Abs(Input.X) > FMath::Abs(Input.Y))
-	{
-		return FVector2D(FMath::Sign(Input.X), 0.f);
-	}
-
-	return FVector2D(0.f, FMath::Sign(Input.Y));
+	RefreshPaintedInstances();
 }

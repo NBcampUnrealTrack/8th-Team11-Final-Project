@@ -146,8 +146,11 @@ public:
 	void SetHeldTool(ECWToolType NewTool, ACWBaseTool* NewToolActor = nullptr);
 
 	/**
-	 * 이동 입력을 현재 대상 존에 넘긴다. 미니게임이 있는 존이면 방향 전환에 쓰인다.
+	 * 이동 입력을 현재 대상 존에 넘긴다. 차징처럼 제자리에 서야 하는 작업이면 존이 삼킨다.
 	 * 캐릭터의 이동 처리보다 먼저 호출하고, true 가 돌아오면 그 프레임 이동을 건너뛴다.
+	 *
+	 * 서버에 넘기지 않는다. 이동 잠금은 누르고 있는 본인 화면에서만 의미가 있고,
+	 * 서버는 캐릭터 이동 리플리케이션으로 결과만 받으면 된다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Work")
 	bool ConsumeDirectionInput(const FVector2D& MoveInput);
@@ -203,10 +206,35 @@ public:
 	 * 지금 하는 작업 때문에 패링이 막혀 있는가. 캐릭터가 패링 입력을 무시할 때 쓴다.
 	 *
 	 * 이동 잠금과 같은 이유로 로컬에서만 판단한다. 서버 확정을 기다리면 그 사이 입력이
-	 * 반쯤 먹는 상태가 되고, 미니게임 상태 자체가 그리는 본인 기계에만 있다.
+	 * 반쯤 먹는 상태가 되고, 차징 상태 자체가 누르고 있는 본인 기계에만 있다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsParryBlocked() const;
+
+	/**
+	 * 지금 하는 작업 때문에 조준(커서 방향 회전)이 멈춰 있는가.
+	 *
+	 * 패링 차단과 같은 조건으로 본다. 작업 키를 누르고 있는 동안에만 유효하다.
+	 * 대상 존이 잡혔다는 것만으로 판단하면 존 옆에 서 있기만 해도 몸이 안 돌아간다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsAimingBlocked() const;
+
+	/**
+	 * 지금 하는 작업의 차징 단계. 0 이면 차징 중이 아니다. 애니메이션이 자세를 고르는 데 쓴다.
+	 *
+	 * 캐릭터가 존을 직접 잡지 않고 여기를 거치게 한 이유: 존은 작업 컴포넌트가 매 프레임
+	 * 새로 고르는 값이라, 애니메이션 쪽에서 들고 있으면 존이 바뀌는 순간 놓친다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work|Charge")
+	int32 GetChargeLevel() const;
+
+	/** 게이지 채움용 0~1. 풀차징 시간 대비 얼마나 눌렀는가. */
+	UFUNCTION(BlueprintPure, Category = "Work|Charge")
+	float GetChargeRatio() const;
+
+	UFUNCTION(BlueprintPure, Category = "Work|Charge")
+	bool IsCharging() const { return GetChargeLevel() > 0 || GetChargeRatio() > 0.f; }
 
 	/**
 	 * 이 컴포넌트가 이 기계에서 조종 중인 플레이어의 것인가.
@@ -237,6 +265,14 @@ public:
 	 */
 	void SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes);
 
+	/**
+	 * 붓을 놓으며 확정한 칸 번호들을 서버로 올린다. 테두리 존이 릴리즈 한 번에 한 번 부른다.
+	 *
+	 * 붓질과 달리 모아 보낼 이유가 없다. 릴리즈는 사람이 손을 떼는 순간이라 자주 와야
+	 * 초당 두어 번이고, 한 번에 실리는 칸도 차징 단계 수만큼(기본 4개)뿐이다.
+	 */
+	void SubmitBorderCells(ACWBaseWorkZone* Zone, const TArray<int32>& CellIndices);
+
 private:
 	/** 작업 키를 눌렀는지 서버에 알린다. 진행도는 서버만 올릴 수 있다. */
 	UFUNCTION(Server, Reliable)
@@ -248,10 +284,6 @@ private:
 	 */
 	UFUNCTION(Server, Unreliable)
 	void Server_UpdateWorkLocation(FVector_NetQuantize WorkLocation);
-
-	/** 미니게임 방향 전환 요청. 어느 존인지 같이 보내야 서버가 대상을 특정할 수 있다. */
-	UFUNCTION(Server, Reliable)
-	void Server_SubmitDirectionInput(ACWBaseWorkZone* Zone, FVector2D MoveInput);
 
 	/**
 	 * 미니게임이 페인트 소진으로 멈췄다는 보고. 놓치면 남의 화면에 알림이 안 뜨므로 Reliable 이다.
@@ -287,6 +319,14 @@ private:
 	 */
 	UFUNCTION(Server, Reliable)
 	void Server_SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes);
+
+	/**
+	 * 테두리 칸 보고. 놓치면 그 칸이 영영 안 칠해진 채로 남으므로 Reliable 이어야 한다.
+	 * 클라이언트는 이미 자기 화면에 칠해 놓았기 때문에, 유실되면 서버 값이 내려올 때
+	 * 칠했던 칸이 도로 사라지는 것으로 보인다.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_SubmitBorderCells(ACWBaseWorkZone* Zone, const TArray<int32>& CellIndices);
 
 	/**
 	 * 지금 작업할 수 있는 존과 작업 지점을 찾는다.
