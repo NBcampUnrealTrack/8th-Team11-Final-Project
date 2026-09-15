@@ -61,7 +61,7 @@ private:
 
 public:
 	/** 이 주기(초)마다 보정을 시도한다. 매 틱 대신 낮은 주기로 돌려 부하를 줄인다. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.01"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.01"))
 	float CorrectionInterval = 0.1f;
 
 	/**
@@ -72,10 +72,10 @@ public:
 	 * 그 직후에 순간이동이 섞이면, 방금까지 매끄럽던 정지 동작과 대비돼 오히려
 	 * 더 눈에 띌 수 있다. 테스트해서 작은 오차의 스냅이 안 보이면 이 값을 올려도 된다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
 	float SnapTolerance = 0.f;
 
 	/** 허용 오차를 넘는(또는 스냅을 안 쓰는) 나머지를 목표 지점 쪽으로 좁히는 속도(cm/s). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
 	float CorrectionSpeed = 100.f;
 };
