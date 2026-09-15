@@ -3,6 +3,7 @@
 #include "Traffic/Components/CWParryComponent.h"
 
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
+#include "Data/Assets/CWParryPropCatalog.h"
 #include "GameFramework/Actor.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
@@ -199,6 +200,17 @@ FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptCont
 	FCWParrySyncData ParrySyncData;
 	ParrySyncData.TargetVehicle = &ParriedVehicle;
 	ParrySyncData.VehicleType = ParriedVehicle.GetVehicleType();
+
+	/**
+	 * 이번 스윙에 쓸 소품을 여기서 한 번만 뽑는다.
+	 *
+	 * 이 함수는 서버에서만 불린다(HandleServerParryRequest 안). 뽑은 값이 아래 멀티캐스트에
+	 * 그대로 실려 나가므로 모든 머신이 같은 소품을 본다. 클라이언트가 각자 뽑으면 화면마다
+	 * 다른 소품이 나오고 사운드까지 어긋난다.
+	 *
+	 * 카탈로그가 비었으면 INDEX_NONE 이 들어가고, 받는 쪽은 소품 없이 스윙만 재생한다.
+	 */
+	ParrySyncData.PropIndex = (PropCatalog != nullptr) ? PropCatalog->PickRandomPropIndex() : INDEX_NONE;
 
 	// 연출 기준점은 클라이언트가 보낸 커서가 아니라 서버가 확정한 차량 위치다.
 	ParrySyncData.ParryLocation = ParriedVehicle.GetActorLocation();

@@ -38,6 +38,8 @@
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Sinkhole/Components/CWAsphaltGunnerComponent.h"
 #include "Sinkhole/Components/CWSinkholeFallComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Data/Assets/CWParryPropCatalog.h"
 #include "Traffic/Components/CWParryComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -137,6 +139,18 @@ void ACWPlayerCharacter::BeginPlay()
 	 * BeginPlay 에서 만든 슬롯 메시까지 여기서 함께 잡힌다.
 	 */
 	UCWDecalStatics::DisableDecalReceiveOnActor(this);
+
+	/**
+	 * 패링 소품을 꽂을 컴포넌트를 태그로 찾아 캐시한다.
+	 *
+	 * 매번 찾지 않는 이유는 패링이 연타되는 조작이기 때문이다. 컴포넌트 목록을 훑는
+	 * 비용 자체는 작지만, 한 번 찾아 두면 될 것을 반복할 이유가 없다.
+	 */
+	for (UActorComponent* Component : GetComponentsByTag(UStaticMeshComponent::StaticClass(), ParryPropComponentTag))
+	{
+		ParryPropMesh = Cast<UStaticMeshComponent>(Component);
+		break;
+	}
 
 	/**
 	 * 틱을 확실히 켠다. 생성자의 bCanEverTick 만으로는 부족하다.
@@ -1081,15 +1095,31 @@ bool ACWPlayerCharacter::ResolveRagdollBodyAxes(FVector& OutBodyUp, FVector& Out
 void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncData)
 {
 	/**
+	 * 소품을 먼저 꽂는다. 몬타주에 얹힌 노티파이가 첫 프레임에 바로 보이게 할 수 있으므로,
+	 * 메시가 그보다 앞서 들어가 있어야 한 프레임 빈손이 보이지 않는다.
+	 */
+	const FCWParryProp* Prop = ApplyParryProp(ParrySyncData.PropIndex);
+
+	/**
 	 * 스윙은 사운드보다 먼저, 그리고 어느 분기보다 위에서 재생한다.
 	 *
-	 * 아래 두 곳에 return 이 있다. ParrySuccessSound 가 비었을 때와 내가 조종하는
-	 * 캐릭터일 때다. 몬타주를 그 아래에 두면 사운드 애셋을 안 꽂았을 때 스윙까지 사라지고,
-	 * 내 캐릭터만 휘두르지 않는 기묘한 상태가 된다. 연출과 사운드는 서로의 조건이 아니다.
+	 * 아래에 return 이 둘 있다. 소리가 없을 때와 내가 조종하는 캐릭터일 때다. 몬타주를
+	 * 그 아래에 두면 사운드가 빈 소품에서 스윙까지 사라지고, 내 캐릭터만 휘두르지 않는
+	 * 기묘한 상태가 된다. 연출과 사운드는 서로의 조건이 아니다.
 	 */
 	PlayParrySwingMontage();
 
-	if (ParrySuccessSound == nullptr)
+	/**
+	 * 패링 성공음은 소품마다 다르다. 배트는 금속 타격, 형광봉은 플라스틱 타격이다.
+	 *
+	 * 예전에는 캐릭터의 ParrySuccessSound 하나를 썼고 소품이 비면 그리로 떨어지게 했는데,
+	 * 그 폴백은 "사운드 칸을 빠뜨린 소품" 을 조용히 덮어 버린다. 지금은 카탈로그를 저장할 때
+	 * UCWParryPropCatalog::IsDataValid 가 빈 칸을 잡으므로 런타임 폴백이 필요 없다.
+	 * 문제를 숨기는 대신 만들 때 막는다.
+	 */
+	USoundBase* SoundToPlay = (Prop != nullptr) ? Prop->SwingSound : nullptr;
+
+	if (SoundToPlay == nullptr)
 	{
 		return;
 	}
@@ -1102,14 +1132,14 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 	 */
 	if (IsLocallyControlled())
 	{
-		UGameplayStatics::PlaySound2D(this, ParrySuccessSound);
+		UGameplayStatics::PlaySound2D(this, SoundToPlay);
 		return;
 	}
 
 	// 남의 패링은 어디서 일어났는지가 정보다. 차량 위치에서 거리감 있게 낸다.
 	UGameplayStatics::PlaySoundAtLocation(
 		this,
-		ParrySuccessSound,
+		SoundToPlay,
 		ParrySyncData.ParryLocation,
 		FRotator::ZeroRotator,
 		1.f,
@@ -1117,6 +1147,39 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 		0.f,
 		ResolveSoundAttenuation()
 	);
+}
+
+const FCWParryProp* ACWPlayerCharacter::ApplyParryProp(int32 PropIndex)
+{
+	if (ParryPropMesh == nullptr || ParryComponent == nullptr)
+	{
+		return nullptr;
+	}
+
+	const UCWParryPropCatalog* Catalog = ParryComponent->GetPropCatalog();
+	const FCWParryProp* Prop = (Catalog != nullptr) ? Catalog->GetProp(PropIndex) : nullptr;
+
+	if (Prop == nullptr || Prop->Mesh == nullptr)
+	{
+		/**
+		 * 카탈로그가 비었거나 인덱스가 어긋났다. 메시를 비워 두면 노티파이가 보이게 해도
+		 * 아무것도 안 나온다. 스윙 자체는 그대로 재생되므로 맨손 스윙이 된다.
+		 */
+		ParryPropMesh->SetStaticMesh(nullptr);
+		return nullptr;
+	}
+
+	/**
+	 * 메시를 런타임에 갈아 끼우지만 복제하지 않는다.
+	 *
+	 * 모든 머신이 서버가 보낸 같은 인덱스로 같은 카탈로그 행을 보기 때문에 각자 꽂아도
+	 * 결과가 같다. 네트워크로 오가는 것은 FCWParrySyncData 안의 int32 하나뿐이다.
+	 */
+	ParryPropMesh->SetStaticMesh(Prop->Mesh);
+	ParryPropMesh->SetRelativeTransform(Prop->GripOffset);
+	ParryPropMesh->SetRelativeScale3D(FVector(Prop->Scale));
+
+	return Prop;
 }
 
 void ACWPlayerCharacter::PlayParrySwingMontage()

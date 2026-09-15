@@ -9,6 +9,7 @@
 #include "CWParryComponent.generated.h"
 
 class ACWBaseVehicle;
+class UCWParryPropCatalog;
 
 /**
  * 서버가 확정한 패링 결과를 모든 머신에서 발행. **사람에 붙는 연출**을 붙이는 자리다.
@@ -36,6 +37,10 @@ public:
 	// 0은 방금 사용한 상태, 1은 다시 사용할 수 있는 상태
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	float GetCooldownReadyRatio() const;
+
+	/** 스윙 소품 카탈로그. 캐릭터가 인덱스로 메시와 사운드를 꺼낼 때 쓴다. 없으면 nullptr. */
+	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
+	UCWParryPropCatalog* GetPropCatalog() const { return PropCatalog; }
 
 protected:
 	// 클라이언트에서 서버로 패링 판정을 요청
@@ -138,6 +143,17 @@ private:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float ParryAngle = 360.f;
+
+	/**
+	 * 스윙에 쓸 소품 목록. 비워두면 소품 없이 맨손 스윙이 나간다.
+	 *
+	 * 서버가 여기서 인덱스 하나를 뽑아 FCWParrySyncData 에 실어 보내고, 각 클라이언트가
+	 * 같은 인덱스로 같은 메시와 사운드를 꺼낸다. 실제로 손에 붙이고 소리를 내는 것은
+	 * ACWPlayerCharacter 쪽이다. 카탈로그를 여기 둔 이유는 인덱스를 뽑는 주체가 서버의
+	 * 이 컴포넌트이기 때문이고, 캐릭터는 GetPropCatalog() 로 같은 애셋을 본다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	TObjectPtr<UCWParryPropCatalog> PropCatalog;
 
 	// 랙 보정의 되돌림 양과 상한은 여기 없다. 피격 판정과 같은 값이어야 해서
 	// UCWTrafficSubsystem::ResolveViewRewindSeconds 하나가 두 판정에 답한다.
