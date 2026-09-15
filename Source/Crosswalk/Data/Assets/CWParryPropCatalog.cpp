@@ -4,6 +4,7 @@
 
 #include "Engine/StaticMesh.h"
 #include "Misc/DataValidation.h"
+#include "NiagaraSystem.h"
 #include "Sound/SoundBase.h"
 
 // LOCTEXT 매크로가 쓸 네임스페이스. 번역 키가 파일 간에 충돌하지 않게 한다.
@@ -51,6 +52,22 @@ EDataValidationResult UCWParryPropCatalog::IsDataValid(FDataValidationContext& C
 				LOCTEXT("MissingSound", "[{0}] SwingSound 가 비어 있습니다. 이 소품이 뽑힌 패링은 무음이 됩니다."),
 				Index));
 			Result = EDataValidationResult::Invalid;
+		}
+
+		/**
+		 * 이펙트는 경고에 그친다. 사운드와 다르게 취급하는 이유가 있다.
+		 *
+		 * 사운드는 "내가 누른 키가 먹혔다" 는 조작 피드백이라 빠지면 감각이 무너진다.
+		 * 이펙트는 그 위에 얹는 장식이고, 없어도 소리와 스윙으로 성공을 알 수 있다.
+		 *
+		 * 더 중요한 건 소품 두 개 중 하나만 먼저 만들어 붙여 보는 상태가 정상이라는 점이다.
+		 * 에러로 두면 그동안 카탈로그 저장이 계속 막힌다.
+		 */
+		if (Prop.SwingEffect == nullptr)
+		{
+			Context.AddWarning(FText::Format(
+				LOCTEXT("MissingEffect", "[{0}] SwingEffect 가 비어 있습니다. 이 소품이 뽑힌 패링은 이펙트 없이 나갑니다."),
+				Index));
 		}
 
 		if (Prop.Scale <= 0.f)

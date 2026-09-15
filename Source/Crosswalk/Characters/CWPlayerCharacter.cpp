@@ -22,6 +22,7 @@
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
@@ -1110,6 +1111,14 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 	PlayParrySwingMontage();
 
 	/**
+	 * 이펙트도 몬타주와 같은 이유로 여기다. 아래 두 return 보다 위여야 한다.
+	 *
+	 * 사운드 블록 뒤에 두면 (1) 소리 칸이 빈 소품에서 이펙트까지 같이 사라지고
+	 * (2) 내가 조종하는 캐릭터에서만 이펙트가 안 나온다. 연출은 서로의 조건이 아니다.
+	 */
+	PlayParrySwingEffect(Prop, ParrySyncData);
+
+	/**
 	 * 패링 성공음은 소품마다 다르다. 배트는 금속 타격, 형광봉은 플라스틱 타격이다.
 	 *
 	 * 예전에는 캐릭터의 ParrySuccessSound 하나를 썼고 소품이 비면 그리로 떨어지게 했는데,
@@ -1211,6 +1220,66 @@ void ACWPlayerCharacter::PlayParrySwingMontage()
 		1.f,
 		EMontagePlayReturnType::Duration
 	);
+}
+
+void ACWPlayerCharacter::PlayParrySwingEffect(const FCWParryProp* Prop, const FCWParrySyncData& ParrySyncData)
+{
+	UNiagaraSystem* EffectToPlay = (Prop != nullptr) ? Prop->SwingEffect : nullptr;
+
+	if (EffectToPlay == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 위치에 폴백이 없다. PlayVehicleHitEffect 와 다른 점이다.
+	 *
+	 * 저쪽은 피격 정보가 복제 프로퍼티라 잠금 플래그보다 늦게 도착할 수 있어서
+	 * IsNearlyZero 검사를 둔다. 여기는 위치와 소품 인덱스가 같은 멀티캐스트 한 패킷에
+	 * 실려 오므로, 이 함수가 도는 시점에 ParryLocation 은 이미 서버가 확정한 값이다.
+	 */
+	const FVector EffectLocation = ParrySyncData.ParryLocation + ParryEffectOffset;
+
+	// 이펙트 정면을 차가 날아가는 쪽으로 돌린다. 방향성 있는 이펙트의 분출 방향이 맞아야 한다.
+	const FRotator EffectRotation = ParrySyncData.ParryDirection.Rotation();
+
+	UNiagaraComponent* SpawnedEffect = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		this,
+		EffectToPlay,
+		EffectLocation,
+		EffectRotation
+	);
+
+	if (SpawnedEffect == nullptr)
+	{
+		/**
+		 * 반환값을 확인한다. SpawnSystemAtLocation 의 bPreCullCheck 기본값이 true 라,
+		 * 이펙트 애셋에 설정된 컷오프 거리 밖이면 엔진이 스폰을 접고 nullptr 을 돌려준다.
+		 * 화면 밖에서 일어난 패링이라 보일 일도 없다.
+		 */
+		return;
+	}
+
+	if (ParryEffectStrengthParameterName.IsNone())
+	{
+		// 세기를 안 쓰는 이펙트다. 이름이 비면 넘기지 않는다.
+		return;
+	}
+
+	/**
+	 * 차가 튕겨나가는 속도를 곱셈 계수로 환산해 넘긴다. 빠른 차일수록 크게 터진다.
+	 *
+	 * GetMappedRangeValueClamped 는 퍼센트 단계에서 0~1 로 자른다(UnrealMathUtility.h:1087).
+	 * 그래서 속도가 구간을 벗어나도 계수가 범위 밖으로 나가지 않는다. 멈춘 차를 친 경우와
+	 * 비정상적으로 빠른 차를 친 경우가 둘 다 양 끝값에 붙을 뿐이다.
+	 */
+	const float EffectStrength = FMath::GetMappedRangeValueClamped(
+		ParryEffectSpeedRange,
+		ParryEffectStrengthRange,
+		ParrySyncData.VehicleReactionStrength
+	);
+
+	SpawnedEffect->SetVariableFloat(ParryEffectStrengthParameterName, EffectStrength);
 }
 
 void ACWPlayerCharacter::HandleTemperatureChanged(UCWTemperatureComponent* InTemperatureComponent, float Temperature, float HeatRatio)
