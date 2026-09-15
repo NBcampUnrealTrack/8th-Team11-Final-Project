@@ -68,6 +68,27 @@ struct FCWVehicleMeshVariant
 	float WheelRadius = 0.f;
 
 	/**
+	 * 이 차체에서 돌릴 바퀴 본 이름. 비워 두면 차종 BP 의 WheelBones 를 그대로 쓴다.
+	 *
+	 * 대부분의 차체는 비워 두면 된다. MegaCity 팩 26 차체 중 24개가 FL/FR/RL/RR 로 같고,
+	 * 갈리는 것은 둘뿐이다 (2026-09-15 스켈레톤 26개 전수 확인).
+	 *
+	 *   3축 세미(Truck_02)  FL, FR, RL2, RL3, RR2, RR3
+	 *                       RL 과 RR 이 아예 없다. 차종 BP 값으로 떨어뜨리면 앞바퀴만 돈다.
+	 *   오토바이(Bike_03)   Wheel, Whell
+	 *                       두 번째는 원작자 오타지만 본 이름이 그러니 그대로 써야 한다.
+	 *                       같이 있는 Steering 은 핸들바라 여기 넣으면 핸들이 돈다.
+	 *
+	 * 차종 BP 가 아니라 여기에도 둔 이유는 한 차종 BP 안에 본 구성이 다른 차체가 섞이기
+	 * 때문이다. 트럭 BP 에 Truck_01(4륜)과 Truck_02(6륜)가 같이 들어간다.
+	 *
+	 * 없는 이름을 넣으면 엔진이 경고를 찍는데 차량마다 매 틱이라 로그가 잠긴다.
+	 * 이름은 스켈레톤을 열어 확인하고 넣는다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic")
+	TArray<FName> WheelBones;
+
+	/**
 	 * 이 메쉬일 때 쓸 콜리전 박스 익스텐트(cm).
 	 *
 	 * 메쉬 실측 치수의 절반을 넣되 폭은 5cm 정도 깎는다. 스치듯 지나갔는데 맞는 오차가
