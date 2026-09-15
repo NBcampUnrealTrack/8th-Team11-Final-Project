@@ -79,19 +79,6 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		return;
 	}
 
-	// [진단로그] H-3 HUD 갱신 지연 기준 실측용 - 측정 끝나면 제거. RepNotify가 없는 값들이라
-	// 바뀐 순간을 여기서 직접 잡는다.
-	if (HeldTool != LastLoggedHeldTool || bWorking != bLastLoggedWorking || bWorkBlocked != bLastLoggedWorkBlocked)
-	{
-		LastLoggedHeldTool = HeldTool;
-		bLastLoggedWorking = bWorking;
-		bLastLoggedWorkBlocked = bWorkBlocked;
-
-		UE_LOG(LogTemp, Warning, TEXT("[HUDSync] [%s] %s HeldTool=%d bWorking=%d bWorkBlocked=%d"),
-			*Owner->GetName(), (bIsServer ? TEXT("서버") : TEXT("클라")),
-			(int32)HeldTool, bWorking, bWorkBlocked);
-	}
-
 	// HUD에 "지금 작업할 수 있는 대상"을 보여주기 위해 항상 갱신한다.
 	FVector WorkLocation = FVector::ZeroVector;
 	ACWBaseWorkZone* FoundZone = FindTargetZone(WorkLocation);

@@ -419,11 +419,6 @@ private:
 	// 아직 체온으로 넘기지 못한 작업 시간. 진행이 확인되면 한 번에 넘기고 0 으로 돌린다.
 	float UnheatedWorkSeconds = 0.f;
 
-	// [진단로그용] H-3 HUD 갱신 지연 기준 실측용 - 측정 끝나면 제거. 마지막으로 로그를 찍은 값.
-	ECWToolType LastLoggedHeldTool = ECWToolType::None;
-	bool bLastLoggedWorking = false;
-	bool bLastLoggedWorkBlocked = false;
-
 	// 같은 캐릭터의 체온 컴포넌트. BeginPlay 에서 한 번 찾아 둔다. 없어도 동작한다.
 	UPROPERTY(Transient)
 	TObjectPtr<UCWTemperatureComponent> TemperatureComponent;

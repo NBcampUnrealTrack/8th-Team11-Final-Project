@@ -176,11 +176,6 @@ void UCWTemperatureComponent::BroadcastIfChanged()
 	{
 		LastBroadcastTemperature = CurrentTemperature;
 
-		// [진단로그] H-3 체온 기준 실측용 - 측정 끝나면 제거. 서버 발신 시점과 클라 수신 시점을
-		// GlobalLogTimes 타임스탬프로 대조해 지연을 계산한다.
-		UE_LOG(LogTemp, Warning, TEXT("[TempSync] [%s] %s 체온=%.1f"),
-			*GetOwner()->GetName(), (GetOwner()->HasAuthority() ? TEXT("서버") : TEXT("클라")), CurrentTemperature);
-
 		OnTemperatureChanged.Broadcast(this, CurrentTemperature, GetHeatRatio());
 
 		// 구간 전이는 색과 달리 "넘어선 순간" 한 번만 알린다.
