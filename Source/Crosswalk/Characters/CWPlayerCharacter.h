@@ -206,6 +206,17 @@ protected:
 	 */
 	void PlayParrySwingMontage();
 
+	/**
+	 * 서버가 뽑아 보낸 인덱스로 손에 들 소품을 준비한다.
+	 *
+	 * 메시와 크기만 꽂아 두고 보이게 하지는 않는다. 표시는 몬타주에 얹은
+	 * AnimNotifyState(ANS_Showbat)가 구간 시작과 끝에서 담당한다.
+	 *
+	 * 반환값은 그 소품의 정의다. 사운드를 함께 꺼내야 해서 돌려준다.
+	 * 소품이 없거나 인덱스가 범위를 벗어나면 nullptr.
+	 */
+	const struct FCWParryProp* ApplyParryProp(int32 PropIndex);
+
 	//체온이 바뀔 때, 머티리얼의 세기 갱신.
 	UFUNCTION()
 	void HandleTemperatureChanged(UCWTemperatureComponent* InTemperatureComponent, float Temperature, float HeatRatio);
@@ -710,9 +721,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Sound")
 	TObjectPtr<USoundBase> VehicleHitVoiceSound;
 
-	/** 패링에 성공해 차를 튕겨낸 순간 나는 소리. */
-	UPROPERTY(EditDefaultsOnly, Category = "Sound")
-	TObjectPtr<USoundBase> ParrySuccessSound;
+	// 패링 성공음은 여기 없다. 소품마다 다른 소리가 나야 해서 UCWParryPropCatalog 의
+	// 각 FCWParryProp::SwingSound 로 옮겼다. 사운드가 빈 소품은 카탈로그 저장 시점에
+	// UCWParryPropCatalog::IsDataValid 가 잡는다.
 
 	/**
 	 * 패링 성공 시 재생할 스윙 몬타주. 비워두면 연출만 빠지고 사운드와 판정은 그대로 간다.
@@ -723,6 +734,22 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
 	TObjectPtr<UAnimMontage> ParrySwingMontage;
+
+	/**
+	 * 손에 소품을 꽂을 컴포넌트를 찾을 때 쓰는 태그. BP_PlayerCharacter 의 BatMesh 에
+	 * 같은 태그를 달아야 한다.
+	 *
+	 * FindComponentByClass<UStaticMeshComponent> 를 쓰지 않는 이유가 있다. 착용물
+	 * 컴포넌트가 런타임에 슬롯 메시를 만들기 때문에(UCWWearableComponent::EnsureSlotComponent)
+	 * 클래스로 찾으면 모자나 조끼 슬롯을 집을 수 있다. 그러면 패링할 때 조끼 자리에
+	 * 배트가 나타난다. 태그는 그 사고를 원천적으로 막는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
+	FName ParryPropComponentTag = TEXT("ParryProp");
+
+	/** BeginPlay 에서 태그로 찾아 캐시한다. 못 찾으면 소품 없이 스윙만 나간다. */
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> ParryPropMesh;
 
 	/**
 	 * 거리 감쇠 설정. 비워두면 아래 두 값으로 C++ 이 만든 기본 감쇠가 쓰인다.
