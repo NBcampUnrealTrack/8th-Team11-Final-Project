@@ -31,6 +31,8 @@
 #include "Characters/Wearables/CWWearableItem.h"
 #include "Core/CWDecalStatics.h"
 #include "Interfaces/Interface_Interactable.h"
+#include "Net/UnrealNetwork.h"
+#include "Painting/CWRestZone.h"
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Painting/Components/CWWorkerComponent.h"
 #include "Painting/Components/CWWorkReticleComponent.h"
@@ -128,6 +130,13 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	}
 }
 
+void ACWPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACWPlayerCharacter, bIsSitting);
+}
+
 void ACWPlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
@@ -218,6 +227,15 @@ void ACWPlayerCharacter::BeginPlay()
 
 	// 카메라 붐도 같이 잡아 둔다. 래그돌 중 pelvis 에 붙었다 돌아오면 스케일이 오염된다.
 	DefaultCameraBoomRelativeTransform = CameraBoom->GetRelativeTransform();
+}
+
+void ACWPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 앉은 채 접속이 끊기거나 캐릭터가 파괴되면, 존이 빈 자리를 영영 붙잡는다.
+	// 서버가 아니면 EndSitting 이 알아서 빠져나간다.
+	EndSitting();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACWPlayerCharacter::Landed(const FHitResult& Hit)
@@ -905,6 +923,18 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 	// 기획서 6.2 - 치이면 들고 있던 도구를 떨어뜨린다. 일어설 때 다시 주워야 한다.
 	if (bHitLocked)
 	{
+		/**
+		 * 앉아 있었다면 여기서 일으켜 세운다. (착석 기획서 3절)
+		 *
+		 * 휴식구역은 안전지대가 아니다. 패링으로 날아온 차가 앉은 사람을 칠 수 있다.
+		 *
+		 * 순서가 중요하다. 이 호출은 HandleVehicleHit 안에서 잠금이 걸릴 때 들어오는데,
+		 * 그 시점은 ReceiveVehicleHit 이 Multicast_StartRagdoll 을 쏘기 "전" 이다.
+		 * 그래서 자리 반납과 이동 모드 복구가 래그돌 진입보다 먼저 끝난다.
+		 * 순서가 뒤집히면 래그돌이 끝난 뒤 MOVE_None 에 갇혀 영영 못 움직인다.
+		 */
+		EndSitting();
+
 		ToolHolderComponent->DropHeldTool();
 		return;
 	}
@@ -1434,7 +1464,105 @@ bool ACWPlayerCharacter::IsFallLocked() const
 
 bool ACWPlayerCharacter::IsActionLocked() const
 {
-	return IsHitLocked() || IsFallLocked();
+	return IsHitLocked() || IsFallLocked() || bIsSitting;
+}
+
+void ACWPlayerCharacter::BeginSitting(ACWRestZone* Zone)
+{
+	if (!HasAuthority() || bIsSitting || Zone == nullptr)
+	{
+		return;
+	}
+
+	CurrentRestZone = Zone;
+
+	// 작업 중에 앉는 일이 없게 여기서 끊는다. 입력 쪽에서 막지 않고 여기서 하는 이유는,
+	// 앉는 경로가 이 함수 하나뿐이라 빠뜨릴 자리가 없기 때문이다.
+	WorkerComponent->CancelWork();
+
+	bIsSitting = true;
+	ApplySittingState();
+
+	/**
+	 * 의자 위로 옮기는 것은 이동을 잠근 "다음" 이다.
+	 *
+	 * 무브먼트가 살아 있는 채로 먼저 옮기면, 맞은 사람 본인 화면(오토너머스 프록시)의
+	 * 로컬 이동 예측이 그 위치를 도로 밀어낸다. 래그돌 진입에서 겪은 것과 같은 문제다.
+	 * (StartRagdoll 주석 참고)
+	 *
+	 * 옮기는 것은 서버만 한다. 결과는 이동 리플리케이션이 실어 나른다.
+	 */
+	const FTransform SeatTransform = Zone->GetSeatTransform();
+	SetActorLocationAndRotation(SeatTransform.GetLocation(), SeatTransform.GetRotation());
+}
+
+void ACWPlayerCharacter::EndSitting()
+{
+	if (!HasAuthority() || !bIsSitting)
+	{
+		return;
+	}
+
+	bIsSitting = false;
+	ApplySittingState();
+
+	// 자리를 돌려준다. 존이 먼저 사라졌다면 돌려줄 곳이 없고, 그쪽은 이미 정리된 뒤다.
+	if (ACWRestZone* Zone = CurrentRestZone.Get())
+	{
+		Zone->ReleaseOccupant(this);
+	}
+
+	CurrentRestZone.Reset();
+}
+
+void ACWPlayerCharacter::Server_RequestStandUp_Implementation()
+{
+	EndSitting();
+}
+
+void ACWPlayerCharacter::OnRep_Sitting()
+{
+	ApplySittingState();
+}
+
+void ACWPlayerCharacter::ApplySittingState()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (Movement == nullptr)
+	{
+		return;
+	}
+
+	if (bIsSitting)
+	{
+		/**
+		 * 이동만 잠근다. 캡슐 콜리전은 그대로 둔다.
+		 *
+		 * 휴식구역은 안전지대가 아니다. 다른 플레이어가 패링으로 차를 이쪽으로 틀 수 있고,
+		 * 캡슐을 내리면 그 차가 앉은 사람을 그냥 통과한다. (착석 기획서 3절)
+		 */
+		Movement->StopMovementImmediately();
+		Movement->SetMovementMode(MOVE_None);
+		return;
+	}
+
+	/**
+	 * 래그돌 중에는 손대지 않는다.
+	 *
+	 * 차에 맞으면 서버에서 EndSitting 이 먼저 돌고 곧바로 래그돌이 시작되는데,
+	 * 클라이언트에서는 래그돌이 먼저 켜진 뒤에 이 OnRep 이 도착할 수 있다. 그때 무브먼트를
+	 * 되살리면 물리와 캐릭터 무브먼트가 서로 밀어낸다. 래그돌을 푸는 것은 StopRagdoll 의 몫이다.
+	 */
+	if (bRagdollActive)
+	{
+		return;
+	}
+
+	// 공중에 있어도 Walking 으로 두면 무브먼트가 다음 틱에 알아서 Falling 으로 넘긴다.
+	if (Movement->MovementMode == MOVE_None)
+	{
+		Movement->SetMovementMode(MOVE_Walking);
+	}
 }
 
 bool ACWPlayerCharacter::IsUsingRagdollPose() const
@@ -1672,6 +1800,21 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 		return;
 	}
 
+	/**
+	 * 앉아 있으면 이 입력은 이동이 아니라 "일어나기" 다. (착석 기획서 4.2)
+	 *
+	 * 기립 전용 키를 두지 않는 이유: 앉은 상태에서 하고 싶은 일은 사실상 이동뿐이라
+	 * 키를 하나 더 외우게 할 이유가 없다.
+	 *
+	 * IsActionLocked 검사보다 반드시 앞에 둔다. 착석이 그 잠금에 포함돼 있어서,
+	 * 뒤에 두면 일어나려고 누른 입력이 잠금에 먹혀 영영 못 일어난다.
+	 */
+	if (bIsSitting)
+	{
+		Server_RequestStandUp();
+		return;
+	}
+
 	// 기획서 6.2 - 쓰러져 있는 동안은 아무 행동도 할 수 없다.
 	if (IsActionLocked())
 	{
@@ -1829,11 +1972,25 @@ void ACWPlayerCharacter::Server_InteractWith_Implementation(AActor* Target)
 
 void ACWPlayerCharacter::PickUpCan()
 {
+	// 앉아 있는 동안은 WASD 말고 아무것도 받지 않는다. (착석 기획서 7절)
+	//
+	// 이 함수들은 IsActionLocked 를 보지 않아서 착석도 자동으로 걸리지 않는다.
+	// 그래서 여기서만 따로 막는다.
+	if (bIsSitting)
+	{
+		return;
+	}
+
 	SupplyCarrierComponent->PickUpCan();
 }
 
 void ACWPlayerCharacter::DropCan()
 {
+	if (bIsSitting)
+	{
+		return;
+	}
+
 	SupplyCarrierComponent->DropCan();
 }
 
@@ -1930,12 +2087,24 @@ void ACWPlayerCharacter::Parry()
 
 void ACWPlayerCharacter::SwapHelmet()
 {
+	// 피격 잠금은 일부러 보지 않지만(헤더 주석) 착석은 막는다.
+	// 앉은 자세 애니메이션 위에서 옷이 갈아입히면 자세가 어긋나 보인다.
+	if (bIsSitting)
+	{
+		return;
+	}
+
 	// 머리 슬롯만 순환한다. CWWearableSlots 에 슬롯 이름 상수를 둔 이유가 이 호출이다.
 	WearableComponent->CycleSlotItem(CWWearableSlots::Head);
 }
 
 void ACWPlayerCharacter::ToggleOutfit()
 {
+	if (bIsSitting)
+	{
+		return;
+	}
+
 	// 어느 슬롯이 함께 벗겨지는지는 카탈로그의 bIncludeInToggleAll 이 정한다.
 	WearableComponent->ToggleAllSlots();
 }

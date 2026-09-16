@@ -7,6 +7,7 @@
 #include "Traffic/Interfaces/Interface_VehicleHitReceiver.h"
 #include "CWPlayerCharacter.generated.h"
 
+class ACWRestZone;
 class UAnimMontage;
 class UCameraComponent;
 class UNiagaraSystem;
@@ -61,6 +62,8 @@ public:
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	/** 커서 조준 회전만 담당한다. 나머지 상태는 전부 타이머와 델리게이트로 돈다. */
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -86,6 +89,36 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Hit")
 	bool IsUsingRagdollPose() const;
+
+	/**
+	 * 휴식구역 의자에 앉아 있는가. (착석 기획서 6절)
+	 *
+	 * ABP 가 이 값으로 착석 스테이트를 고른다. 몽타주가 아니라 스테이트로 가는 이유는
+	 * 앉은 자세가 지속 상태이기 때문이다. 몽타주로 잡으면 다른 몽타주가 끼어들거나
+	 * 끊겼을 때 복구가 지저분해진다.
+	 *
+	 * 나중에 앉는/일어서는 전환 애니메이션이 생기면 스테이트 머신에 진입·이탈 스테이트를
+	 * 끼워 넣기만 하면 된다. 이 값의 의미는 바뀌지 않는다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Rest")
+	bool IsSitting() const { return bIsSitting; }
+
+	/**
+	 * 휴식구역 의자에 앉힌다. 서버에서만 유효하다. ACWRestZone 이 승인한 뒤 부른다.
+	 *
+	 * 전환 애니메이션이 생기면 여기서 몽타주를 재생하고 노티파이로 완료를 받으면 된다.
+	 * 호출부는 바뀌지 않는다.
+	 */
+	void BeginSitting(ACWRestZone* Zone);
+
+	/**
+	 * 일으켜 세운다. 서버에서만 유효하다. 앉은 상태가 아니면 아무것도 하지 않는다.
+	 *
+	 * 착석을 푸는 모든 경로가 여기 하나를 지난다. WASD, 차량 피격, 존 소멸, 캐릭터 소멸.
+	 * 이동 모드 복구가 이 안에 있어서, 어느 경로로 빠져나오든 MOVE_None 에 갇히지 않는다.
+	 * 경로마다 따로 복구 코드를 쓰면 언젠가 하나를 빠뜨린다.
+	 */
+	void EndSitting();
 
 	/** 넉백으로 날아간 뒤 착지한 시점. 여기서부터 다운 시간이 흐른다. */
 	virtual void Landed(const FHitResult& Hit) override;
@@ -239,8 +272,32 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_InteractWith(AActor* Target);
 
+	/**
+	 * 일어나겠다고 서버에 알린다. WASD 를 누른 순간 소유 클라이언트가 보낸다.
+	 *
+	 * 착석 상태는 서버가 들고 있으므로 클라이언트가 혼자 일어설 수는 없다.
+	 * 앉기와 달리 거부될 일이 없어서 승인 절차도 없다.
+	 */
+	UFUNCTION(Server, Reliable)
+	void Server_RequestStandUp();
+
 private:
 	virtual void BeginPlay() override;
+
+	/** 앉은 채로 사라지면 존이 자리를 영영 붙잡는다. 나가기 전에 반드시 일어난다. */
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/**
+	 * 착석 상태를 실제 동작에 반영한다. 모든 머신이 각자 부른다.
+	 *
+	 * 서버는 BeginSitting/EndSitting 에서, 나머지는 OnRep_Sitting 에서 들어온다.
+	 * 입구를 하나로 두는 이유는 체온 컴포넌트가 이동속도를 각자 계산하는 것과 같다.
+	 * 상태를 바꾸는 곳과 그 결과를 내는 곳이 갈라지면 머신마다 다른 그림이 나온다.
+	 */
+	void ApplySittingState();
+
+	UFUNCTION()
+	void OnRep_Sitting();
 
 	/**
 	 * 근처에서 상호작용할 수 있는 대상을 찾는다. 도구는 제외한다.
@@ -264,8 +321,11 @@ private:
 	/**
 	 * 지금 조작을 받으면 안 되는 상태인지. 이동·작업·패링·사격이 전부 막힌다.
 	 *
-	 * 피격과 싱크홀은 원인이 다르지만 "조작이 막힌다" 는 결과가 같아서 한 곳으로 모은다.
+	 * 피격과 싱크홀과 착석은 원인이 다르지만 "조작이 막힌다" 는 결과가 같아서 한 곳으로 모은다.
 	 * 나중에 다른 잠금이 생겨도 호출부를 다시 훑을 필요가 없다.
+	 *
+	 * 착석이 여기 들어 있으므로, Move 는 이 검사보다 "앞에서" 착석을 먼저 봐야 한다.
+	 * 뒤에 두면 일어나려고 누른 WASD 가 잠금에 먹혀 영영 못 일어난다.
 	 */
 	bool IsActionLocked() const;
 
@@ -867,6 +927,24 @@ protected:
 	TObjectPtr<UInputAction> ToggleOutfitAction;
 
 private:
+	/**
+	 * 휴식구역 의자에 앉아 있는가. 서버가 정하고 전원에게 전파된다.
+	 *
+	 * 로컬 예측을 하지 않는다. 앉기는 급박한 조작이 아니라 핑만큼의 지연이 체감되지 않고,
+	 * 예측을 넣으면 서버가 거부했을 때 앉았다 튕겨나오는 그림이 나온다. 같은 프레임에
+	 * 두 명이 E 를 눌렀을 때 진 쪽이 그렇다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_Sitting)
+	bool bIsSitting = false;
+
+	/**
+	 * [서버 전용] 지금 앉아 있는 휴식구역. 일어날 때 어디에 자리를 돌려줄지 기억한다.
+	 *
+	 * 존이 먼저 사라지는 경우가 있어서 약참조로 든다. 강참조로 들면 존이 파괴된 뒤에도
+	 * 살아남아 허상 포인터를 남긴다.
+	 */
+	TWeakObjectPtr<ACWRestZone> CurrentRestZone;
+
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> SupplementContext;
