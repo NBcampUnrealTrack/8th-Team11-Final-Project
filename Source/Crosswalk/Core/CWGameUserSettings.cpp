@@ -16,6 +16,11 @@ void UCWGameUserSettings::SetToDefaults()
 	MasterVolume = 1.0f;
 	BGMVolume = 1.0f;
 	SFXVolume = 1.0f;
+
+	// 부모 기본값(0 = 무제한) 대신 60으로 시작한다. 그래픽 설정을 적용할 때마다
+	// UEngine::SetMaxFPS()가 이 값으로 t.MaxFPS를 다시 맞추므로(ApplyNonResolutionSettings
+	// 경로), 여기 기본값이 0이면 그래픽 옵션만 바꿔도 프레임 제한이 풀린다.
+	SetFrameRateLimit(60.0f);
 }
 
 #pragma endregion
