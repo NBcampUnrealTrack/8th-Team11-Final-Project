@@ -108,6 +108,37 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	 */
 	WearableComponent = CreateDefaultSubobject<UCWWearableComponent>(TEXT("WearableComponent"));
 
+	/**
+	 * 화면에 안 잡히는 동안에도 본 트랜스폼을 갱신한다. 래그돌이 "남의 화면에서만" 굳는 것을 막는다.
+	 *
+	 * [2026-09-16 외부테스트 실측] 남의 캐릭터만 투명해지고 닉네임만 남는다는 제보의 원인이 이것이었다.
+	 * ACharacter 생성자가 이 값을 AlwaysTickPose 로 박아 두는데(Character.cpp), 그러면
+	 * USkinnedMeshComponent::ShouldUpdateTransform 이
+	 *
+	 *   bRecentlyRendered || (옵션 == AlwaysTickPoseAndRefreshBones)
+	 *
+	 * 이라서 화면 밖인 동안 RefreshBoneTransforms 가 통째로 건너뛰어진다. 그 안에서 같이 도는
+	 * PerformBlendPhysicsBones 도 멈추므로, TickPelvisInterp 가 pelvis 바디를 아무리 움직여도
+	 * 소켓 위치와 렌더 포즈는 그 자리에 그대로 굳는다.
+	 *
+	 * 더 나쁜 건 그 다음이다. 굳은 본 캐시로 바운드가 계산돼 바운드가 수십 m 떨어진 곳에 박히고,
+	 * 그러면 렌더러가 계속 컬링해서 bRecentlyRendered 가 영영 false 로 남는다 — 스스로를 물어
+	 * 그 판이 끝날 때까지 안 보인다. 캡슐은 멀쩡하니 닉네임 위젯만 남고, 손 소켓에 붙은 도구도
+	 * 같이 굳어서 함께 사라진다(ACWBaseTool::Attach 참고).
+	 *
+	 * 실측 근거: 래그돌 비행 125건 중 시뮬레이티드 프록시(남의 캐릭터)는 63건 중 31건이
+	 * 얼어붙었고, 오토너머스 프록시(내 캐릭터)는 11건 전부 정상이었다. 내 캐릭터는 항상
+	 * 화면 안에 있으니 이 경로를 탈 수가 없다 — 증상이 "남만" 인 이유가 그대로 설명된다.
+	 *
+	 * 비용은 4인 기준으로 무시할 수 있다. 래그돌 구간에만 켰다 끄는 방법도 되지만, 복귀
+	 * 이어붙이기(TickRecoverBlend)가 끝난 뒤에 되돌려야 해서 되돌리는 시점이 한 군데 더 늘고
+	 * 그 시점을 놓치면 같은 버그가 조용히 되살아난다. 항상 켜 두는 쪽이 싸다.
+	 *
+	 * [주의] 컴포넌트 프로퍼티라 BP_PlayerCharacter 가 이 값을 직렬화하고 있으면 여기 값이
+	 * 먹지 않는다. 빌드 후 디테일 패널에서 실제 값을 한 번 확인할 것.
+	 */
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
 	// 프로토타입 플레이스홀더. BP 를 만들지 않아도 바로 보이도록 여기서 물려 둔다.
 	// 엔진 템플릿 마네킹이므로 우리 애셋과 섞이지 않게 ThirdParty 아래에 둔다.
 	// 팀 캐릭터 애셋이 정해지면 BP 자식에서 갈아 끼우면 된다.
@@ -281,10 +312,6 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 	const FVector LaunchVelocity = LaunchDirection * HitContext.VehicleSpeed * KnockbackSpeedScale
 		+ FVector::UpVector * KnockbackUpSpeed;
 
-	// [진단로그 1/4] 서버가 보내는 시작 위치. 각 머신의 2번 로그와 비교해 전달이 제대로 됐는지 확인한다.
-	// 이름을 찍어두는 이유: 4인 테스트라 동시에 여러 명이 맞으면 로그가 섞여서 어느 캐릭터 건지 헷갈린다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 1.서버발신 위치=%s"), *GetName(), *GetActorLocation().ToString());
-
 	Multicast_StartRagdoll(LaunchVelocity, GetActorLocation());
 }
 
@@ -442,11 +469,6 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 	 */
 	SetActorLocation(ServerActorLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
-	// [진단로그 2/4] Role별로 실제 반영된 위치. 오토너머스 프록시(내 캐릭터, 값=2)에서만
-	// 목표위치와 실제위치가 벌어진다면 무브먼트가 여전히 이 SetActorLocation을 밀어내고 있다는 뜻이다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 2.StartRagdoll직후 Role=%d(0무권한/1시뮬/2오토/3서버) 목표위치=%s 실제위치=%s"),
-		*GetName(), (int32)GetLocalRole(), *ServerActorLocation.ToString(), *GetActorLocation().ToString());
-
 	// 캡슐이 살아 있으면 쓰러진 몸이 자기 캡슐에 걸려 튄다.
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
@@ -497,12 +519,6 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	bRagdollActive = false;
 
 	USkeletalMeshComponent* MeshComponent = GetMesh();
-
-	// [진단로그 4/4] 순간이동 직전 서버가 준 최종 위치 vs 지금 내 pelvis 위치. 여기 Delta가 크면
-	// 3번 로그의 비행 중 보정이 다 끝나기도 전에 서버가 "멈췄다"고 판단해 StopRagdoll을 쏜 것이다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 4.StopRagdoll직전 Role=%d 서버RecoverLoc=%s 내pelvis=%s Delta크기=%.1f"),
-		*GetName(), (int32)GetLocalRole(), *RecoverLocation.ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString(),
-		(RecoverLocation - MeshComponent->GetSocketLocation(RagdollPivotBone)).Size());
 
 	/**
 	 * [진짜 원인] 캡슐을 옮기기 전, "지금 화면에 실제로 보이던" pelvis 의 월드 위치를 떠 둔다.
@@ -582,13 +598,37 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	/**
 	 * 이어붙일 실제 거리(=오차)에 맞춰 이어붙이는 시간을 늘린다.
 	 *
-	 * 비행 중 위치 동기화([RagdollSync] 3번 로그)가 물리 발산을 다 못 따라잡고 남은 오차가
-	 * StopRagdoll 시점까지 그대로 남을 수 있다는 게 로그로 확인됐다. 오차가 1m 넘게 남아도
-	 * 고정된 짧은 시간에 억지로 이어붙이면 그 자체가 순간이동처럼 보인다. 오차가 클수록
-	 * 더 천천히 미끄러지듯 이어붙여서, 눈에는 "늦게 따라잡는" 것처럼 보이게 한다.
+	 * 비행 중 위치 동기화가 물리 발산을 다 못 따라잡고 남은 오차가 StopRagdoll 시점까지 그대로
+	 * 남을 수 있다는 게 로그로 확인됐다. 오차가 1m 넘게 남아도 고정된 짧은 시간에 억지로
+	 * 이어붙이면 그 자체가 순간이동처럼 보인다. 오차가 클수록 더 천천히 미끄러지듯 이어붙여서,
+	 * 눈에는 "늦게 따라잡는" 것처럼 보이게 한다.
 	 */
-	const float RecoverBlendDistance = RecoverBlendWorldOffset.Size();
-	RecoverBlendActiveDuration = RecoverBlendDuration > 0.f
+	float RecoverBlendDistance = RecoverBlendWorldOffset.Size();
+
+	/**
+	 * 오차가 말이 안 되는 크기면 이어붙이지 않고 그냥 스냅한다.
+	 *
+	 * 이어붙이기는 메시를 "오차만큼 밖으로 던져 놓고 끌어오는" 방식이라, 오차 자체가 신뢰할 수
+	 * 없는 값이면 멀쩡한 몸을 수십 m 밖으로 던지는 짓이 된다. 09-16 로그에는 44m 짜리가 있었다.
+	 * 그 정도 거리는 "부드럽게" 붙여도 부드럽지 않고, 붙는 도중에 한 번 더 치이면
+	 * (StartRagdoll 이 RecoverBlendTimerHandle 을 지운다) 던져 놓은 채로 남는다.
+	 *
+	 * 원인이었던 본 캐시 정지는 생성자의 VisibilityBasedAnimTickOption 으로 막았다. 여기는
+	 * 그게 다시 뚫렸을 때를 위한 그물이자, 뚫렸다는 사실을 알리는 유일한 신호다 —
+	 * VerifyRecoverAlignment 는 컴포넌트 위치만 재기 때문에 본이 굳은 것을 잡아내지 못한다.
+	 */
+	if (RecoverBlendDistance > MaxRecoverBlendDistance)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 기상 복귀 오차가 비정상입니다(%.0fcm, 허용 %.0fcm). 이어붙이기 없이 스냅합니다. "
+				 "Role=%d — 메시 본 캐시가 굳었을 수 있습니다(VisibilityBasedAnimTickOption 확인)."),
+			*GetName(), RecoverBlendDistance, MaxRecoverBlendDistance, (int32)GetLocalRole());
+
+		RecoverBlendWorldOffset = FVector::ZeroVector;
+		RecoverBlendDistance = 0.f;
+	}
+
+	RecoverBlendActiveDuration = (RecoverBlendDuration > 0.f && RecoverBlendDistance > 0.f)
 		? FMath::Clamp(RecoverBlendDistance / RecoverBlendSpeed, RecoverBlendDuration, RecoverBlendMaxDuration)
 		: 0.f;
 
@@ -796,13 +836,20 @@ void ACWPlayerCharacter::Multicast_SyncRagdollPosition_Implementation(FVector_Ne
 
 		bPelvisConvertedToKinematic = true;
 
-		UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 2.5.pelvis키네마틱화(첫동기화시점) Role=%d 적용후시뮬레이션중=%s"),
-			*GetName(), (int32)GetLocalRole(), PelvisBody->bSimulatePhysics ? TEXT("true(실패)") : TEXT("false(성공)"));
+		/**
+		 * 키네마틱 전환이 실패하면 이 뒤의 위치 동기화가 통째로 무의미해진다. 실패했을 때만 찍는다.
+		 *
+		 * 성공까지 찍던 진단 로그는 걷어냈다. 20Hz 로 비행 내내 흐르던 줄이라 6000줄짜리
+		 * 로그의 절반이 이것이었고, 원인(본 캐시 정지)을 찾은 지금은 남겨 둘 이유가 없다.
+		 * 다시 봐야 하면 이 함수에 Verbose 한 줄을 넣고 `Log LogTemp Verbose` 로 켠다.
+		 */
+		if (PelvisBody->bSimulatePhysics)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[%s] pelvis 를 키네마틱으로 바꾸지 못했습니다. 래그돌 위치 동기화가 동작하지 않습니다."),
+				*GetName());
+		}
 	}
-
-	// [진단로그 3/4] 서버-내 pelvis 오차 추세를 본다.
-	UE_LOG(LogTemp, Warning, TEXT("[RagdollSync] [%s] 3.비행중동기화 Role=%d 서버pelvis=%s 내pelvis=%s"),
-		*GetName(), (int32)GetLocalRole(), *FVector(ServerPelvisLocation).ToString(), *MeshComponent->GetSocketLocation(RagdollPivotBone).ToString());
 
 	/**
 	 * [드르륵 현상 수정] 여기서 바로 SetBodyTransform으로 스냅하지 않는다. 그렇게 하면 다음
@@ -2037,7 +2084,8 @@ void ACWPlayerCharacter::StartWork()
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[%s] Work 입력 수신"), *GetName());
+	// 키를 누를 때마다 찍히는 줄이다. 입력이 여기까지 오는지 볼 때만 `Log LogTemp Verbose` 로 켠다.
+	UE_LOG(LogTemp, Verbose, TEXT("[%s] Work 입력 수신"), *GetName());
 
 	WorkerComponent->StartWork();
 }
@@ -2079,7 +2127,8 @@ void ACWPlayerCharacter::Parry()
 
 	// 이 줄이 안 찍히면 입력이 여기까지 오지 않은 것이고,
 	// 커서가 캐릭터 위치와 같으면 커서 트레이스가 지형을 못 맞힌 것이다.
-	UE_LOG(LogTemp, Log, TEXT("[%s] 패링 입력 수신. 커서=%s 캐릭터=%s"),
+	// 위쪽 무시 사유 로그와 같은 레벨로 맞춘다 — 셋 다 켜야 "왜 안 나갔는지" 를 읽을 수 있다.
+	UE_LOG(LogTemp, Verbose, TEXT("[%s] 패링 입력 수신. 커서=%s 캐릭터=%s"),
 		*GetName(), *CursorWorldLocation.ToCompactString(), *GetActorLocation().ToCompactString());
 
 	ParryComponent->RequestParry(CursorWorldLocation);
