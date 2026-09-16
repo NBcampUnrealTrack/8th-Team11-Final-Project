@@ -3,6 +3,7 @@
 
 #include "CWGameInstance.h"
 
+#include "CWMusicSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/NetDriver.h"
 #include "Engine/World.h"
@@ -121,6 +122,26 @@ void UCWGameInstance::Init()
 
 	CacheOnlineInterfaces();
 
+	/**
+	 * 맵을 떠날 때 BGM 을 끊는다.
+	 *
+	 * 음악은 bPersistAcrossLevelTransition 으로 재생돼 맵 이동을 살아남는다.
+	 * 맵마다 레벨 블루프린트에서 끄게 두면 하나만 빠져도 이전 곡이 그대로 이어진다
+	 * (실제로 Stage_03 에서 빠져 Stage_02 의 곡이 따라왔다).
+	 *
+	 * 이전 월드의 정리 시점을 쓰는 이유 - 스테이지 이동은 seamless travel 이라
+	 * PreLoadMap 이 아예 오지 않고, PostLoadMapWithWorld 는 양쪽 경로 모두 새 월드의
+	 * BeginPlay 뒤에 와서 도착한 맵이 막 시작한 곡을 도로 꺼버린다.
+	 * CleanupWorld 는 두 경로 다 목적지 BeginPlay 보다 앞선다.
+	 */
+	if (!WorldCleanupHandle.IsValid())
+	{
+		WorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddUObject(
+			this,
+			&UCWGameInstance::HandleWorldCleanup
+		);
+	}
+
 	// 호스트 연결 종료와 네트워크 단절을 한 경로에서 처리
 	if (GEngine != nullptr && !NetworkFailureHandle.IsValid())
 	{
@@ -141,6 +162,13 @@ void UCWGameInstance::Shutdown()
 
 	NetworkFailureHandle.Reset();
 
+	if (WorldCleanupHandle.IsValid())
+	{
+		FWorldDelegates::OnWorldCleanup.Remove(WorldCleanupHandle);
+	}
+
+	WorldCleanupHandle.Reset();
+
 	ClearSessionOperationTimeout();
 	ClearNetworkFailureRecoveryTimeout();
 
@@ -158,6 +186,21 @@ void UCWGameInstance::Shutdown()
 	ClearDestroySessionCompleteDelegate();
 
 	Super::Shutdown();
+}
+
+void UCWGameInstance::HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources)
+{
+	// 전역 델리게이트라 다른 PIE 창의 월드도 들어온다. 내 인스턴스 것만 처리한다.
+	if (!IsValid(World) || World->GetGameInstance() != this)
+	{
+		return;
+	}
+
+	// 도착한 맵이 필요하면 BeginPlay 에서 자기 곡을 다시 튼다.
+	if (UCWMusicSubsystem* MusicSubsystem = GetSubsystem<UCWMusicSubsystem>())
+	{
+		MusicSubsystem->StopMusic(0.0f);
+	}
 }
 
 void UCWGameInstance::HandleNetworkFailure(
@@ -1295,6 +1338,18 @@ void UCWGameInstance::FinishNetworkFailureRecovery()
 	CachedRoomList.Reset();
 
 	OnRoomListUpdated.Broadcast(CachedRoomList);
+
+	/**
+	 * BGM 도 여기서 끊는다.
+	 *
+	 * 음악은 bPersistAcrossLevelTransition 으로 재생돼 맵 이동을 살아남는다. 그래서
+	 * 메뉴로 돌려보내는 것만으로는 스테이지에서 틀던 곡이 그대로 따라온다.
+	 * UCWMusicSubsystem::Deinitialize 는 게임 인스턴스가 죽을 때만 불려 여기선 못 쓴다.
+	 */
+	if (UCWMusicSubsystem* MusicSubsystem = GetSubsystem<UCWMusicSubsystem>())
+	{
+		MusicSubsystem->StopMusic();
+	}
 
 	// 메뉴로 돌려보내는 것까지가 이 경로의 책임이다.
 	// 사용자용 DestroyRoom 을 안 타므로 완료도 방송되지 않고, 따라서 방 화면의

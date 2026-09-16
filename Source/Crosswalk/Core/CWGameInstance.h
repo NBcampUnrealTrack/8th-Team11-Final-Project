@@ -302,6 +302,9 @@ private:
 	// 세션 제거 요청이 끝났을 때 호출
 	void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
 
+	// 맵을 떠날 때 BGM 을 끊음
+	void HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
+
 	// 호스트 연결이 끊겼을 때 참가자의 세션 멤버십을 정리
 	void HandleNetworkFailure(
 		UWorld* World,
@@ -412,6 +415,9 @@ private:
 
 	// 네트워크 실패 델리게이트 해제에 사용하는 핸들
 	FDelegateHandle NetworkFailureHandle;
+
+	// 월드 정리 델리게이트 해제에 사용하는 핸들
+	FDelegateHandle WorldCleanupHandle;
 
 	// 로그인 완료 콜백 객체
 	FOnLoginCompleteDelegate LoginCompleteDelegate;
