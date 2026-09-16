@@ -45,14 +45,13 @@ public:
 	UCWVehicleAudioComponent();
 
 	/**
-	 * 경적을 울린다. 세 겹의 게이트를 모두 통과했을 때만 실제로 난다.
+	 * 경적을 울린다. 세 겹의 게이트(거리·차량 쿨다운·월드 예산)를 모두 통과했을 때만 난다.
 	 *
-	 * 울릴 "이유"는 여기서 정하지 않는다. **이 컴포넌트가 스스로 부르는 곳은 없다.**
-	 * 계기는 밖에서 붙인다 - 지금은 BP 에서 이 함수를 부르는 길뿐이다.
+	 * **배경 연출용 입구다.** 게이트가 "가끔 울린다" 를 전제로 하므로 경고에는 쓰지 않는다 -
+	 * 4 번에 1 번만 나는 경고는 없느니만 못하다. 접근 경고는 UpdateApproachWarning 이
+	 * 게이트를 건너뛰고 따로 울린다.
 	 *
-	 * 아래 세 게이트는 경적을 배경 연출로 쓸 때를 전제로 한 값이다. 접근 경고로 쓰려면
-	 * 그대로 두면 안 된다 - 4 번에 1 번만 나는 경고는 없느니만 못하다. 계기를 붙일 때
-	 * 게이트도 같이 다시 정할 것.
+	 * 이 함수를 스스로 부르는 곳은 없다. 계기는 BP 에서 붙인다.
 	 *
 	 * @return 실제로 소리가 났으면 true. 게이트에 걸렸으면 false.
 	 */
@@ -72,13 +71,51 @@ private:
 	void UpdateEngineParameters();
 
 	/**
-	 * 리스너와의 상대 속도로 피치 배수를 구해 재생 중인 소리에 적용한다.
+	 * 리스너와의 상대 속도로 지금 이 순간의 피치 배수를 구한다. 보간하지 않는다.
 	 *
 	 * 공식은 엔진의 USoundNodeDoppler::GetDopplerPitchMultiplier 와 같다.
 	 * 음속 33000cm/s 에 기본 주행 속도 750cm/s 면 피치 변화가 2.3% 뿐이라
 	 * (반음이 5.9%) 세기를 1 로 두면 사실상 안 들린다. DopplerIntensity 가 그 몫이다.
+	 *
+	 * @return 리스너를 못 찾았거나 분모가 0 이면 false. 이때 OutPitch 는 건드리지 않는다.
+	 */
+	bool ComputeDopplerPitch(float& OutPitch) const;
+
+	/**
+	 * 피치 배수를 보간해 **엔진 루프에만** 적용한다.
+	 *
+	 * 경적에는 걸지 않는다. 경적은 1.6 초짜리 원샷이라 재생 도중 피치가 움직이면
+	 * 도플러가 아니라 테이프 늘어지는 소리로 들린다. 실측(2026-09-16)으로 재생 내내
+	 * -1.4 반음이 미끄러졌고, 원본 애셋의 하모닉은 완전히 수평이었다.
+	 * 경적의 피치는 SpawnHorn 이 시작 시점에 한 번 정하고 끝까지 고정한다.
+	 *
+	 * 반면 엔진 루프는 지속음이라 차가 지나가는 동안 피치가 변하는 것이 맞다.
+	 * 보간(DopplerSmoothingSpeed)은 그 변화를 매끄럽게 하려고 있는 것이다.
 	 */
 	void UpdateDoppler(float DeltaTime);
+
+	/**
+	 * 이 차가 로컬 플레이어를 칠 참이면 경고 경적을 울린다.
+	 *
+	 * **판정 대상은 카메라가 아니라 플레이어 폰이다.** 카메라는 캐릭터보다 688cm 뒤에
+	 * 있어서, 카메라로 재면 실제보다 0.8 초쯤 늦게 걸린다.
+	 *
+	 * **로컬 플레이어만 본다.** 팀원에게 가는 차까지 울리면 4 인 방에서 경적이 네 배가
+	 * 되는데, 정작 그 소리가 내 것인지 남의 것인지는 구분할 방법이 없다. 방향은
+	 * 스페이셜라이즈가 주지만 "저 차가 나를 노리나" 는 소리로 답할 수 없다.
+	 * 각 클라이언트가 자기 화면에서 자기 플레이어로만 판정하므로 복제할 것도 없다.
+	 *
+	 * **차 한 대는 한 번만 운다.** 플레이어가 경로를 들락거릴 때 경적이 따라 붙었다
+	 * 떨어졌다 하는 것을 막는다. 대신 피했다가 다시 들어가면 두 번째 경고는 없다.
+	 *
+	 * RequestHorn 의 게이트를 타지 않는다. 쿨다운과 월드 예산은 "가끔 울린다" 를 만드는
+	 * 값이라, 차 세 대가 동시에 나에게 오는 가장 위험한 순간에 한 대만 울리게 된다.
+	 * 대신 위협 판정(ThreatLateralTolerance 120cm)이 좁아서 그것이 자연스러운 상한이 된다.
+	 */
+	void UpdateApproachWarning();
+
+	/** 게이트 없이 경적을 붙여 재생한다. RequestHorn 과 경고가 함께 쓴다. */
+	void SpawnHorn();
 
 	/** 로컬 리스너(카메라)의 위치와 속도. 리스너가 없으면 false. */
 	bool ResolveListener(FVector& OutLocation, FVector& OutVelocity) const;
@@ -124,6 +161,26 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float GlobalHornIntervalSeconds = 3.f;
 
+	/** 로컬 플레이어에게 다가올 때 경적으로 미리 알릴지. 끄면 경고가 아예 안 난다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Warning", meta = (AllowPrivateAccess = "true"))
+	bool bEnableApproachWarning = true;
+
+	/**
+	 * 충돌까지 이만큼(초) 남았을 때 경고를 울린다.
+	 *
+	 * 화면이 주는 예고가 1.81 초다(탑뷰 카메라 실측: 캐릭터 앞 1364cm ÷ 750cm/s).
+	 * 같은 값으로 두면 소리가 화면보다 먼저 오는 것이 아니라 같이 와서 경고가 되지 못한다.
+	 * 2.5 초는 화면에 들어오기 전에 "온다" 를 먼저 알리는 몫이다.
+	 *
+	 * 거리가 아니라 시간으로 잡는 이유: 차 속도를 바꿔도 예고 시간이 저절로 일정해진다.
+	 * 거리로 잡으면 속도를 올릴 때마다 여기도 같이 고쳐야 한다.
+	 *
+	 * 늘릴 때는 감쇠도 같이 봐야 한다. 2.5 초 x 최고 속도 880cm/s = 22m 인데,
+	 * 그 거리에서 안 들리면 경고가 아니라 없는 것과 같다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Warning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float ApproachWarningLeadSeconds = 2.5f;
+
 	/** 도플러를 적용할지. 끄면 피치를 건드리지 않는다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Doppler", meta = (AllowPrivateAccess = "true"))
 	bool bEnableDoppler = true;
@@ -166,6 +223,9 @@ private:
 
 	/** 마지막으로 경적을 울린 월드 시각(초). 한 번도 안 울렸으면 음수로 남는다. */
 	float LastHornTime = -UE_BIG_NUMBER;
+
+	/** 이 차가 로컬 플레이어에게 이미 경고했는지. 한 번 서면 다시 내려가지 않는다. */
+	bool bWarnedLocalPlayer = false;
 
 	/** 현재 적용 중인 피치 배수. 보간의 시작점이다. */
 	float CurrentDopplerPitch = 1.f;
