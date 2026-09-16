@@ -403,6 +403,38 @@ private:
 	void OnRep_VariantPick();
 
 	/**
+	 * 서버의 진행 거리가 도착했을 때. **받은 값을 화면에 바로 쓰지 않는다.**
+	 *
+	 * 그냥 두면 리플리케이션이 DistanceAlongLane 을 통째로 덮어쓴다. 주행 중에는 그
+	 * 순간이동이 움직임에 묻히지만, 정지선 앞에서는 배경이 정지해 있어서 같은 크기의
+	 * 오차가 그대로 앞뒤 떨림으로 보인다(20Hz 니까 50ms 마다 한 번씩).
+	 *
+	 * 그래서 로컬 추정값을 도로 돌려놓고, 서버와의 차이는 DistanceCorrectionRemaining 에
+	 * 빚으로 적어 둔다. 갚는 것은 Tick 이 프레임마다 조금씩 한다.
+	 *
+	 * 차이가 ClientSnapThreshold 를 넘으면 빚으로 들지 않고 받은 값을 그대로 쓴다.
+	 * 스폰 직후 첫 수신이나 차선 끝 근처처럼 애초에 이어붙일 수 없는 거리는 끌고 가 봐야
+	 * 차가 길게 미끄러질 뿐이다.
+	 *
+	 * **RepNotify 의 "이전 값" 파라미터를 쓰면 안 된다.** 엔진이 넘겨주는 그 값은
+	 * 섀도 버퍼에서 나오는데(RepLayout.cpp, CallRepNotifies 의 NumParms == 1 분기),
+	 * 섀도 버퍼에 들어 있는 것은 **마지막으로 받은 서버 값**이지 클라이언트가 자기 Tick 으로
+	 * 계산해 온 값이 아니다. 그걸 로컬 값으로 착각해 대입하면 차가 매 수신마다 한 업데이트
+	 * 구간(50ms x 주행 속도)만큼 뒤로 되감기고, 되감긴 만큼 감속식이 속도를 다시 올려서
+	 * 정지선을 넘나드는 큰 왕복이 된다. 게다가 notify 직후 엔진이 오브젝트 값을 섀도로
+	 * 복사해 가므로 되감은 값이 섀도에까지 남아 오차가 누적된다.
+	 *
+	 * 그래서 로컬 값은 LocalDistanceAlongLane 에 우리가 직접 들고 있는다.
+	 *
+	 * 서버에서는 불리지 않는다. 판정에 쓰는 값은 서버 자신의 DistanceAlongLane 그대로다.
+	 */
+	UFUNCTION()
+	void OnRep_DistanceAlongLane();
+
+	/** 적어 둔 빚을 이번 프레임 몫만큼 갚는다. 클라이언트 전용. (OnRep_DistanceAlongLane 참고) */
+	void ApplyServerDistanceCorrection(float DeltaSeconds);
+
+	/**
 	 * 튕겨나간 지점과 방향이 클라이언트에 도착했을 때. 차선 추종을 끊고 그 자세로 맞춘다.
 	 *
 	 * 회전은 복제되지 않으므로 여기서 ParriedLaunchDirection 을 보고 직접 세워야 한다.
@@ -714,6 +746,46 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopLineBrakeDistance = 900.f;
 
+	/**
+	 * 정지선 앞 마지막 구간에서 유지하는 최저 속도(cm/s). 이 값이 곧 "끝이 있는 정지" 다.
+	 *
+	 * ResolveApproachSpeed 의 감속은 남은 거리에 비례하는 지수형이라 **유한 시간에 0 이
+	 * 되지 않는다.** 기본값 기준으로 남은 거리가 눈에 안 보일 만큼 줄어드는 데만 십수 초가
+	 * 걸려서, 신호 한 사이클 내내 차가 미세하게 굴러가는 상태로 남는다. 값이 매 프레임
+	 * 바뀌니 리플리케이션도 멈추지 않는다.
+	 *
+	 * 그래서 속도가 이 값 아래로 내려가면 더 줄이지 않고 그대로 굴려서 목표 지점까지
+	 * 보낸다. 바닥을 까는 것이라 제동 곡선 자체는 그대로다 - 이 값이 걸리기 시작하는
+	 * 지점은 StopLineBrakeDistance x (이 값 / 주행 속도), 기본값으로 정지 30cm 전이다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopFinalCrawlSpeed = 25.f;
+
+	/**
+	 * 목표 지점까지 이 거리(cm) 안으로 들어오면 정지로 확정하고 목표 지점에 고정한다.
+	 *
+	 * 고정하는 값이 서버와 클라이언트에서 같다는 것이 핵심이다. 목표 지점은 양쪽이
+	 * 정지선 위치와 차체 길이로 각자 계산하는 값이라 통신 없이도 일치한다. 그래서 두
+	 * 기계가 같은 자리에 못 박히고, 값이 더 안 변하니 리플리케이션도 조용해진다.
+	 *
+	 * 이 값이 0 이면 확정이 영영 안 걸린다. StopFinalCrawlSpeed 주석 참고.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	float StopSettleTolerance = 5.f;
+
+	/**
+	 * 서버와의 차이를 좁히는 속도(cm/s). 클라이언트에서만 쓴다.
+	 *
+	 * 주행 속도보다 한참 느려야 한다. 이 값이 크면 좁히는 동작 자체가 순간이동처럼 보여서
+	 * 덮어쓰기를 없앤 의미가 사라진다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
+	float ClientCorrectionSpeed = 200.f;
+
+	/** 서버와의 차이가 이 값(cm)을 넘으면 좁히지 않고 그대로 스냅한다. (OnRep_DistanceAlongLane 참고) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
+	float ClientSnapThreshold = 300.f;
+
 	/** 패링 판정 윈도우(초). 충돌 직전 이 시간 안에 입력해야 성공. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryWindow = 0.3f;
@@ -772,10 +844,29 @@ protected:
 
 	/**
 	 * 차선 시작점에서 진행한 거리(cm). 이 값 하나가 차량의 위치와 회전을 전부 결정한다.
-	 * 클라이언트는 업데이트 사이를 자기 Tick 으로 메우고, 값이 도착하면 그 값으로 맞춘다.
+	 * 클라이언트는 업데이트 사이를 자기 Tick 으로 메우고, 값이 도착하면 그쪽으로 좁혀 간다.
+	 * (덮어쓰지 않는 이유는 OnRep_DistanceAlongLane 주석 참고)
 	 */
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_DistanceAlongLane, Category = "Traffic|Vehicle")
 	float DistanceAlongLane = 0.f;
+
+	/**
+	 * 아직 갚지 않은 서버와의 차이(cm). 양수면 서버가 앞서 있다는 뜻이다.
+	 * 클라이언트에서만 0 이 아니다. (OnRep_DistanceAlongLane 참고)
+	 */
+	float DistanceCorrectionRemaining = 0.f;
+
+	/**
+	 * 이 기계가 자기 Tick 으로 계산해 온 진행 거리(cm). 복제하지 않는다.
+	 *
+	 * DistanceAlongLane 은 서버 값이 도착하는 순간 엔진이 덮어쓰기 때문에, 덮이기 전 값이
+	 * 필요한 OnRep_DistanceAlongLane 이 볼 곳이 따로 있어야 한다. RepNotify 의 이전 값
+	 * 파라미터로는 대신할 수 없다 - 이유는 그 함수 주석에 적어 뒀다.
+	 *
+	 * Tick 이 DistanceAlongLane 을 확정한 직후마다 같이 갱신한다. 서버에서도 갱신되지만
+	 * 서버에서는 OnRep 이 불리지 않아 아무도 읽지 않는다.
+	 */
+	float LocalDistanceAlongLane = 0.f;
 
 	/** 스포너가 굴린 개체별 속도 배율. 클라이언트도 같은 속도로 추정해야 하므로 복제한다. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Traffic|Vehicle")

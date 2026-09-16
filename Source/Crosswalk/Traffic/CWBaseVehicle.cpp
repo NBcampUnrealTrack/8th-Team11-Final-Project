@@ -111,6 +111,9 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		StopTargetDistance = -1.f;
 		UpdateStopState(false);
 
+		// 차선을 벗어난 뒤로 DistanceAlongLane 은 아무도 안 본다. 남은 빚도 같이 버린다.
+		DistanceCorrectionRemaining = 0.f;
+
 		CurrentVelocity = GetActorForwardVector() * GetEffectiveSpeed();
 		AddActorWorldOffset(CurrentVelocity * DeltaSeconds);
 		return;
@@ -122,13 +125,42 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	}
 
 	// 클라이언트도 같은 계산을 돈다. 속도를 정하는 값이 양쪽에 모두 있어서 결과가 같고,
-	// 서버 값이 도착하면 DistanceAlongLane 이 그 값으로 덮이면서 어긋난 만큼만 맞춰진다.
+	// 어긋난 만큼은 서버 값이 도착할 때마다 조금씩 좁혀진다. (OnRep_DistanceAlongLane)
 	const FCWVehicleStepResolution Step = ResolveStepSpeed();
 
 	// 결과가 다 정해진 뒤에 멤버를 갱신한다. 정지선이 사라진 프레임에는 -1 이 그대로 들어온다.
 	StopTargetDistance = Step.StopTargetDistance;
 
+	/**
+	 * 목표 지점 코앞까지 왔으면 거기에 못 박고 끝낸다.
+	 *
+	 * 감속식이 지수형이라 굴러서는 목표에 도착하지 못한다. 확정을 안 하면 차가 영원히
+	 * 미세하게 기어가고, 값이 계속 바뀌니 리플리케이션도 끊기지 않아서 클라이언트는
+	 * 50ms 마다 보정을 받는다. 정지선 앞 떨림의 출처가 여기다.
+	 *
+	 * 넣는 값이 서버와 클라이언트에서 같다는 점이 중요하다. 목표 지점은 양쪽이 정지선
+	 * 위치와 차체 길이로 각자 계산하므로, 통신 없이도 두 기계가 같은 자리에 선다.
+	 * 그래서 갚을 빚도 같이 없앤다 - 남겨 두면 확정해 놓고 도로 밀어낸다.
+	 */
+	if (Step.bStopLineLimited && Step.StopTargetDistance >= 0.f
+		&& Step.StopTargetDistance - DistanceAlongLane <= StopSettleTolerance)
+	{
+		DistanceAlongLane = Step.StopTargetDistance;
+		LocalDistanceAlongLane = DistanceAlongLane;
+		DistanceCorrectionRemaining = 0.f;
+
+		UpdateTransformOnLane(0.f);
+		UpdateStopState(true);
+		return;
+	}
+
 	DistanceAlongLane += Step.Speed * DeltaSeconds;
+
+	// 로컬 추정으로 나아간 뒤에 갚는다. 순서가 반대면 이번 프레임 이동이 보정을 도로 밀어낸다.
+	if (!HasAuthority())
+	{
+		ApplyServerDistanceCorrection(DeltaSeconds);
+	}
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
 	{
@@ -143,10 +175,14 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 		DistanceAlongLane = CurrentLane->GetLaneLength();
 	}
 
+	// 이번 프레임 값이 확정된 자리. 다음 수신이 덮기 전의 로컬 값으로 이걸 본다.
+	LocalDistanceAlongLane = DistanceAlongLane;
+
 	UpdateTransformOnLane(Step.Speed);
 
-	// 정지선 때문에 속도가 0 이 된 것만 정지로 친다. 앞차에 막힌 것은 여기 들어오지 않는다.
-	UpdateStopState(Step.bStopLineLimited && Step.Speed <= KINDA_SMALL_NUMBER);
+	// 여기까지 왔으면 확정 구간에 못 들어왔다는 뜻이라 아직 선 것이 아니다.
+	// 정지 확정은 위 분기 하나가 전담한다. 속도로 다시 판정하면 판정 기준이 둘로 갈린다.
+	UpdateStopState(false);
 }
 
 float ACWBaseVehicle::GetVehicleLength() const
@@ -163,6 +199,7 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 {
 	CurrentLane = InLane;
 	DistanceAlongLane = Params.StartDistance;
+	LocalDistanceAlongLane = Params.StartDistance;
 	LaneLateralOffset = Params.LateralOffset;
 
 	/**
@@ -185,6 +222,9 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	// 앞 주행의 정지가 이제 와서 풀렸다는 알림은 받는 쪽에서 해석할 수 없다.
 	bStoppedAtStopLine = false;
 	StopTargetDistance = -1.f;
+
+	// 이전 주행에서 남은 빚을 새 출발 지점에 갚으면 차가 엉뚱하게 끌려간다.
+	DistanceCorrectionRemaining = 0.f;
 
 	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
@@ -490,6 +530,46 @@ void ACWBaseVehicle::ApplyWheelSpinToBones()
 void ACWBaseVehicle::OnRep_VariantPick()
 {
 	ApplyMeshVariant();
+}
+
+void ACWBaseVehicle::OnRep_DistanceAlongLane()
+{
+	// 이 시점의 DistanceAlongLane 은 이미 서버 값이다. 덮이기 전 로컬 값은 우리가 들고 있다.
+	const float ServerDistance = DistanceAlongLane;
+	const float ServerError = ServerDistance - LocalDistanceAlongLane;
+
+	// 이어붙일 수 없는 거리는 끌고 가지 않는다. 첫 수신이나 소환 직후가 여기로 온다.
+	if (FMath::Abs(ServerError) > ClientSnapThreshold)
+	{
+		LocalDistanceAlongLane = ServerDistance;
+		DistanceCorrectionRemaining = 0.f;
+		return;
+	}
+
+	/**
+	 * 로컬 추정값을 도로 돌려놓고 차이만 빚으로 든다. 화면에 보이는 위치가 이 대입 하나로
+	 * 순간이동하는 것이 정지선 앞 떨림의 직접 원인이었다.
+	 *
+	 * 빚은 더하지 않고 덮어쓴다. 이 차이는 이미 "지금 서버와 얼마나 벌어져 있는가" 라서,
+	 * 이전에 남은 몫이 있었다면 그것까지 포함된 값이다. 더하면 같은 오차를 두 번 갚는다.
+	 */
+	DistanceAlongLane = LocalDistanceAlongLane;
+	DistanceCorrectionRemaining = ServerError;
+}
+
+void ACWBaseVehicle::ApplyServerDistanceCorrection(float DeltaSeconds)
+{
+	if (FMath::IsNearlyZero(DistanceCorrectionRemaining))
+	{
+		DistanceCorrectionRemaining = 0.f;
+		return;
+	}
+
+	const float MaxStep = ClientCorrectionSpeed * DeltaSeconds;
+	const float Applied = FMath::Clamp(DistanceCorrectionRemaining, -MaxStep, MaxStep);
+
+	DistanceAlongLane += Applied;
+	DistanceCorrectionRemaining -= Applied;
 }
 
 bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToImpact, float ViewRewindSeconds) const
@@ -871,7 +951,23 @@ FCWVehicleStepResolution ACWBaseVehicle::ResolveStepSpeed() const
 		const float StopTarget = StopLineDistance - (GetVehicleLength() * 0.5f) - StopLineGap;
 
 		const float RemainingToStop = StopTarget - DistanceAlongLane;
-		const float StopLineSpeed = ResolveApproachSpeed(RemainingToStop, StopLineBrakeDistance, DesiredSpeed);
+		float StopLineSpeed = ResolveApproachSpeed(RemainingToStop, StopLineBrakeDistance, DesiredSpeed);
+
+		/**
+		 * 마지막 구간에는 바닥을 깔아 고정 속도로 굴린다.
+		 *
+		 * 위 감속은 남은 거리에 비례하는 지수형이라 유한 시간에 0 이 되지 않는다.
+		 * 바닥이 없으면 목표 지점에 도착하는 프레임이 영영 오지 않아서 Tick 의 정지 확정
+		 * 분기가 안 걸리고, 차는 계속 미세하게 기어간다.
+		 *
+		 * 제동 곡선을 바꾸는 것이 아니라 아래쪽만 자르는 것이라, 감속이 시작되는 거리와
+		 * 감속감은 그대로다. 주행 속도가 느린 차종이 이 바닥 때문에 오히려 빨라지지 않도록
+		 * 자기 속도로 한 번 더 막는다.
+		 */
+		if (RemainingToStop > 0.f)
+		{
+			StopLineSpeed = FMath::Max(StopLineSpeed, FMath::Min(StopFinalCrawlSpeed, DesiredSpeed));
+		}
 
 		Result.StopTargetDistance = StopTarget;
 
