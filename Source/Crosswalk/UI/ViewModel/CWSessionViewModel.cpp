@@ -46,6 +46,8 @@ void UCWSessionViewModel::Initialize(UCWGameInstance* InGameInstance)
 		InGameInstance->IsSessionOperationInFlight()
 	);
 	SetCurrentRoomCode(InGameInstance->GetCurrentRoomCode());
+	SetCurrentRoomName(InGameInstance->GetCurrentRoomName());
+	SetCurrentHostName(InGameInstance->GetCurrentHostName());
 	SetRoomList(InGameInstance->GetCachedRoomList());
 }
 
@@ -80,6 +82,8 @@ void UCWSessionViewModel::Uninitialize()
 	SetLastFailure(ECWSessionFailure::None);
 	SetOperationInFlight(false);
 	SetCurrentRoomCode(FString());
+	SetCurrentRoomName(FString());
+	SetCurrentHostName(FString());
 	SetRoomList(TArray<FCWRoomSummary>());
 }
 
@@ -161,6 +165,26 @@ FText UCWSessionViewModel::GetCurrentRoomCodeText() const
 {
 	// 세션 내부 문자열을 UI 표시용 텍스트로 변환
 	return FText::FromString(CurrentRoomCode);
+}
+
+FText UCWSessionViewModel::GetCurrentRoomNameText() const
+{
+	if (!CurrentRoomName.IsEmpty())
+	{
+		return FText::FromString(CurrentRoomName);
+	}
+
+	// 호스트가 제목을 비워 둔 경우 "<호스트>님의 방" 으로 대체
+	if (!CurrentHostName.IsEmpty())
+	{
+		return FText::Format(
+			NSLOCTEXT("CWSession", "RoomNameFallback", "{0}님의 방"),
+			FText::FromString(CurrentHostName)
+		);
+	}
+
+	// 둘 다 없으면 빈 텍스트 - 표시 여부는 위젯이 정함
+	return FText::GetEmpty();
 }
 
 void UCWSessionViewModel::RequestCreateRoom(const FString& RoomName, bool bIsPrivate)
@@ -407,6 +431,14 @@ void UCWSessionViewModel::HandleSessionOperationCompleted(
 			SetCurrentRoomCode(
 				GameInstance->GetCurrentRoomCode()
 			);
+
+			SetCurrentRoomName(
+				GameInstance->GetCurrentRoomName()
+			);
+
+			SetCurrentHostName(
+				GameInstance->GetCurrentHostName()
+			);
 		}
 	}
 	else
@@ -517,6 +549,38 @@ void UCWSessionViewModel::SetCurrentRoomCode(
 	{
 		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
 			GetCurrentRoomCodeText
+		);
+	}
+}
+
+void UCWSessionViewModel::SetCurrentRoomName(
+	const FString& InRoomName
+)
+{
+	// 방 제목이 실제로 변경된 경우 문자열과 파생 텍스트 모두 갱신
+	if (UE_MVVM_SET_PROPERTY_VALUE(
+		CurrentRoomName,
+		InRoomName
+	))
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetCurrentRoomNameText
+		);
+	}
+}
+
+void UCWSessionViewModel::SetCurrentHostName(
+	const FString& InHostName
+)
+{
+	// 호스트 이름이 바뀌면 제목 텍스트의 대체 문구도 같이 갱신
+	if (UE_MVVM_SET_PROPERTY_VALUE(
+		CurrentHostName,
+		InHostName
+	))
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetCurrentRoomNameText
 		);
 	}
 }
