@@ -10,6 +10,7 @@
 
 class ACWBaseVehicle;
 class ACWTrafficLane;
+class UDataTable;
 
 /**
  * 지정한 차선에 일정 주기로 차량을 흘려보낸다.
@@ -100,7 +101,12 @@ private:
 	 */
 	void LogSpawnRelevancy(const ACWBaseVehicle& Vehicle) const;
 
-	/** 개체별 편차를 굴린다. */
+	/**
+	 * 개체별 편차를 굴린다. 서버에서만 부른다.
+	 *
+	 * 속도는 여기서 굴리지 않는다. 차종 이름은 뽑힌 차체가 들고 있고 그 추첨은
+	 * 차량 쪽에 있어서, 여기서는 범위표 참조만 실어 보낸다.
+	 */
 	FCWTrafficVehicleSpawnParams RollSpawnParams(float StartDistance) const;
 
 	/** 레벨 시작 시점에 차선 위에 이미 굴러가는 차를 흩뿌린다. */
@@ -179,11 +185,14 @@ protected:
 	int32 PrewarmVehicleCount = 1;
 
 	/**
-	 * 차종 기본 속도에 적용할 편차 비율. 0.05면 ±5%.
-	 * 크게 주면 패링 타이밍 학습이 어려워지므로 밸런스 값이다.
+	 * 차종별 주행 속도 범위표(FCWVehicleSpeedRow). 비워 두면 모든 차가 차종 기본 속도로 달린다.
+	 *
+	 * **레벨의 스포너 인스턴스마다 꽂지 말고 BP_VehicleSpawner 애셋 기본값에 한 번만 꽂는다.**
+	 * 차종 속도는 스테이지마다 달라질 값이 아니라서, 인스턴스마다 두면 레벨을 늘릴 때마다
+	 * 같은 표를 다시 지정하게 되고 한 군데를 빠뜨리면 그 차선만 조용히 기본 속도로 달린다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0", ClampMax = "0.5"))
-	float SpeedJitter = 0.05f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner")
+	TObjectPtr<UDataTable> VehicleSpeedTable;
 
 	/** 차선 중심선 대비 좌우로 흔들 최대 거리(cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Spawner", meta = (ClampMin = "0.0"))

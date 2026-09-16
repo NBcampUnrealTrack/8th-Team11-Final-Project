@@ -15,8 +15,10 @@
 #include "Core/CWDecalStatics.h"
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
+#include "Traffic/Components/CWVehicleAudioComponent.h"
 #include "Traffic/Components/CWVehicleStopSyncComponent.h"
 #include "Traffic/CWTrafficLog.h"
+#include "Data/CWVehicleSpeedRow.h"
 
 ACWBaseVehicle::ACWBaseVehicle()
 {
@@ -60,6 +62,9 @@ ACWBaseVehicle::ACWBaseVehicle()
 	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
 	// 이 컴포넌트가 좁힌다. (양쪽에서 도는 이유는 헤더의 StopSyncComponent 주석 참고)
 	StopSyncComponent = CreateDefaultSubobject<UCWVehicleStopSyncComponent>(TEXT("StopSyncComponent"));
+
+	// 엔진음·경적·도플러. 소리가 나지 않아도 주행에는 영향이 없다.
+	AudioComponent = CreateDefaultSubobject<UCWVehicleAudioComponent>(TEXT("AudioComponent"));
 }
 
 void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -203,6 +208,10 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 		VariantPick.Color = ColorCount > 0 ? static_cast<uint8>(FMath::RandHelper(ColorCount)) : 0;
 
 		ApplyMeshVariant();
+
+		// 속도는 차체가 정해진 다음에야 뽑을 수 있다. 세단과 밴이 같은 BP 에 들어 있어서
+		// 어느 쪽이 나올지는 위 추첨 전에는 알 수 없다.
+		RollSpeedForVariant(MeshVariants[FamilyIndex].SpeedType, Params.SpeedTable);
 	}
 
 	// 이전 주행의 피격 기록이 남아 있으면 안 된다.
@@ -220,6 +229,43 @@ const FCWVehicleMeshVariant* ACWBaseVehicle::GetActiveVariant() const
 	}
 
 	return &MeshVariants[VariantPick.Family];
+}
+
+void ACWBaseVehicle::RollSpeedForVariant(FName SpeedType, const UDataTable* SpeedTable)
+{
+	// 이름을 안 적었으면 굴리지 않는다. 아직 분류하지 않은 차체라는 뜻이고,
+	// 그때는 차종 BP 의 Speed 로 달리는 것이 맞다.
+	if (SpeedType.IsNone() || !SpeedTable)
+	{
+		return;
+	}
+
+	static const FString Context(TEXT("RollSpeedForVariant"));
+	const FCWVehicleSpeedRow* Row = SpeedTable->FindRow<FCWVehicleSpeedRow>(SpeedType, Context, /* bWarnIfRowMissing */ false);
+	if (!Row)
+	{
+		// 이름은 적었는데 행이 없다. 표를 아직 안 채웠거나 오타다. 조용히 기본 속도로
+		// 달리면 "왜 이 차만 안 느려지지" 를 추적할 단서가 남지 않는다.
+		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 속도 범위표에 '%s' 행이 없다. 차종 기본 속도로 달린다."),
+			*GetName(), *SpeedType.ToString());
+
+		return;
+	}
+
+	// 범위를 거꾸로 넣었으면 굴릴 것이 없다. Speed 0 은 나눗셈이 안 되고,
+	// 어차피 어떤 배수를 곱해도 0 이라 굴릴 의미도 없다.
+	if (Row->SpeedMax <= Row->SpeedMin || Speed <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	/**
+	 * 뽑은 속도를 Speed 에 직접 넣지 않고 배수로 바꾸는 것은 복제 때문이다.
+	 * Speed 는 클래스 기본값이라 복제되지 않아서, 서버가 인스턴스의 Speed 를 고쳐도
+	 * 클라이언트는 원래 기본값을 그대로 들고 있어 같은 차가 다른 속도로 달린다.
+	 * SpeedMultiplier 는 이미 DOREPLIFETIME 대상이라 이 값만 건너가면 양쪽이 맞는다.
+	 */
+	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, FMath::FRandRange(Row->SpeedMin, Row->SpeedMax) / Speed);
 }
 
 void ACWBaseVehicle::ApplyMeshVariant()

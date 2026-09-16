@@ -307,8 +307,11 @@ FCWTrafficVehicleSpawnParams ACWTrafficVehicleSpawner::RollSpawnParams(float Sta
 {
 	FCWTrafficVehicleSpawnParams Params;
 	Params.StartDistance = StartDistance;
-	Params.SpeedMultiplier = 1.f + FMath::FRandRange(-SpeedJitter, SpeedJitter);
 	Params.LateralOffset = FMath::FRandRange(-LaneOffsetRange, LaneOffsetRange);
+
+	// 속도는 여기서 굴리지 않고 표만 넘긴다. 어느 차체가 뽑힐지는 차량이 정하고,
+	// 차종 이름은 그 차체가 들고 있기 때문이다. (ACWBaseVehicle::RollSpeedForVariant)
+	Params.SpeedTable = VehicleSpeedTable;
 
 	return Params;
 }

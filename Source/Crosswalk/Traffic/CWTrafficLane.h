@@ -46,12 +46,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
 	float GetDistanceAtWorldLocation(const FVector& WorldLocation) const;
 
-	USplineComponent* GetLaneSpline() const { return LaneSpline; }
-
-	/** 이 차선이 스플라인을 거꾸로 달리는지. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
-	bool IsReversed() const { return bReverseDirection; }
-
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 protected:
