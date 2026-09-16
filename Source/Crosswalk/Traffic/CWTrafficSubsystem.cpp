@@ -563,6 +563,7 @@ bool UCWTrafficSubsystem::FindActiveStopLine(const ACWTrafficLane* Lane, float F
 		// 통행 신호(초록·황색)면 세우지 않는다. 제어기가 둘이면 하나라도 통행이면 지나간다.
 		if (Director->IsLanePassable(Lane))
 		{
+			LogStopLineMiss(Lane, TEXT("제어기가 통행 신호라고 답함"));
 			return false;
 		}
 
@@ -572,6 +573,7 @@ bool UCWTrafficSubsystem::FindActiveStopLine(const ACWTrafficLane* Lane, float F
 	// 신호가 없는 차선에 정지선만 놓아도 세우지 않는다. 세울 근거가 없다.
 	if (!bLaneControlled)
 	{
+		LogStopLineMiss(Lane, TEXT("이 차선을 통제하는 제어기 없음"));
 		return false;
 	}
 
@@ -603,7 +605,46 @@ bool UCWTrafficSubsystem::FindActiveStopLine(const ACWTrafficLane* Lane, float F
 
 	OutStopLineDistance = Nearest;
 
+	if (!bFound)
+	{
+		LogStopLineMiss(Lane, TEXT("앞쪽에 이 차선의 정지선 없음"));
+	}
+
 	return bFound;
+}
+
+void UCWTrafficSubsystem::LogStopLineMiss(const ACWTrafficLane* Lane, const TCHAR* Reason) const
+{
+	if (!IsSyncLoggingEnabled())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 매 프레임 차량마다 들어오는 자리다. 초당 한 줄로 조인다.
+	const double Now = World->GetTimeSeconds();
+	if (LastStopLineMissLogTime >= 0.0 && Now - LastStopLineMissLogTime < 1.0)
+	{
+		return;
+	}
+
+	LastStopLineMissLogTime = Now;
+
+	/**
+	 * 목록 개수를 같이 찍는다. 이유 문자열만으로는 "제어기가 통행이라 답했다" 와
+	 * "제어기 자체가 없다" 가 같은 줄로 보일 수 있고, 둘은 고칠 곳이 다르다.
+	 */
+	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] 정지선 미발견 - 차선 %s / 이유: %s / 제어기 %d개 / 정지선 %d개"),
+		World->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
+		Lane ? *Lane->GetName() : TEXT("(없음)"),
+		Reason,
+		SignalDirectors.Num(),
+		StopLines.Num());
 }
 
 int32 UCWTrafficSubsystem::GetActiveVehicleCount() const

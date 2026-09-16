@@ -221,6 +221,25 @@ void ACWTrafficDirector::PostInitializeComponents()
 	 * 못 받아 정지선이 없는 것처럼 주행하므로, 끌 수 있는 값으로 두면 안 된다.
 	 */
 	bAlwaysRelevant = true;
+
+	/**
+	 * 복제도 같은 이유로 여기서 다시 못박는다. **생성자의 bReplicates = true 도 안 먹었다.**
+	 *
+	 * 위에서 bAlwaysRelevant 하나만 막아 둔 것이 그대로 버그가 됐다. 같은 BP CDO 가 같은
+	 * 방식으로 덮는 값인데 한 칸만 막아 두었으니, 관련성은 살아나고 복제는 꺼진 채로 남았다.
+	 * 복제가 꺼지면 관련성은 볼 것도 없다 - 내보낼 것이 애초에 없다.
+	 *
+	 * 실측: [TrafficSync] 복제설정 줄이 서버에서 "복제 꺼짐 / 항상관련 켜짐" 으로 나왔다.
+	 * 그 상태에서 클라이언트는 GroupStates 를 영영 못 받아 그룹 기본색(보통 초록)으로 답하고,
+	 * 신호등은 첫 색에 굳고, 차량은 정지선이 없는 것처럼 달린다. 증상 셋이 전부 여기서 나온다.
+	 *
+	 * SetReplicates 는 권한 쪽에서만 부른다. 그렇지 않으면 엔진이 경고만 찍고 아무것도
+	 * 하지 않는다. 실제로 복제를 시작시키는 쪽은 서버이므로 그것으로 충분하다.
+	 */
+	if (GetLocalRole() == ROLE_Authority)
+	{
+		SetReplicates(true);
+	}
 }
 
 void ACWTrafficDirector::BeginPlay()
@@ -230,6 +249,35 @@ void ACWTrafficDirector::BeginPlay()
 	if (Groups.Num() == 0)
 	{
 		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 신호 그룹이 없어 아무 차선도 통제하지 않는다."), *GetName());
+	}
+
+	/**
+	 * 복제에 필요한 조건이 런타임에 실제로 켜져 있는지 찍는다. 서버·클라이언트 양쪽에서.
+	 *
+	 * 이 값들은 C++ 생성자에서 정하지만, 블루프린트 CDO 에 굳은 옛날 값이 그것을 덮을 수
+	 * 있다(PostInitializeComponents 의 bAlwaysRelevant 주석 참고). 그러면 컴파일도 통과하고
+	 * 코드를 읽어도 켜져 있는 것처럼 보이는데 런타임에는 꺼져 있다. 소스만 봐서는
+	 * 확인할 수 없는 값이라 찍어야 알 수 있다.
+	 *
+	 * 증상은 "클라이언트 차량이 정지선을 그냥 지나간다" 하나로 뭉쳐서 나오므로, 이 줄이
+	 * 없으면 복제가 꺼진 것인지 관련성에 걸린 것인지 휴면인지 갈라낼 수 없다.
+	 */
+	if (UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	{
+		/**
+		 * 월드 역할과 액터 권한을 따로 찍는다. 복제되지 않는 액터는 클라이언트에서도
+		 * 권한이 "있음" 으로 남는다 - 서버 채널에 묶인 적이 없기 때문이다. 그래서 이 두
+		 * 칸이 "클라 / 있음" 으로 나오면 그 자체가 복제가 안 됐다는 증거가 된다.
+		 */
+		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] %s 복제설정 - 권한 %s / 복제 %s / 항상관련 %s / 휴면 %d / 갱신빈도 %.1f / 그룹 %d개"),
+			GetWorld() && GetWorld()->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
+			*GetName(),
+			HasAuthority() ? TEXT("있음") : TEXT("없음"),
+			GetIsReplicated() ? TEXT("켜짐") : TEXT("꺼짐"),
+			bAlwaysRelevant ? TEXT("켜짐") : TEXT("꺼짐"),
+			static_cast<int32>(NetDormancy),
+			GetNetUpdateFrequency(),
+			Groups.Num());
 	}
 
 	// 등록은 클라이언트에서도 한다. 정지선 판정을 양쪽 차량이 각자 하기 때문이다.

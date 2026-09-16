@@ -175,6 +175,21 @@ private:
 	 */
 	void LogVehicleCensus();
 
+	/**
+	 * FindActiveStopLine 이 "세울 정지선 없음" 으로 빠져나간 이유를 남긴다.
+	 *
+	 * 클라이언트에서 차가 정지선을 그냥 지나갈 때, 눈으로는 세 갈래가 구분되지 않는다.
+	 * 셋은 고칠 곳이 완전히 다르다.
+	 *
+	 *   제어기 목록이 비었다   등록이 클라이언트에서 안 돌았다
+	 *   통행 신호라고 답한다   제어기는 있는데 GroupStates 가 안 왔다 (기본색으로 답하는 중)
+	 *   정지선 목록이 비었다   정지선 액터 등록 문제
+	 *
+	 * 매 프레임 차량마다 불리는 자리라 초당 한 줄로 조인다. 갈래를 가리는 것이 목적이라
+	 * 모든 줄이 필요하지 않고, 이유가 프레임 단위로 바뀌는 성질도 아니다.
+	 */
+	void LogStopLineMiss(const ACWTrafficLane* Lane, const TCHAR* Reason) const;
+
 private:
 	TArray<TWeakObjectPtr<ACWBaseVehicle>> ActiveVehicles;
 
@@ -195,6 +210,13 @@ private:
 
 	/** 레벨에 배치된 정지선들. 같은 이유로 클라이언트에도 등록된다. */
 	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
+
+	/**
+	 * 정지선 미발견 이유를 마지막으로 찍은 시각(초). 초당 한 줄로 조이는 데만 쓴다.
+	 * const 경로에서 갱신되므로 mutable 이다 - 진단 로그가 판정을 못 바꾸게 하려면
+	 * FindActiveStopLine 이 const 로 남아 있어야 한다.
+	 */
+	mutable double LastStopLineMissLogTime = -1.0;
 
 	/**
 	 * 이 월드에서 마지막으로 경적이 난 시각(초). TryConsumeHornBudget 만 만진다.
