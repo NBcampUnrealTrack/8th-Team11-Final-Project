@@ -6,6 +6,7 @@
 #include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAsset.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -418,8 +419,29 @@ void ACWBaseVehicle::CacheWheelBoneRestRotations()
 		 */
 		if (VehicleSkeletalMesh->GetBoneIndex(BoneName) == INDEX_NONE)
 		{
-			UE_LOG(LogCWTraffic, Warning, TEXT("[Traffic] %s: 바퀴 본 '%s' 이 이 메쉬에 없다. 이 본은 건너뛴다."),
-				*GetName(), *BoneName.ToString());
+			/**
+			 * 같은 (메쉬, 본) 조합은 판당 한 번만 찍는다.
+			 *
+			 * 스폰당 한 줄이어도 차는 계속 스폰된다 — 09-16 로그에서 오토바이 한 종류가
+			 * 408줄을 냈다. 이건 그 차 인스턴스의 문제가 아니라 **데이터의 문제**라서,
+			 * 같은 말을 400번 해도 새로 알게 되는 것이 없다. 고칠 사람에게 필요한 정보는
+			 * "어느 메쉬의 어느 본 이름이 틀렸나" 한 줄이 전부다. 그래서 인스턴스 이름
+			 * 대신 메쉬 이름으로 묶는다.
+			 */
+			static TSet<TPair<FName, FName>> ReportedMissingWheelBones;
+
+			const USkinnedAsset* SkinnedAsset = VehicleSkeletalMesh->GetSkinnedAsset();
+			const FName MeshName = SkinnedAsset ? SkinnedAsset->GetFName() : NAME_None;
+
+			bool bAlreadyReported = false;
+			ReportedMissingWheelBones.Add(TPair<FName, FName>(MeshName, BoneName), &bAlreadyReported);
+
+			if (!bAlreadyReported)
+			{
+				UE_LOG(LogCWTraffic, Warning, TEXT("[Traffic] 메쉬 '%s' 에 바퀴 본 '%s' 이 없다. 이 본은 건너뛴다. (차종 데이터의 WheelBones 확인)"),
+					*MeshName.ToString(), *BoneName.ToString());
+			}
+
 			continue;
 		}
 
@@ -728,7 +750,7 @@ float ACWBaseVehicle::ResolveEffectiveRewindSeconds(float ViewRewindSeconds) con
 	}
 
 	// 실제로 깎이는 구간은 발사 후 0.2초 안쪽뿐이라 로그가 쌓이지 않는다.
-	UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 발사 직후라 랙 보정을 %.0fms -> %.0fms 로 깎습니다."),
+	UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 발사 직후라 랙 보정을 %.0fms -> %.0fms 로 깎습니다."),
 		*GetName(), RequestedSeconds * 1000.f, SecondsSinceLaunch * 1000.f);
 
 	return SecondsSinceLaunch;

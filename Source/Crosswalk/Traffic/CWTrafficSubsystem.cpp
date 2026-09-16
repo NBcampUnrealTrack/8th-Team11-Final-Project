@@ -429,7 +429,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 
 	if (!Vehicle.CanBeParried())
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 패링 불가 차종"), *Vehicle.GetName());
+		UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 패링 불가 차종"), *Vehicle.GetName());
 		return false;
 	}
 
@@ -441,7 +441,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	const float SurfaceDistance = Vehicle.GetDistanceToPoint(ParryAttemptContext.AttemptLocation);
 	if (ParryAttemptContext.ParryRadius > 0.f && SurfaceDistance > ParryAttemptContext.ParryRadius)
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 반경 밖 (거리 %.0f > %.0f)"),
+		UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 반경 밖 (거리 %.0f > %.0f)"),
 			*Vehicle.GetName(), SurfaceDistance, ParryAttemptContext.ParryRadius);
 		return false;
 	}
@@ -456,7 +456,7 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 		const float Dot = FVector::DotProduct(AttemptDirection, ToVehicle);
 		if (Dot < FMath::Cos(FMath::DegreesToRadians(HalfAngle)))
 		{
-			UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
+			UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
 				*Vehicle.GetName(), FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))), HalfAngle);
 			return false;
 		}
@@ -468,13 +468,13 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	if (!Vehicle.PredictTimeToImpact(ParryAttemptContext.Parrier, TimeToImpact, ParryAttemptContext.ViewRewindSeconds))
 	{
 		// 진행 경로 밖이거나 이미 지나친 차량이다. 도로 위에 서 있지 않으면 여기서 전부 걸린다.
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
+		UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 진행 경로 밖 (또는 이미 지나침)"), *Vehicle.GetName());
 		return false;
 	}
 
 	if (TimeToImpact > Vehicle.GetParryWindow())
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry]   %s: 타이밍 이릅 (충돌까지 %.2f초 > 윈도우 %.2f초, 보정 %.0fms)"),
+		UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 타이밍 이릅 (충돌까지 %.2f초 > 윈도우 %.2f초, 보정 %.0fms)"),
 			*Vehicle.GetName(), TimeToImpact, Vehicle.GetParryWindow(), ParryAttemptContext.ViewRewindSeconds * 1000.f);
 		return false;
 	}
@@ -626,14 +626,25 @@ void UCWTrafficSubsystem::LogStopLineMiss(const ACWTrafficLane* Lane, const TCHA
 		return;
 	}
 
-	// 매 프레임 차량마다 들어오는 자리다. 초당 한 줄로 조인다.
-	const double Now = World->GetTimeSeconds();
-	if (LastStopLineMissLogTime >= 0.0 && Now - LastStopLineMissLogTime < 1.0)
+	/**
+	 * 값이 바뀔 때만 찍는다. 초당 한 줄로 조이는 것으로는 부족했다.
+	 *
+	 * 미발견 사유의 대부분은 "제어기가 통행 신호라고 답함" 인데 이건 **정상 상태**다.
+	 * 파란불인 동안은 계속 그 상태라서, 초당 한 줄이어도 파란불 길이만큼 똑같은 줄이 쌓인다.
+	 * 09-16 로그에서 938줄이 나왔고 그중 읽을 값이 있는 줄은 차선이나 사유가 처음 바뀐
+	 * 몇 줄뿐이었다. 상태 로그는 상태가 바뀔 때 찍어야 한다.
+	 *
+	 * 되돌아오는 전이도 찍힌다 — 파란불 -> 빨간불 -> 파란불 이면 세 줄이 남는다.
+	 * 조여야 할 것은 "몇 번 찍히나" 가 아니라 "같은 말을 반복하나" 다.
+	 */
+	const FName LaneName = Lane ? Lane->GetFName() : NAME_None;
+	if (LastStopLineMissLane == LaneName && LastStopLineMissReason == Reason)
 	{
 		return;
 	}
 
-	LastStopLineMissLogTime = Now;
+	LastStopLineMissLane = LaneName;
+	LastStopLineMissReason = Reason;
 
 	/**
 	 * 목록 개수를 같이 찍는다. 이유 문자열만으로는 "제어기가 통행이라 답했다" 와
