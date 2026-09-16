@@ -13,6 +13,9 @@
 
 class UNetDriver;
 
+// 완료 이벤트와 별개로 작업 시작·복구 상태를 ViewModel에 전달
+DECLARE_MULTICAST_DELEGATE_OneParam(FCWOnSessionBusyChanged, bool);
+
 // 세션 검색을 어떤 목적으로 실행했는지 구분
 enum class ECWSessionFindPurpose : uint8
 {
@@ -56,8 +59,14 @@ class CROSSWALK_API UCWGameInstance : public UGameInstance
 {
 	GENERATED_BODY()
 
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FCWRoomSearchCancellationTest;
+#endif
+
 public:
 	UCWGameInstance();
+
+	FCWOnSessionBusyChanged OnSessionBusyChanged;
 
 	// 게임 시작 시 온라인 서브시스템 인터페이스를 캐싱
 	virtual void Init() override;
@@ -104,6 +113,11 @@ public:
 	// 현재 검색 가능한 공개 세션 목록을 가져옴
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
 	void FindRooms();
+
+	// 목록 검색 대기만 취소. 늦은 OSS 응답은 화면에 반영하지 않는다
+	void CancelRoomSearch();
+
+	bool IsRoomSearchInProgress() const;
 
 	// 입력한 방 코드와 일치하는 세션을 찾아 입장
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
@@ -217,6 +231,9 @@ private:
 	// 목적에 따라 세션 검색을 시작
 	void StartFindSessions(ECWSessionFindPurpose FindPurpose);
 
+	// UI 대기는 끝내되 실제 검색 응답은 받아 버린다
+	void DiscardPendingSearch();
+
 	// 확정된 방 코드로 세션을 생성
 	void CreateSessionWithRoomCode(const FString& RoomCode);
 
@@ -246,7 +263,7 @@ private:
 	// 마감 타이머를 해제한다
 	void ClearSessionOperationTimeout();
 
-	// 마감 시간이 지났다. 남은 콜백을 걷어내고 Timeout 실패로 정리한다
+	// UI 작업은 Timeout으로 끝내고, 아직 실행 중인 검색 결과는 버린다
 	void HandleSessionOperationTimeout();
 
 	// 세션 작업 완료 상태를 기록하고 UI에 결과를 전달
@@ -396,6 +413,13 @@ private:
 
 	// 마지막 세션 검색 요청 결과
 	TSharedPtr<FOnlineSessionSearch> SessionSearch;
+
+	// OSS 검색은 UI 타임아웃 뒤에도 실행 중일 수 있다
+	bool bAwaitingSearchCompletion = false;
+	bool bDiscardSearchResult = false;
+
+	// 취소한 검색이 끝나면 실행할 새 요청. 입력값은 기존 Pending 필드에 보관
+	ECWSessionFindPurpose DeferredFindPurpose = ECWSessionFindPurpose::None;
 
 	// 현재 세션 검색이 어떤 목적으로 실행 중인지 구분
 	ECWSessionFindPurpose CurrentFindPurpose;

@@ -76,6 +76,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")
 	void RequestFindRooms();
 
+	// 다른 화면·버튼으로 이동할 때 목록 조회만 조용히 취소
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")
+	void RequestCancelRoomSearch();
+
 	// 입력한 방 코드에 해당하는 세션 참가를 요청
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")
 	void RequestJoinRoomByCode(const FString& RoomCode);
@@ -149,6 +153,13 @@ public:
 	bool GetIsOperationInFlight() const
 	{
 		return bIsOperationInFlight;
+	}
+
+	// 새로고침 중복 요청은 막되 다른 버튼은 별도의 잠금 상태를 사용
+	UFUNCTION(BlueprintPure, FieldNotify, Category = "CW|UI|Session")
+	bool GetCanRefreshRooms() const
+	{
+		return !bIsOperationInFlight;
 	}
 
 	// 현재 방 코드를 반환
@@ -252,6 +263,10 @@ private:
 #pragma region ViewModelState
 
 private:
+	// 목록 검색은 제외하고 생성·참가·복구 중에만 다른 버튼을 잠금
+	UPROPERTY(BlueprintReadOnly, FieldNotify, Category = "CW|UI|Session", meta = (AllowPrivateAccess = "true"))
+	bool bAreRoomActionsLocked = false;
+
 	// 현재 로컬 사용자의 로그인 여부
 	UPROPERTY(
 		BlueprintReadOnly,
