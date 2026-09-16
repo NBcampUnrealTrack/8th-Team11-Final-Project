@@ -125,6 +125,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
 	FString GetCurrentRoomCode() const;
 
+	// 현재 방 제목을 반환. 호스트가 안 넣었으면 빈 값
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	FString GetCurrentRoomName() const;
+
+	// 현재 방 호스트의 표시 이름. 제목이 비었을 때 UI 대체 문구에 씀
+	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
+	FString GetCurrentHostName() const;
+
 	// 로컬 유저 0번이 온라인 서비스에 로그인되어 있는지 확인
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
 	bool IsLoggedIn() const;
@@ -348,6 +356,12 @@ private:
 	// 호스트가 생성한 현재 방 코드
 	UPROPERTY()
 	FString CurrentRoomCode;
+
+	// 현재 방 제목. CurrentRoomCode 와 반드시 같이 갱신·정리할 것
+	FString CurrentRoomName;
+
+	// 현재 방 호스트 이름. CurrentRoomName 과 같이 갱신·정리할 것
+	FString CurrentHostName;
 
 	// 방 생성 전 중복 검사를 기다리는 임시 방 코드
 	UPROPERTY()

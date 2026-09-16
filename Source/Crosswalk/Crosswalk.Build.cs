@@ -46,6 +46,8 @@ public class Crosswalk : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new string[]
         {
+            // 클립보드 복사(FPlatformApplicationMisc) 용
+            "ApplicationCore"
         });
 
         DynamicallyLoadedModuleNames.AddRange(new string[]

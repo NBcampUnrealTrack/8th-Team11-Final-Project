@@ -122,18 +122,10 @@ void UCWGameInstance::Init()
 
 	CacheOnlineInterfaces();
 
-	/**
-	 * 맵을 떠날 때 BGM 을 끊는다.
-	 *
-	 * 음악은 bPersistAcrossLevelTransition 으로 재생돼 맵 이동을 살아남는다.
-	 * 맵마다 레벨 블루프린트에서 끄게 두면 하나만 빠져도 이전 곡이 그대로 이어진다
-	 * (실제로 Stage_03 에서 빠져 Stage_02 의 곡이 따라왔다).
-	 *
-	 * 이전 월드의 정리 시점을 쓰는 이유 - 스테이지 이동은 seamless travel 이라
-	 * PreLoadMap 이 아예 오지 않고, PostLoadMapWithWorld 는 양쪽 경로 모두 새 월드의
-	 * BeginPlay 뒤에 와서 도착한 맵이 막 시작한 곡을 도로 꺼버린다.
-	 * CleanupWorld 는 두 경로 다 목적지 BeginPlay 보다 앞선다.
-	 */
+	// 맵을 떠날 때 BGM 정지. bPersistAcrossLevelTransition 이라 안 끄면 다음 맵까지 따라옴
+	// 레벨 BP 마다 끄는 방식은 하나만 빠져도 무너짐 - Stage_03 에서 실제로 빠졌음
+	// PreLoadMap 은 seamless travel 에서 안 옴. PostLoadMapWithWorld 는 BeginPlay 뒤라 새 곡을 꺼버림
+	// CleanupWorld 만 두 경로 다 목적지 BeginPlay 보다 앞섬
 	if (!WorldCleanupHandle.IsValid())
 	{
 		WorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddUObject(
@@ -190,13 +182,13 @@ void UCWGameInstance::Shutdown()
 
 void UCWGameInstance::HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources)
 {
-	// 전역 델리게이트라 다른 PIE 창의 월드도 들어온다. 내 인스턴스 것만 처리한다.
+	// 전역 델리게이트라 다른 PIE 창 월드도 들어옴. 내 인스턴스 것만 처리함
 	if (!IsValid(World) || World->GetGameInstance() != this)
 	{
 		return;
 	}
 
-	// 도착한 맵이 필요하면 BeginPlay 에서 자기 곡을 다시 튼다.
+	// 도착한 맵이 필요하면 BeginPlay 에서 자기 곡을 다시 켬
 	if (UCWMusicSubsystem* MusicSubsystem = GetSubsystem<UCWMusicSubsystem>())
 	{
 		MusicSubsystem->StopMusic(0.0f);
@@ -536,6 +528,16 @@ FString UCWGameInstance::GetCurrentRoomCode() const
 	return CurrentRoomCode;
 }
 
+FString UCWGameInstance::GetCurrentRoomName() const
+{
+	return CurrentRoomName;
+}
+
+FString UCWGameInstance::GetCurrentHostName() const
+{
+	return CurrentHostName;
+}
+
 bool UCWGameInstance::IsLoggedIn() const
 {
 	return IdentityInterface.IsValid() && IdentityInterface->GetLoginStatus(0) == ELoginStatus::LoggedIn;
@@ -738,6 +740,8 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 	BindCreateSessionCompleteDelegate();
 
 	CurrentRoomCode = RoomCode;
+	CurrentRoomName = PendingRoomName;
+	CurrentHostName = LoggedInDisplayName;
 	SetStatus(FString::Printf(TEXT("CreateSession requested. RoomCode: %s"), *RoomCode));
 
 	SessionInterface->CreateSession(0, CrosswalkSession::GameSessionName, SessionSettings);
@@ -917,6 +921,8 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 		bRollingBackFailedCreate = false;
 
 		CurrentRoomCode.Empty();
+		CurrentRoomName.Empty();
+		CurrentHostName.Empty();
 		PendingRoomCode.Empty();
 	}
 
@@ -1154,9 +1160,24 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 	if (!bWasSuccessful)
 	{
 		CurrentRoomCode.Empty();
+		CurrentRoomName.Empty();
+		CurrentHostName.Empty();
 		SetStatus(TEXT("CreateSession failed"));
 		CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::Unknown);
 		return;
+	}
+
+	// 호스트 이름은 참가자와 같은 소스(OwningUserName)에서 읽어야 양쪽이 같은 문자열을 봄
+	// 미로그인/Null 서브시스템이면 LoggedInDisplayName 이 비어 있어 이 경로가 사실상 유일
+	if (SessionInterface.IsValid())
+	{
+		if (FNamedOnlineSession* NamedSession = SessionInterface->GetNamedSession(SessionName))
+		{
+			if (!NamedSession->OwningUserName.IsEmpty())
+			{
+				CurrentHostName = NamedSession->OwningUserName;
+			}
+		}
 	}
 
 	UWorld* World = GetWorld();
@@ -1246,6 +1267,8 @@ void UCWGameInstance::FinishRollbackAsCreateFailure()
 	bRollingBackFailedCreate = false;
 
 	CurrentRoomCode.Empty();
+	CurrentRoomName.Empty();
+	CurrentHostName.Empty();
 	PendingRoomCode.Empty();
 
 	// DestroyRoom 완료가 아니라 CreateRoom 실패로 끝낸다 - 사용자가 요청한 작업은 생성이었음
@@ -1333,19 +1356,16 @@ void UCWGameInstance::FinishNetworkFailureRecovery()
 	bRecoveringFromNetworkFailure = false;
 
 	CurrentRoomCode.Empty();
+	CurrentRoomName.Empty();
+	CurrentHostName.Empty();
 	PendingRoomCode.Empty();
 	PendingJoinRoomCode.Empty();
 	CachedRoomList.Reset();
 
 	OnRoomListUpdated.Broadcast(CachedRoomList);
 
-	/**
-	 * BGM 도 여기서 끊는다.
-	 *
-	 * 음악은 bPersistAcrossLevelTransition 으로 재생돼 맵 이동을 살아남는다. 그래서
-	 * 메뉴로 돌려보내는 것만으로는 스테이지에서 틀던 곡이 그대로 따라온다.
-	 * UCWMusicSubsystem::Deinitialize 는 게임 인스턴스가 죽을 때만 불려 여기선 못 쓴다.
-	 */
+	// BGM 도 여기서 정지. 메뉴로 보내는 것만으로는 스테이지 곡이 따라옴
+	// Deinitialize 는 게임 인스턴스가 죽을 때만 불려 여기선 못 씀
 	if (UCWMusicSubsystem* MusicSubsystem = GetSubsystem<UCWMusicSubsystem>())
 	{
 		MusicSubsystem->StopMusic();
@@ -1560,9 +1580,15 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 	// 방 목록으로 입장하면 PendingJoinRoomCode가 비어 있어 이 경로가 유일
 	FString JoinedRoomCode;
 
+	// 호스트가 광고한 제목을 그대로 씀. 없으면 빈 값 - 대체 표시는 UI 담당
+	CurrentRoomName.Empty();
+	CurrentHostName.Empty();
+
 	if (FNamedOnlineSession* NamedSession = SessionInterface->GetNamedSession(SessionName))
 	{
 		NamedSession->SessionSettings.Get(CrosswalkSession::RoomCodeKey, JoinedRoomCode);
+		NamedSession->SessionSettings.Get(CrosswalkSession::RoomNameKey, CurrentRoomName);
+		CurrentHostName = NamedSession->OwningUserName;
 	}
 
 	// 세션 설정에서 못 읽으면 방 코드로 입장한 경우의 값으로 대체
@@ -1618,6 +1644,8 @@ void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSucce
 	}
 
 	CurrentRoomCode.Empty();
+	CurrentRoomName.Empty();
+	CurrentHostName.Empty();
 	PendingRoomCode.Empty();
 	PendingJoinRoomCode.Empty();
 	CachedRoomList.Reset();

@@ -130,6 +130,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
 	void ShowToast(const FText& Message);
 
+	// 문자열을 시스템 클립보드에 복사
+	// 엔진이 클립보드를 BP 로 노출하지 않아(ClipboardCopy 는 UFUNCTION 아님) 여기서 감쌈
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	void CopyTextToClipboard(const FString& Text);
+
 private:
 	// 대기 중인 다음 토스트를 생성하고 표시
 	void ShowNextToast();

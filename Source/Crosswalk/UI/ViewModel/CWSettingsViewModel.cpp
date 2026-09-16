@@ -122,6 +122,15 @@ void UCWSettingsViewModel::RefreshSettingsData()
 		)
 	);
 
+	// 그래픽 품질 (0~3 = 엔진 ScalabilityLevel). 복구 후 콤보를 되돌리려면 여기서 다시 읽어야 함
+	SetSelectedQualityIndex(
+		FMath::Clamp(
+			GameUserSettings->GetOverallScalabilityLevel(),
+			0,
+			3
+		)
+	);
+
 	// 그래픽 품질 (4옵션, 콤보 인덱스 = 엔진 ScalabilityLevel 0~3)
 	const int32 ScalabilityLevel =
 		GameUserSettings->GetOverallScalabilityLevel();
@@ -252,11 +261,22 @@ bool UCWSettingsViewModel::RequestSetQualityByIndex(int32 Index)
 	}
 
 	// 콤보 인덱스 0~3이 엔진 ScalabilityLevel과 직결
-	if (GameUserSettings->GetOverallScalabilityLevel() != Index)
+	// 같은 값은 적용하지 않고 정상 처리
+	if (GameUserSettings->GetOverallScalabilityLevel() == Index)
 	{
-		GameUserSettings->SetOverallScalabilityLevel(Index);
-		ApplyQualityAndSave(GameUserSettings);
+		SetSelectedQualityIndex(Index);
+		return true;
 	}
+
+	// 해상도·창 모드와 같은 확인 흐름을 탐. 스냅샷은 셋을 함께 보관
+	CaptureVideoModeSnapshot(GameUserSettings);
+
+	GameUserSettings->SetOverallScalabilityLevel(Index);
+
+	bIsVideoModeConfirmationPending = true;
+
+	// 확인 전에는 화면에만 임시 적용하고 저장하지 않음
+	GameUserSettings->ApplyNonResolutionSettings();
 
 	SetSelectedQualityIndex(Index);
 
@@ -293,6 +313,19 @@ void UCWSettingsViewModel::StartVideoModeConfirmation()
 		VideoModeConfirmationDuration,
 		false
 	);
+
+	// 표시용 카운트다운. 만료 자체는 위 타이머가 책임짐
+	SetVideoModeConfirmationRemainingSeconds(
+		FMath::CeilToInt(VideoModeConfirmationDuration)
+	);
+
+	World->GetTimerManager().SetTimer(
+		VideoModeCountdownTimerHandle,
+		this,
+		&UCWSettingsViewModel::HandleVideoModeCountdownTick,
+		1.0f,
+		true
+	);
 }
 
 void UCWSettingsViewModel::ConfirmPendingVideoMode()
@@ -326,8 +359,9 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 	{
 		if (bConfirm)
 		{
-			// 현재 비디오 모드를 확정하고 영구 저장
+			// 현재 비디오 모드와 품질을 확정하고 영구 저장
 			GameUserSettings->ConfirmVideoMode();
+			GameUserSettings->ApplyNonResolutionSettings();
 			GameUserSettings->SaveSettings();
 		}
 		else if (bHasVideoModeSnapshot)
@@ -343,7 +377,12 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 					)
 			);
 
+			GameUserSettings->SetOverallScalabilityLevel(
+				QualityBeforePending
+			);
+
 			GameUserSettings->ApplyResolutionSettings(false);
+			GameUserSettings->ApplyNonResolutionSettings();
 
 			// 창 크기 변경 과정에서 자동 저장됐을 가능성까지 덮어쓰기 위해
 			// 복구된 값을 최종 확정하고 설정 파일에 저장
@@ -379,9 +418,57 @@ void UCWSettingsViewModel::ClearVideoModeConfirmationTimer()
 		World->GetTimerManager().ClearTimer(
 			VideoModeConfirmationTimerHandle
 		);
+
+		World->GetTimerManager().ClearTimer(
+			VideoModeCountdownTimerHandle
+		);
 	}
 
 	VideoModeConfirmationTimerHandle.Invalidate();
+	VideoModeCountdownTimerHandle.Invalidate();
+
+	// 대기 상태가 아니면 남은 시간도 없음
+	SetVideoModeConfirmationRemainingSeconds(0);
+}
+
+void UCWSettingsViewModel::HandleVideoModeCountdownTick()
+{
+	if (VideoModeConfirmationRemainingSeconds <= 0)
+	{
+		return;
+	}
+
+	SetVideoModeConfirmationRemainingSeconds(
+		VideoModeConfirmationRemainingSeconds - 1
+	);
+}
+
+void UCWSettingsViewModel::SetVideoModeConfirmationRemainingSeconds(int32 InSeconds)
+{
+	const int32 Clamped = FMath::Max(InSeconds, 0);
+
+	if (UE_MVVM_SET_PROPERTY_VALUE(
+		VideoModeConfirmationRemainingSeconds,
+		Clamped
+	))
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(
+			GetVideoModeConfirmationRemainingText
+		);
+	}
+}
+
+FText UCWSettingsViewModel::GetVideoModeConfirmationRemainingText() const
+{
+	if (VideoModeConfirmationRemainingSeconds <= 0)
+	{
+		return FText::GetEmpty();
+	}
+
+	return FText::Format(
+		NSLOCTEXT("CWSettings", "VideoModeRevertCountdown", "설정을 저장하시겠습니까?\n선택하지 않으면 {0}초 후에 설정을 되돌립니다."),
+		FText::AsNumber(VideoModeConfirmationRemainingSeconds)
+	);
 }
 
 #pragma endregion
@@ -617,13 +704,6 @@ UCWAudioSubsystem* UCWSettingsViewModel::GetAudioSubsystem() const
 	return GameInstance->GetSubsystem<UCWAudioSubsystem>();
 }
 
-void UCWSettingsViewModel::ApplyQualityAndSave(UGameUserSettings* GameUserSettings) const
-{
-	// 품질만 적용해 해상도 적용과 분리한 뒤 저장
-	GameUserSettings->ApplyNonResolutionSettings();
-	GameUserSettings->SaveSettings();
-}
-
 void UCWSettingsViewModel::CaptureVideoModeSnapshot(
 	UGameUserSettings* GameUserSettings
 )
@@ -640,6 +720,9 @@ void UCWSettingsViewModel::CaptureVideoModeSnapshot(
 		static_cast<int32>(
 			GameUserSettings->GetFullscreenMode()
 			);
+
+	QualityBeforePending =
+		GameUserSettings->GetOverallScalabilityLevel();
 
 	bHasVideoModeSnapshot = true;
 }

@@ -170,6 +170,14 @@ public:
 	)
 	FText GetCurrentRoomCodeText() const;
 
+	// 현재 방 제목을 표시용 텍스트로 반환. 비어 있을 수 있음
+	UFUNCTION(
+		BlueprintPure,
+		FieldNotify,
+		Category = "CW|UI|Session"
+	)
+	FText GetCurrentRoomNameText() const;
+
 	// 마지막으로 검색된 공개 방 목록을 반환
 	UFUNCTION(BlueprintPure, Category = "CW|UI|Session")
 	const TArray<FCWRoomSummary>& GetRoomList() const
@@ -229,6 +237,12 @@ private:
 
 	// 현재 방 코드를 변경하고 FieldNotify를 발생
 	void SetCurrentRoomCode(const FString& InRoomCode);
+
+	// 현재 방 제목을 변경하고 FieldNotify를 발생
+	void SetCurrentRoomName(const FString& InRoomName);
+
+	// 현재 방 호스트 이름을 변경하고 FieldNotify를 발생
+	void SetCurrentHostName(const FString& InHostName);
 
 	// 공개 방 목록을 변경하고 FieldNotify를 발생
 	void SetRoomList(const TArray<FCWRoomSummary>& InRooms);
@@ -300,6 +314,24 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	FString CurrentRoomCode;
+
+	// 현재 생성하거나 참가한 세션의 방 제목
+	UPROPERTY(
+		BlueprintReadOnly,
+		FieldNotify,
+		Category = "CW|UI|Session",
+		meta = (AllowPrivateAccess = "true")
+	)
+	FString CurrentRoomName;
+
+	// 현재 방 호스트 이름. 제목이 비었을 때 대체 문구에 씀
+	UPROPERTY(
+		BlueprintReadOnly,
+		FieldNotify,
+		Category = "CW|UI|Session",
+		meta = (AllowPrivateAccess = "true")
+	)
+	FString CurrentHostName;
 
 	// 공개 방 목록 화면에 표시할 검색 결과
 	UPROPERTY(

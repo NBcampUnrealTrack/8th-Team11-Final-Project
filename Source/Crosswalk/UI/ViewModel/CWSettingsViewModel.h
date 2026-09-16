@@ -90,6 +90,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Settings")
 	void StartVideoModeConfirmation();
 
+	// 남은 확인 시간을 "N" 형태 텍스트로 반환. 대기 중이 아니면 빈 텍스트
+	UFUNCTION(
+		BlueprintPure,
+		FieldNotify,
+		Category = "CW|UI|Settings"
+	)
+	FText GetVideoModeConfirmationRemainingText() const;
+
 	// 임시 적용된 비디오 모드를 확정하고 저장
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Settings")
 	void ConfirmPendingVideoMode();
@@ -183,9 +191,6 @@ private:
 	// 현재 GameUserSettings 인스턴스를 반환
 	UGameUserSettings* GetGameUserSettings() const;
 
-	// 품질 변경만 적용하고 저장 (해상도 적용과 분리)
-	void ApplyQualityAndSave(UGameUserSettings* GameUserSettings) const;
-
 	// 임시 적용 전 해상도와 창 모드를 복구용으로 저장
 	void CaptureVideoModeSnapshot(UGameUserSettings* GameUserSettings);
 
@@ -200,6 +205,12 @@ private:
 
 	// 실행 중인 비디오 모드 확인 타이머를 정리
 	void ClearVideoModeConfirmationTimer();
+
+	// 1초마다 남은 시간을 줄임
+	void HandleVideoModeCountdownTick();
+
+	// 남은 시간을 바꾸고 FieldNotify를 발생
+	void SetVideoModeConfirmationRemainingSeconds(int32 InSeconds);
 
 	// 볼륨 적용을 담당하는 오디오 서브시스템을 반환. 월드가 없으면 nullptr
 	UCWAudioSubsystem* GetAudioSubsystem() const;
@@ -283,11 +294,26 @@ private:
 	// 비디오 모드 확인 제한시간 타이머
 	FTimerHandle VideoModeConfirmationTimerHandle;
 
+	// 남은 시간 표시용 1초 반복 타이머
+	FTimerHandle VideoModeCountdownTimerHandle;
+
+	// 확인까지 남은 초. 대기 중이 아니면 0
+	UPROPERTY(
+		BlueprintReadOnly,
+		FieldNotify,
+		Category = "CW|UI|Settings",
+		meta = (AllowPrivateAccess = "true")
+	)
+	int32 VideoModeConfirmationRemainingSeconds = 0;
+
 	// 임시 적용 전 해상도
 	FIntPoint ResolutionBeforePending = FIntPoint::ZeroValue;
 
 	// 임시 적용 전 창 모드 인덱스
 	int32 WindowModeBeforePending = 0;
+
+	// 임시 적용 전 그래픽 품질 인덱스
+	int32 QualityBeforePending = 0;
 
 	// 복구 가능한 비디오 모드 스냅샷 보유 여부
 	bool bHasVideoModeSnapshot = false;

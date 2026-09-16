@@ -1,6 +1,7 @@
 ﻿// CWUISubsystem.cpp
 
 #include "CWUISubsystem.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Blueprint/UserWidget.h"
 #include "Core/CWGameInstance.h"
 #include "UI/CWUILog.h"
@@ -962,6 +963,17 @@ bool UCWUISubsystem::ClosePopup(UUserWidget* InWidget)
 	);
 
 	return true;
+}
+
+void UCWUISubsystem::CopyTextToClipboard(const FString& Text)
+{
+	// 빈 문자열로 덮어쓰면 사용자가 갖고 있던 내용만 날아감
+	if (Text.IsEmpty())
+	{
+		return;
+	}
+
+	FPlatformApplicationMisc::ClipboardCopy(*Text);
 }
 
 void UCWUISubsystem::ShowToast(const FText& Message)
