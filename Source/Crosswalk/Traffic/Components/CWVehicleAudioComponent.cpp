@@ -70,6 +70,30 @@ bool UCWVehicleAudioComponent::RequestHorn()
 		return false;
 	}
 
+	SpawnHorn();
+
+	LastHornTime = Now;
+
+	return true;
+}
+
+void UCWVehicleAudioComponent::SpawnHorn()
+{
+	/**
+	 * 경적의 피치는 여기서 한 번 정하고 소리가 끝날 때까지 그대로 간다.
+	 *
+	 * CurrentDopplerPitch(엔진 루프용 보간 상태)를 쓰지 않는 이유가 둘이다.
+	 * 하나는 엔진 루프가 없으면 그 값이 갱신될 일이 없어 초기값 1.0 에 얼어 있다는 것,
+	 * 다른 하나는 여기서 덮어쓰면 엔진 쪽 보간이 튄다는 것이다.
+	 *
+	 * 실패하면 1.0 으로 둔다. 도플러를 못 구한 것이지 경적을 거를 일은 아니다.
+	 */
+	float HornPitch = 1.f;
+	if (bEnableDoppler)
+	{
+		ComputeDopplerPitch(HornPitch);
+	}
+
 	HornAudio = UGameplayStatics::SpawnSoundAttached(
 		HornSound,
 		GetOwner()->GetRootComponent(),
@@ -78,14 +102,60 @@ bool UCWVehicleAudioComponent::RequestHorn()
 		EAttachLocation::KeepRelativeOffset,
 		/* bStopWhenAttachedToDestroyed */ true,
 		1.f,
-		CurrentDopplerPitch,
+		HornPitch,
 		0.f,
 		SharedAttenuation
 	);
+}
 
-	LastHornTime = Now;
+void UCWVehicleAudioComponent::UpdateApproachWarning()
+{
+	// 한 번 울렸으면 끝이다. 플레이어가 경로를 들락거려도 다시 울리지 않는다.
+	if (bWarnedLocalPlayer || !HornSound)
+	{
+		return;
+	}
 
-	return true;
+	const APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	/**
+	 * 카메라가 아니라 폰을 넘긴다.
+	 *
+	 * 리스너(소리를 듣는 자리)는 카메라지만, 차가 칠 대상은 캐릭터다. 탑뷰라 카메라가
+	 * 캐릭터보다 688cm 뒤에 있어서, 카메라로 재면 기본 속도에서도 0.9 초쯤 늦게 걸린다.
+	 */
+	const APawn* LocalPawn = PlayerController->GetPawn();
+	if (!LocalPawn)
+	{
+		return;
+	}
+
+	// 되돌리기는 0 이다. 랙 보정은 서버가 과거의 클라이언트 입력을 판정할 때 쓰는 값인데,
+	// 이 판정은 각자 자기 화면에서 지금 상황으로 내리는 것이라 되돌릴 시점이 없다.
+	float TimeToImpact = 0.f;
+	if (!OwnerVehicle->PredictTimeToImpact(LocalPawn, TimeToImpact, /* ViewRewindSeconds */ 0.f))
+	{
+		return;
+	}
+
+	if (TimeToImpact > ApproachWarningLeadSeconds)
+	{
+		return;
+	}
+
+	/**
+	 * 소리가 실제로 났는지와 무관하게 표시한다.
+	 *
+	 * 성공했을 때만 표시하면, 애셋이 없거나 하는 이유로 실패하는 동안 매 틱 다시 시도한다.
+	 * "임계값을 넘었다" 는 사실 자체가 한 번뿐인 사건이므로 그 시점에 닫는다.
+	 */
+	bWarnedLocalPlayer = true;
+
+	SpawnHorn();
 }
 
 void UCWVehicleAudioComponent::BeginPlay()
@@ -136,6 +206,11 @@ void UCWVehicleAudioComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 	UpdateEngineParameters();
 
+	if (bEnableApproachWarning)
+	{
+		UpdateApproachWarning();
+	}
+
 	if (bEnableDoppler)
 	{
 		UpdateDoppler(DeltaTime);
@@ -175,20 +250,13 @@ void UCWVehicleAudioComponent::UpdateEngineParameters()
 	EngineAudio->SetFloatParameter(EngineSpeedParameterName, Speed01);
 }
 
-void UCWVehicleAudioComponent::UpdateDoppler(float DeltaTime)
+bool UCWVehicleAudioComponent::ComputeDopplerPitch(float& OutPitch) const
 {
-	const bool bHasEngine = IsValid(EngineAudio);
-	const bool bHasHorn = IsValid(HornAudio);
-	if (!bHasEngine && !bHasHorn)
-	{
-		return;
-	}
-
 	FVector ListenerLocation = FVector::ZeroVector;
 	FVector ListenerVelocity = FVector::ZeroVector;
 	if (!ResolveListener(ListenerLocation, ListenerVelocity))
 	{
-		return;
+		return false;
 	}
 
 	const FVector SourceLocation = GetOwner()->GetActorLocation();
@@ -206,29 +274,38 @@ void UCWVehicleAudioComponent::UpdateDoppler(float DeltaTime)
 	const float Denominator = 1.f - (ClosingSpeed / SpeedOfSoundInAir);
 	if (FMath::IsNearlyZero(Denominator))
 	{
-		return;
+		return false;
 	}
 
 	const float RawPitch = 1.f / Denominator;
 
 	// 세기는 "1 로부터 얼마나 떨어졌나"에 곱한다. 그래야 정지 중인 차의 피치가 1 로 남는다.
-	const float TargetPitch = FMath::Clamp(
+	OutPitch = FMath::Clamp(
 		((RawPitch - 1.f) * DopplerIntensity) + 1.f,
 		DopplerPitchMin,
 		DopplerPitchMax
 	);
 
+	return true;
+}
+
+void UCWVehicleAudioComponent::UpdateDoppler(float DeltaTime)
+{
+	// 경적은 여기서 제외한다. 시작 피치를 SpawnHorn 이 정하고 끝까지 그대로 간다.
+	if (!IsValid(EngineAudio))
+	{
+		return;
+	}
+
+	float TargetPitch = CurrentDopplerPitch;
+	if (!ComputeDopplerPitch(TargetPitch))
+	{
+		return;
+	}
+
 	CurrentDopplerPitch = FMath::FInterpTo(CurrentDopplerPitch, TargetPitch, DeltaTime, DopplerSmoothingSpeed);
 
-	if (bHasEngine)
-	{
-		EngineAudio->SetPitchMultiplier(CurrentDopplerPitch);
-	}
-
-	if (bHasHorn)
-	{
-		HornAudio->SetPitchMultiplier(CurrentDopplerPitch);
-	}
+	EngineAudio->SetPitchMultiplier(CurrentDopplerPitch);
 }
 
 bool UCWVehicleAudioComponent::ResolveListener(FVector& OutLocation, FVector& OutVelocity) const
