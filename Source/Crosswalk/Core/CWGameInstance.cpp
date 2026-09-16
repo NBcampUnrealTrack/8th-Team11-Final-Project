@@ -18,6 +18,9 @@
 
 namespace CrosswalkSession
 {
+	// 목록 조회는 짧게 기다리고, 생성·참가·복구 제한 시간은 별도로 유지
+	static constexpr float RoomSearchTimeout = 5.f;
+
 	static const FName RoomCodeKey(TEXT("CW_ROOM_CODE"));
 	static const FName GameSessionName(TEXT("GameSession"));
 
@@ -176,6 +179,8 @@ void UCWGameInstance::Shutdown()
 	ClearFindSessionsCompleteDelegate();
 	ClearJoinSessionCompleteDelegate();
 	ClearDestroySessionCompleteDelegate();
+	bAwaitingSearchCompletion = false;
+	bDiscardSearchResult = false;
 
 	Super::Shutdown();
 }
@@ -386,6 +391,26 @@ void UCWGameInstance::FindRooms()
 	StartFindSessions(ECWSessionFindPurpose::ManualRefresh);
 }
 
+bool UCWGameInstance::IsRoomSearchInProgress() const
+{
+	return bSessionOperationInFlight && CurrentSessionOperation == ECWSessionOperation::FindRooms;
+}
+
+void UCWGameInstance::CancelRoomSearch()
+{
+	if (!IsRoomSearchInProgress())
+	{
+		return;
+	}
+
+	ClearSessionOperationTimeout();
+	DiscardPendingSearch();
+	CurrentSessionOperation = ECWSessionOperation::None;
+	bSessionOperationInFlight = false;
+	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] RoomSearch cancelled by user"));
+}
+
 void UCWGameInstance::JoinRoomByCode(const FString& RoomCode)
 {
 	CacheOnlineInterfaces();
@@ -550,7 +575,7 @@ FString UCWGameInstance::GetLoggedInDisplayName() const
 
 bool UCWGameInstance::IsSessionOperationInFlight() const
 {
-	return bSessionOperationInFlight;
+	return bSessionOperationInFlight || bRecoveringFromNetworkFailure;
 }
 
 const TArray<FCWRoomSummary>& UCWGameInstance::GetCachedRoomList() const
@@ -674,6 +699,15 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 		return;
 	}
 
+	// Steam의 이전 검색은 완료 방송까지 살아 있다. 새 요청을 겹쳐 보내지 않는다.
+	if (bAwaitingSearchCompletion)
+	{
+		DeferredFindPurpose = FindPurpose;
+		SetStatus(TEXT("FindSessions queued: waiting for the cancelled search to finish"));
+		return;
+	}
+
+	DeferredFindPurpose = ECWSessionFindPurpose::None;
 	CurrentFindPurpose = FindPurpose;
 
 	SessionSearch = MakeShared<FOnlineSessionSearch>();
@@ -707,9 +741,37 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 	);
 
 	BindFindSessionsCompleteDelegate();
+	const TSharedRef<FOnlineSessionSearch> RequestedSearch = SessionSearch.ToSharedRef();
+	bAwaitingSearchCompletion = true;
+	bDiscardSearchResult = false;
 
 	SetStatus(TEXT("FindSessions requested"));
-	SessionInterface->FindSessions(0, SessionSearch.ToSharedRef());
+	const bool bAccepted = SessionInterface->FindSessions(0, RequestedSearch);
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] FindStart Accepted=%d State=%d Purpose=%d"),
+		bAccepted, static_cast<int32>(RequestedSearch->SearchState), static_cast<int32>(FindPurpose));
+
+	// 동기 완료가 이미 처리됐으면 새 요청의 상태를 건드리지 않는다.
+	if (bAwaitingSearchCompletion && SessionSearch == RequestedSearch &&
+		(!bAccepted || RequestedSearch->SearchState == EOnlineAsyncTaskState::NotStarted))
+	{
+		OnFindSessionsComplete(false);
+	}
+}
+
+void UCWGameInstance::DiscardPendingSearch()
+{
+	DeferredFindPurpose = ECWSessionFindPurpose::None;
+	// Steam 검색 취소는 실행 중인 비동기 작업의 완료 방송까지 없애지 못한다.
+	// 이전 응답을 받기 전 새 검색을 열면 그 응답이 새 요청의 콜백으로 들어온다.
+	if (bAwaitingSearchCompletion)
+	{
+		bDiscardSearchResult = true;
+	}
+	else
+	{
+		ClearFindSessionsCompleteDelegate();
+	}
+	CurrentFindPurpose = ECWSessionFindPurpose::None;
 }
 
 void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
@@ -823,7 +885,13 @@ void UCWGameInstance::RefreshCachedRoomList()
 
 bool UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
 {
-	if (bSessionOperationInFlight)
+	// 목록 조회보다 사용자가 선택한 방 생성·참가·나가기를 우선한다.
+	if (Operation != ECWSessionOperation::FindRooms)
+	{
+		CancelRoomSearch();
+	}
+
+	if (IsSessionOperationInFlight())
 	{
 		/**
 		 * 거절은 CompleteSessionOperation 을 타면 안 된다.
@@ -842,6 +910,8 @@ bool UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
 	bSessionOperationInFlight = true;
 
 	StartSessionOperationTimeout();
+	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Begin Operation=%d"), static_cast<int32>(Operation));
 
 	return true;
 }
@@ -864,6 +934,9 @@ void UCWGameInstance::CompleteSessionOperation(ECWSessionOperation Operation, bo
 		CurrentSessionOperation = ECWSessionOperation::None;
 	}
 
+	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Complete Operation=%d Success=%d Failure=%d Busy=%d"),
+		static_cast<int32>(Operation), bSuccess, static_cast<int32>(Failure), IsSessionOperationInFlight());
 	OnSessionOperationCompleted.Broadcast(Operation, bSuccess, Failure);
 }
 
@@ -871,7 +944,9 @@ void UCWGameInstance::StartSessionOperationTimeout()
 {
 	ClearSessionOperationTimeout();
 
-	if (SessionOperationTimeout <= 0.f)
+	const float Timeout = CurrentSessionOperation == ECWSessionOperation::FindRooms
+		? CrosswalkSession::RoomSearchTimeout : SessionOperationTimeout;
+	if (Timeout <= 0.f)
 	{
 		return;
 	}
@@ -882,7 +957,7 @@ void UCWGameInstance::StartSessionOperationTimeout()
 		SessionOperationTimeoutHandle,
 		this,
 		&UCWGameInstance::HandleSessionOperationTimeout,
-		SessionOperationTimeout,
+		Timeout,
 		false
 	);
 }
@@ -901,14 +976,9 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 		return;
 	}
 
-	/**
-	 * OSS 콜백이 끝내 오지 않았다. 등록해 둔 델리게이트를 전부 걷어낸다.
-	 *
-	 * 안 걷어내면 한참 뒤에 도착한 응답이 이미 정리된 상태 위에서 다시 돌면서,
-	 * 그 사이에 시작한 다른 작업의 결과를 덮어쓴다.
-	 */
+	// 검색은 늦은 응답을 버릴 때까지 구독을 유지하고, 나머지 콜백은 정리한다.
 	ClearCreateSessionCompleteDelegate();
-	ClearFindSessionsCompleteDelegate();
+	DiscardPendingSearch();
 	ClearJoinSessionCompleteDelegate();
 	ClearDestroySessionCompleteDelegate();
 
@@ -926,7 +996,17 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 		PendingRoomCode.Empty();
 	}
 
-	SetStatus(FString::Printf(TEXT("Session operation timed out after %.0fs"), SessionOperationTimeout));
+	const float Timeout = TimedOutOperation == ECWSessionOperation::FindRooms
+		? CrosswalkSession::RoomSearchTimeout : SessionOperationTimeout;
+	SetStatus(FString::Printf(TEXT("Session operation timed out after %.0fs"), Timeout));
+	UE_LOG(LogTemp, Warning, TEXT("[SessionDiag] Timeout Operation=%d AwaitingSearch=%d SearchState=%d"),
+		static_cast<int32>(TimedOutOperation), bAwaitingSearchCompletion,
+		SessionSearch.IsValid() ? static_cast<int32>(SessionSearch->SearchState) : -1);
+	if (TimedOutOperation == ECWSessionOperation::FindRooms)
+	{
+		CachedRoomList.Reset();
+		OnRoomListUpdated.Broadcast(CachedRoomList);
+	}
 	CompleteSessionOperation(TimedOutOperation, false, ECWSessionFailure::Timeout);
 }
 
@@ -1324,11 +1404,11 @@ void UCWGameInstance::RecoverToMenuAfterNetworkFailure()
 void UCWGameInstance::CancelCurrentSessionOperationForRecovery()
 {
 	// 강제로 메뉴로 돌아가는 경로이므로 진행 중이던 작업의 결과는 의미가 없다.
-	// UI 에 실패를 방송하지 않고 조용히 끊는다 - 어차피 화면이 통째로 바뀐다.
+	// 실패 결과 대신 실제 작업 상태만 ViewModel에 전달한다.
 	ClearSessionOperationTimeout();
 
 	ClearCreateSessionCompleteDelegate();
-	ClearFindSessionsCompleteDelegate();
+	DiscardPendingSearch();
 	ClearJoinSessionCompleteDelegate();
 	ClearDestroySessionCompleteDelegate();
 
@@ -1338,6 +1418,7 @@ void UCWGameInstance::CancelCurrentSessionOperationForRecovery()
 
 	// 생성 롤백이 돌고 있었다면 그것도 여기서 끝난다
 	bRollingBackFailedCreate = false;
+	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
 }
 
 void UCWGameInstance::FinishNetworkFailureRecovery()
@@ -1362,6 +1443,7 @@ void UCWGameInstance::FinishNetworkFailureRecovery()
 	PendingJoinRoomCode.Empty();
 	CachedRoomList.Reset();
 
+	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
 	OnRoomListUpdated.Broadcast(CachedRoomList);
 
 	// BGM 도 여기서 정지. 메뉴로 보내는 것만으로는 스테이지 곡이 따라옴
@@ -1437,9 +1519,33 @@ void UCWGameInstance::HandleNetworkFailureRecoveryTimeout()
 
 void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 {
+	if (!bAwaitingSearchCompletion)
+	{
+		return;
+	}
+
 	ClearFindSessionsCompleteDelegate();
+	bAwaitingSearchCompletion = false;
 
 	const ECWSessionFindPurpose FinishedPurpose = CurrentFindPurpose;
+	CurrentFindPurpose = ECWSessionFindPurpose::None;
+	const TSharedPtr<FOnlineSessionSearch> CompletedSearch = SessionSearch;
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] FindComplete Success=%d Discard=%d Purpose=%d Results=%d"),
+		bWasSuccessful, bDiscardSearchResult, static_cast<int32>(FinishedPurpose),
+		CompletedSearch.IsValid() ? CompletedSearch->SearchResults.Num() : 0);
+
+	if (bDiscardSearchResult)
+	{
+		bDiscardSearchResult = false;
+		const ECWSessionFindPurpose NextPurpose = DeferredFindPurpose;
+		DeferredFindPurpose = ECWSessionFindPurpose::None;
+		SessionSearch.Reset();
+		if (NextPurpose != ECWSessionFindPurpose::None && bSessionOperationInFlight && !bRecoveringFromNetworkFailure)
+		{
+			StartFindSessions(NextPurpose);
+		}
+		return;
+	}
 
 	if (!bWasSuccessful || !SessionSearch.IsValid())
 	{
@@ -1492,7 +1598,6 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 		}
 
 		CreateSessionWithRoomCode(PendingRoomCode);
-		CurrentFindPurpose = ECWSessionFindPurpose::None;
 		return;
 	}
 
@@ -1517,7 +1622,6 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 					SetStatus(FString::Printf(TEXT("JoinSession requested. RoomCode: %s"), *PendingJoinRoomCode));
 					SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, SearchResult);
 
-					CurrentFindPurpose = ECWSessionFindPurpose::None;
 					return;
 				}
 			}
@@ -1529,15 +1633,13 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 		return;
 	}
 
+	SetStatus(FString::Printf(TEXT("FindSessions success. Results: %d"), CompletedSearch->SearchResults.Num()));
 	if (FinishedPurpose == ECWSessionFindPurpose::ManualRefresh)
 	{
 		RefreshCachedRoomList();
 		OnRoomListUpdated.Broadcast(CachedRoomList);
 		CompleteSessionOperation(ECWSessionOperation::FindRooms, true, ECWSessionFailure::None);
 	}
-
-	SetStatus(FString::Printf(TEXT("FindSessions success. Results: %d"), SessionSearch->SearchResults.Num()));
-	CurrentFindPurpose = ECWSessionFindPurpose::None;
 }
 
 void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result)

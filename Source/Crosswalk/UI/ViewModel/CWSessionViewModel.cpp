@@ -18,6 +18,9 @@ void UCWSessionViewModel::Initialize(UCWGameInstance* InGameInstance)
 
 	BoundGameInstance = InGameInstance;
 
+	// 요청 반환이나 완료 이벤트를 기다리지 않고 입력 잠금을 동기화
+	InGameInstance->OnSessionBusyChanged.AddUObject(this, &UCWSessionViewModel::SetOperationInFlight);
+
 	// 로그인 상태 변경 이벤트 구독
 	InGameInstance->OnLoginStateChanged.AddDynamic(
 		this,
@@ -56,6 +59,8 @@ void UCWSessionViewModel::Uninitialize()
 	// 현재 GameInstance에 등록한 동적 델리게이트 구독 해제
 	if (UCWGameInstance* GameInstance = BoundGameInstance.Get())
 	{
+		GameInstance->OnSessionBusyChanged.RemoveAll(this);
+
 		GameInstance->OnLoginStateChanged.RemoveDynamic(
 			this,
 			&UCWSessionViewModel::HandleLoginStateChanged
@@ -221,6 +226,14 @@ void UCWSessionViewModel::RequestFindRooms()
 	SetOperationInFlight(
 		GameInstance->IsSessionOperationInFlight()
 	);
+}
+
+void UCWSessionViewModel::RequestCancelRoomSearch()
+{
+	if (UCWGameInstance* GameInstance = BoundGameInstance.Get())
+	{
+		GameInstance->CancelRoomSearch();
+	}
 }
 
 void UCWSessionViewModel::RequestJoinRoomByCode(
@@ -531,10 +544,18 @@ void UCWSessionViewModel::SetLastFailure(
 
 void UCWSessionViewModel::SetOperationInFlight(bool bInFlight)
 {
-	UE_MVVM_SET_PROPERTY_VALUE(
+	const UCWGameInstance* GameInstance = BoundGameInstance.Get();
+	const bool bSearchingRooms = IsValid(GameInstance) && GameInstance->IsRoomSearchInProgress();
+	UE_MVVM_SET_PROPERTY_VALUE(bAreRoomActionsLocked, bInFlight && !bSearchingRooms);
+
+	if (UE_MVVM_SET_PROPERTY_VALUE(
 		bIsOperationInFlight,
 		bInFlight
-	);
+	))
+	{
+		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(GetCanRefreshRooms);
+		UE_LOG(LogTemp, Log, TEXT("[SessionDiag] ViewModel Busy=%d"), bInFlight);
+	}
 }
 
 void UCWSessionViewModel::SetCurrentRoomCode(
