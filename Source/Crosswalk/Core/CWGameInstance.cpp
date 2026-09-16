@@ -108,6 +108,17 @@ void UCWGameInstance::Init()
 		DisableResolutionCVar->Set(1, ECVF_SetByCode);
 	}
 
+	// t.MaxFPS는 프로젝트 ini([ConsoleVariables] 섹션)에 넣어놔도 패키징 빌드에 반영이 안 되는
+	// 문제가 있어(원인 미확인, 2026-09-14) 팀원 전체 빌드에 확실히 적용되도록 코드에서 직접 ini
+	// 값을 읽어 강제로 설정한다. 60/144/무제한 A/B 테스트 값은 여전히 ini의 t.MaxFPS 줄만 바꾸면
+	// 되고, 이 코드는 그 값이 실제로 반영되게 만드는 역할만 한다.
+	if (IConsoleVariable* MaxFPSCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("t.MaxFPS")))
+	{
+		float ConfiguredMaxFPS = MaxFPSCVar->GetFloat();
+		GConfig->GetFloat(TEXT("ConsoleVariables"), TEXT("t.MaxFPS"), ConfiguredMaxFPS, GEngineIni);
+		MaxFPSCVar->Set(ConfiguredMaxFPS, ECVF_SetByCode);
+	}
+
 	CacheOnlineInterfaces();
 
 	// 호스트 연결 종료와 네트워크 단절을 한 경로에서 처리
