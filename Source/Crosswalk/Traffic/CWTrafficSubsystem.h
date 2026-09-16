@@ -212,11 +212,16 @@ private:
 	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
 
 	/**
-	 * 정지선 미발견 이유를 마지막으로 찍은 시각(초). 초당 한 줄로 조이는 데만 쓴다.
+	 * 마지막으로 찍은 정지선 미발견 줄의 내용. 같은 말을 반복하지 않는 데만 쓴다.
 	 * const 경로에서 갱신되므로 mutable 이다 - 진단 로그가 판정을 못 바꾸게 하려면
 	 * FindActiveStopLine 이 const 로 남아 있어야 한다.
+	 *
+	 * 사유를 포인터가 아니라 문자열로 들고 있는 이유: 넘어오는 값이 전부 리터럴이라
+	 * 대개는 포인터 비교로도 맞지만, 리터럴을 한 곳에 모아 준다는 보장이 표준에 없다.
+	 * 1초에 몇 번 도는 비교라 내용 비교로 두는 편이 안전하고 비용도 문제되지 않는다.
 	 */
-	mutable double LastStopLineMissLogTime = -1.0;
+	mutable FName LastStopLineMissLane;
+	mutable FString LastStopLineMissReason;
 
 	/**
 	 * 이 월드에서 마지막으로 경적이 난 시각(초). TryConsumeHornBudget 만 만진다.

@@ -699,6 +699,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.01"))
 	float RecoverBlendTickInterval = 0.02f;
 
+	/**
+	 * 이어붙이기를 시도할 최대 오차(cm). 넘으면 이어붙이지 않고 스냅하고 경고를 남긴다.
+	 *
+	 * 300cm 인 근거: 09-16 로그의 정상 복귀 오차는 중앙값 69cm, 75퍼센타일 74cm 였고
+	 * 고장난 것들은 200cm 부터 4397cm 까지였다. 두 분포가 완전히 갈라져 있어서 그 사이
+	 * 어디를 잡아도 되는데, 정상 쪽에 여유를 넉넉히 주는 값으로 300cm 을 잡았다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
+	float MaxRecoverBlendDistance = 300.f;
+
 protected:
 	// 아래 기상 설정은 전부 비워도 된다. 몬타주가 비어 있으면 연출만 빠지고 지금처럼 바로 일어선다.
 

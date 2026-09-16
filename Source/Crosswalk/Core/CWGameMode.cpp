@@ -214,7 +214,13 @@ void ACWGameMode::FlushStageProgressRefresh()
 {
 	bStageProgressRefreshScheduled = false;
 
-	UE_LOG(LogTemp, Log, TEXT("[Stage] 작업 존 %d개를 집계합니다."), WorkZones.Num());
+	/**
+	 * 집계 자체는 찍지 않는다. 붓질 한 번이 곧 집계 한 번이라 한 판에 3000줄이 넘게 쌓였고
+	 * (09-16 로그에서 3122줄), 내용은 "존 29개" 가 계속 반복될 뿐이라 읽을 값이 없다.
+	 * 실제로 볼 값인 "목표가 몇 줄이고 몇 개 달성됐나" 는 RefreshStageProgress 가
+	 * 구성이 바뀔 때만 찍는다 — 그쪽은 같은 판에서 18줄이었다.
+	 */
+	UE_LOG(LogTemp, Verbose, TEXT("[Stage] 작업 존 %d개를 집계합니다."), WorkZones.Num());
 
 	RefreshStageProgress();
 }
