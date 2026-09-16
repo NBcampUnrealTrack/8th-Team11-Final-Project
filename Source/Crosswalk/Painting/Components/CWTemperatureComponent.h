@@ -34,7 +34,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnRestingChangedSignature, UCWTe
  * 하는 일
  *   1. 작업하면 체온이 오르고, 가만히 있으면 일정 속도로 내려간다
  *   2. 체온에서 이동속도 계수와 작업속도 계수를 뽑아준다
- *   3. 휴식구역 안에서는 하락 속도가 크게 붙는다
+ *   3. 휴식구역 의자에 앉아 있는 동안에는 하락 속도가 크게 붙는다
  *
  * 최대 체온을 값으로 막지 않는 이유 (기획서 3.3)
  *   체온이 오르면 작업이 느려지고, 작업이 느려지면 체온 상승도 같이 느려진다.
@@ -81,9 +81,10 @@ public:
 	void AddWorkHeat(float EffectiveWorkSeconds);
 
 	/**
-	 * 휴식구역에 들어가고 나올 때 ACWRestZone 이 부른다. 서버에서만 유효하다.
+	 * 휴식구역 의자에 앉고 일어날 때 ACWRestZone 이 부른다. 서버에서만 유효하다.
 	 *
-	 * 점유자로 인정받은 1명만 true 를 받는다. 존 안에 서 있어도 점유자가 아니면 false 다.
+	 * 실제로 앉은 1명만 true 를 받는다. 존 안에 서 있기만 해서는 존 밖과 다를 것이 없다.
+	 * (착석 기획서 4.3 - 겹침으로 회복되던 예전 방식과 달라진 지점이다)
 	 */
 	void SetResting(bool bNewResting);
 
@@ -190,10 +191,21 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Temperature", meta = (ClampMin = "0.0"))
 	float CoolRate = 0.2f;
 
-	// 휴식구역 점유 중에 추가로 내려가는 체온(도/초). 위의 기본 하락에 더해진다.
-	// 기획서 8절 "눈에 띄게 빠르게" 를 만족하려면 기본 하락보다 확실히 커야 한다.
+	/**
+	 * 휴식구역 의자에 앉아 있는 동안 추가로 내려가는 체온(도/초). 위의 기본 하락에 더해진다.
+	 *
+	 * 값은 "완전 회복까지 10초" 에서 거꾸로 뽑았다. (착석 기획서 5절)
+	 *   필요 총 하락률 = (70 - 36.5) / 10초 = 3.35 도/초
+	 *   RestCoolRateBonus = 3.35 - CoolRate(0.2) = 3.15
+	 *
+	 * 예전 값은 9.0 이었고 그때는 3.6초면 다 식었다. 겹치기만 해도 회복되던 시절에는
+	 * 스쳐 지나가는 동안 끝나야 했지만, 이제는 앉아 있는 동안이 곧 자리를 붙잡는 시간이라
+	 * 짧을수록 좋은 값이 아니다.
+	 *
+	 * 주의: ReferenceMaxTemperature 나 NormalTemperature 를 바꾸면 이 값도 다시 뽑아야 한다.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Temperature", meta = (ClampMin = "0.0"))
-	float RestCoolRateBonus = 9.f;
+	float RestCoolRateBonus = 3.15f;
 
 	// 게이지 끝에서의 이동속도 계수. (기획서 4.1 "0 에 수렴")
 	//
