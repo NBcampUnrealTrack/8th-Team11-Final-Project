@@ -1,10 +1,11 @@
-﻿// CWClipboardPresenterSubsystem.cpp
+// CWClipboardPresenterSubsystem.cpp
 
 #include "UI/Clipboard/CWClipboardPresenterSubsystem.h"
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "Blueprint/UserWidget.h"
 
 #pragma region SubsystemOverrides
 
@@ -34,19 +35,33 @@ void UCWClipboardPresenterSubsystem::Deinitialize()
 
 #pragma region PublicFunctions
 
+ACWClipboardPropActor* UCWClipboardPresenterSubsystem::AttachPaperContent(
+	UUserWidget* InOwner, UWidget* InContent)
+{
+	ReconcileLostProp();
+	if (!IsValid(InOwner) || !IsValid(InContent) || !EnsurePropSpawned())
+	{
+		return nullptr;
+	}
+
+	InContent->RemoveFromParent();
+	PropActor->SetPaperContent(InOwner, InContent);
+	return PropActor;
+}
+
 void UCWClipboardPresenterSubsystem::PlayRaise()
 {
 	ReconcileLostProp();
 
-	// 이미 올라오는 중이면 진행 중인 연출이 곧 한 번 통보한다
-	// 여기서 또 쏘면 한 번의 열기에 완료가 두 번 간다
+	// 이미 올라오는 중이면 진행 중인 연출이 곧 한 번 통보함
+	// 여기서 또 쏘면 한 번의 열기에 완료가 두 번 전달됨
 	if (ClipboardState == ECWClipboardState::Raising)
 	{
 		return;
 	}
 
-	// 이미 올라와 있으면 움직일 게 없다. 그래도 호출당 한 번은 통보해야 한다
-	// 안 쏘면 UI 가 입력을 끈 채로 완료를 기다려 스테이지 선택이 영영 잠긴다
+	// 이미 올라와 있으면 움직일 필요가 없음. 그래도 호출당 한 번은 통보해야 함
+	// 안 쏘면 UI 가 입력을 끈 채로 완료를 기다려 스테이지 선택이 영영 잠김
 	if (ClipboardState == ECWClipboardState::Raised)
 	{
 		OnRaiseFinished.Broadcast();
@@ -55,8 +70,8 @@ void UCWClipboardPresenterSubsystem::PlayRaise()
 
 	if (!EnsurePropSpawned())
 	{
-		// 계약: 연출이 실패해도 완료 통보는 반드시 간다
-		// 안 쏘면 UI 가 TileView 를 영영 HitTestInvisible 로 두어 스테이지 선택이 잠긴다
+		// 계약: 연출이 실패해도 완료 통보는 반드시 전달됨
+		// 안 쏘면 UI 가 TileView 를 영영 HitTestInvisible 로 두어 스테이지 선택이 잠김
 		UE_LOG(
 			LogCWClipboard,
 			Warning,
@@ -76,14 +91,14 @@ void UCWClipboardPresenterSubsystem::PlayLower()
 {
 	ReconcileLostProp();
 
-	// 이미 내려가는 중이면 진행 중인 연출이 곧 한 번 통보한다
+	// 이미 내려가는 중이면 진행 중인 연출이 곧 한 번 통보함
 	if (ClipboardState == ECWClipboardState::Lowering)
 	{
 		return;
 	}
 
-	// 이미 내려가 있어도 호출당 한 번은 통보한다 (PlayRaise 와 대칭)
-	// 안 쏘면 닫기 완료를 기다리는 UI 가 팝업을 영영 못 걷어낸다
+	// 이미 내려가 있어도 호출당 한 번은 통보함 (PlayRaise 와 대칭)
+	// 안 쏘면 닫기 완료를 기다리는 UI 가 팝업을 영영 제거하지 못함
 	if (ClipboardState == ECWClipboardState::Hidden)
 	{
 		OnLowerFinished.Broadcast();
@@ -114,8 +129,8 @@ void UCWClipboardPresenterSubsystem::PlayLower()
 
 void UCWClipboardPresenterSubsystem::ReconcileLostProp()
 {
-	// Subsystem 은 맵 이동을 견디지만 프롭 액터는 월드와 함께 사라진다
-	// 그 경우 상태가 Raising 에 멈춰 다음 호출이 통째로 무시되는 걸 막는다
+	// Subsystem 은 맵 이동을 견디지만 프롭 액터는 월드와 함께 사라짐
+	// 그 경우 상태가 Raising 에 멈춰 다음 호출이 통째로 무시되는 걸 막음
 	if (!IsValid(PropActor) && ClipboardState != ECWClipboardState::Hidden)
 	{
 		UE_LOG(

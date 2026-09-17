@@ -1,4 +1,4 @@
-﻿// CWClipboardPropActor.h
+// CWClipboardPropActor.h
 
 #pragma once
 
@@ -10,6 +10,10 @@ class APlayerController;
 class UCurveFloat;
 class USpotLightComponent;
 class UStaticMeshComponent;
+class UUserWidget;
+class UWidget;
+class UWidgetComponent;
+class UCWClipboardWidgetInteractionComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCWClipboard, Log, All);
 
@@ -28,11 +32,11 @@ enum class ECWClipboardState : uint8
 };
 
 // 연출 완료 통보 (Presenter 내부 배선용)
-// UI 는 이걸 쓰지 않고 Subsystem 의 Dynamic 델리게이트를 쓴다
+// UI 는 이걸 쓰지 않고 Subsystem 의 Dynamic 델리게이트를 사용함
 DECLARE_MULTICAST_DELEGATE(FCWClipboardMotionFinishedSignature);
 
 // 로컬 카메라 앞에 떠 있는 클립보드 프롭
-// 월드에 존재하지만 복제되지 않고, 로컬 플레이어에게만 보인다
+// 월드에 존재하지만 복제되지 않고, 로컬 플레이어에게만 보임
 UCLASS()
 class CROSSWALK_API ACWClipboardPropActor : public AActor
 {
@@ -61,6 +65,16 @@ public:
 	// 어느 플레이어의 시점을 따라갈지 지정 (Subsystem 이 스폰 직후 호출)
 	void SetOwningPlayerController(APlayerController* InPlayerController);
 
+	// 팝업 인스턴스는 유지하고 내용만 종이 표면에 그림
+	void SetPaperContent(UUserWidget* InOwner, UWidget* InContent);
+	void ClearPaperContent(const UUserWidget* InOwner);
+	bool IsPaperOwner(const UUserWidget* InOwner) const;
+	void SetPaperInteractionEnabled(bool bEnabled);
+	bool PressPaperPointer(FKey InKey);
+	void ReleasePaperPointer(FKey InKey);
+	void ReleasePaperPointers();
+	void ScrollPaper(float InDelta);
+
 #pragma endregion
 
 #pragma region Motion
@@ -88,7 +102,7 @@ private:
 	// 경과 시간에서 지연을 뺀 뒤 0~1 로 정규화
 	float ComputeAlpha(float InOffsetSeconds) const;
 
-	// 최종 카메라 시점 기준으로 이번 프레임 트랜스폼을 세운다
+	// 최종 카메라 시점 기준으로 이번 프레임 트랜스폼을 설정함
 	void UpdateTransformFromCamera();
 
 	// 프롭과 전용 라이트를 월드 조명에서 격리
@@ -96,6 +110,9 @@ private:
 
 	// 연출 종료 처리와 통보
 	void FinishMotion();
+
+	// 게임 월드 충돌과 무관하게 종이 평면만 마우스로 선택함
+	void UpdatePaperPointer();
 
 #pragma endregion
 
@@ -106,17 +123,23 @@ private:
 	TObjectPtr<USceneComponent> PropRoot;
 
 	// 임시 플레이스홀더는 엔진 큐브를 납작하게 누른 판때기
-	// 정식 메시가 오면 BP 에서 StaticMesh 만 교체하면 된다
+	// 정식 메시가 오면 BP 에서 StaticMesh 만 교체하면 됨
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Clipboard", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> ClipboardMesh;
 
-	// 손 메시는 BP 에서 꽂는다 (Characters/Player/hand/ 의 Lefthand·Righthand). 비어 있어도 동작한다
+	// 손 메시는 BP 에서 지정함 (Characters/Player/hand/ 의 Lefthand·Righthand). 비어 있어도 동작함
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Clipboard", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> HandMesh;
 
-	// 루트에 붙어 클립보드와 함께 회전한다. 그래서 밝기가 항상 같다
+	// 루트에 붙어 클립보드와 함께 회전함. 그래서 밝기가 항상 같음
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Clipboard", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpotLightComponent> PropLight;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Clipboard", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UWidgetComponent> PaperWidget;
+
+	UPROPERTY(VisibleAnywhere, Category = "CW|Clipboard")
+	TObjectPtr<UCWClipboardWidgetInteractionComponent> PaperInteraction;
 
 #pragma endregion
 
@@ -140,22 +163,22 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Motion", meta = (ClampMin = "0.05"))
 	float MotionDuration = 0.45f;
 
-	// 회전이 위치보다 늦게 따라온다. 무게감은 거의 전부 이 값에서 나온다
+	// 회전이 위치보다 늦게 따라옴. 무게감은 거의 전부 이 값에서 나옴
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Motion", meta = (ClampMin = "0.0"))
 	float RotationLagSeconds = 0.08f;
 
-	// 지정하면 기본 이징 대신 이 커브를 쓴다 (리컴파일 없이 감각 조절)
+	// 지정하면 기본 이징 대신 이 커브를 사용함 (리컴파일 없이 감각 조절)
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Motion")
 	TObjectPtr<UCurveFloat> MotionCurve;
 
-	// 안착 후 미세 흔들림. 얼어붙은 프롭 느낌을 없앤다
+	// 안착 후 미세 흔들림. 얼어붙은 프롭 느낌을 줄임
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Sway")
 	float SwayAmplitudeDegrees = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Sway")
 	float SwayFrequency = 0.6f;
 
-	// 끄면 월드 조명을 그대로 받는다 (디버그용)
+	// 끄면 월드 조명을 그대로 받음 (디버그용)
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Lighting")
 	bool bIsolateLighting = true;
 
@@ -171,6 +194,10 @@ private:
 	float SwayElapsed = 0.f;
 
 	TWeakObjectPtr<APlayerController> OwningPlayerController;
+
+	TWeakObjectPtr<UUserWidget> PaperOwner;
+	TSet<FKey> PressedPaperKeys;
+	bool bPaperInteractionEnabled = false;
 
 #pragma endregion
 
