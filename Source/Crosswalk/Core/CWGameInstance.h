@@ -321,6 +321,12 @@ private:
 	// 세션 검색 요청이 끝났을 때 호출
 	void OnFindSessionsComplete(bool bWasSuccessful);
 
+	// OnFindSessionsComplete 목적별 분기. 방 목록 새로고침 / 방 코드 중복확인 / 방 코드로 참가는
+	// 서로 관련 없는 흐름이라 한 함수에 다 몰아두지 않고 목적마다 나눠 둔다.
+	void HandleFindSessionsForManualRefresh(bool bWasSuccessful);
+	void HandleFindSessionsForCreateRoomCodeCheck(bool bWasSuccessful);
+	void HandleFindSessionsForJoinByRoomCode(bool bWasSuccessful);
+
 	// 세션 참가 요청이 끝났을 때 호출
 	void OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
 

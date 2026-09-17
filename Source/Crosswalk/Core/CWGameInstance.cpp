@@ -1514,7 +1514,6 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 
 	const ECWSessionFindPurpose FinishedPurpose = CurrentFindPurpose;
 	CurrentFindPurpose = ECWSessionFindPurpose::None;
-	const TSharedPtr<FOnlineSessionSearch> CompletedSearch = SessionSearch;
 
 	if (bDiscardSearchResult)
 	{
@@ -1529,99 +1528,116 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 		return;
 	}
 
+	if (bWasSuccessful && SessionSearch.IsValid())
+	{
+		// 480 공용 풀 필터링 - 아래 어떤 목적(방 목록/방 코드 중복확인/방 코드 참가)으로 쓰이든
+		// 남의 게임 로비가 섞여 있으면 안 되므로, 갈래를 타기 전에 한 번만 걸러낸다.
+		SessionSearch->SearchResults.RemoveAll([](const FOnlineSessionSearchResult& SearchResult)
+		{
+			FString FoundGameId;
+			SearchResult.Session.SessionSettings.Get(CrosswalkSession::GameIdKey, FoundGameId);
+			return FoundGameId != CrosswalkSession::GameIdValue;
+		});
+	}
+
+	switch (FinishedPurpose)
+	{
+	case ECWSessionFindPurpose::ManualRefresh:
+		HandleFindSessionsForManualRefresh(bWasSuccessful);
+		return;
+
+	case ECWSessionFindPurpose::CheckRoomCodeForCreate:
+		HandleFindSessionsForCreateRoomCodeCheck(bWasSuccessful);
+		return;
+
+	case ECWSessionFindPurpose::JoinByRoomCode:
+		HandleFindSessionsForJoinByRoomCode(bWasSuccessful);
+		return;
+
+	default:
+		return;
+	}
+}
+
+void UCWGameInstance::HandleFindSessionsForManualRefresh(bool bWasSuccessful)
+{
 	if (!bWasSuccessful || !SessionSearch.IsValid())
 	{
 		SetStatus(TEXT("FindSessions failed"));
-		CurrentFindPurpose = ECWSessionFindPurpose::None;
-
-		if (FinishedPurpose == ECWSessionFindPurpose::ManualRefresh)
-		{
-			CachedRoomList.Reset();
-			OnRoomListUpdated.Broadcast(CachedRoomList);
-			CompleteSessionOperation(ECWSessionOperation::FindRooms, false, ECWSessionFailure::Unknown);
-		}
-		else if (FinishedPurpose == ECWSessionFindPurpose::CheckRoomCodeForCreate)
-		{
-			CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::Unknown);
-		}
-		else if (FinishedPurpose == ECWSessionFindPurpose::JoinByRoomCode)
-		{
-			CompleteSessionOperation(ECWSessionOperation::JoinRoom, false, ECWSessionFailure::Unknown);
-		}
-
+		CachedRoomList.Reset();
+		OnRoomListUpdated.Broadcast(CachedRoomList);
+		CompleteSessionOperation(ECWSessionOperation::FindRooms, false, ECWSessionFailure::Unknown);
 		return;
 	}
 
-	// 480 공용 풀 필터링 - 아래 어떤 목적(방 목록/방 코드 중복확인/방 코드 참가)으로 쓰이든
-	// 남의 게임 로비가 섞여 있으면 안 되므로, 갈래를 타기 전에 한 번만 걸러낸다.
-	SessionSearch->SearchResults.RemoveAll([](const FOnlineSessionSearchResult& SearchResult)
-	{
-		FString FoundGameId;
-		SearchResult.Session.SessionSettings.Get(CrosswalkSession::GameIdKey, FoundGameId);
-		return FoundGameId != CrosswalkSession::GameIdValue;
-	});
+	SetStatus(FString::Printf(TEXT("FindSessions success. Results: %d"), SessionSearch->SearchResults.Num()));
+	RefreshCachedRoomList();
+	OnRoomListUpdated.Broadcast(CachedRoomList);
+	CompleteSessionOperation(ECWSessionOperation::FindRooms, true, ECWSessionFailure::None);
+}
 
-	if (FinishedPurpose == ECWSessionFindPurpose::CheckRoomCodeForCreate)
+void UCWGameInstance::HandleFindSessionsForCreateRoomCodeCheck(bool bWasSuccessful)
+{
+	if (!bWasSuccessful || !SessionSearch.IsValid())
 	{
-		if (HasRoomCodeInSearchResults(PendingRoomCode))
+		SetStatus(TEXT("FindSessions failed"));
+		CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::Unknown);
+		return;
+	}
+
+	if (HasRoomCodeInSearchResults(PendingRoomCode))
+	{
+		if (RoomCodeGenerateAttemptCount >= MaxRoomCodeGenerateAttempts)
 		{
-			if (RoomCodeGenerateAttemptCount >= MaxRoomCodeGenerateAttempts)
-			{
-				SetStatus(TEXT("CreateRoom failed: could not generate unique room code"));
-				CurrentFindPurpose = ECWSessionFindPurpose::None;
-				CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::RoomCodeCollision);
-				return;
-			}
-
-			++RoomCodeGenerateAttemptCount;
-			PendingRoomCode = GenerateRoomCode();
-			StartFindSessions(ECWSessionFindPurpose::CheckRoomCodeForCreate);
+			SetStatus(TEXT("CreateRoom failed: could not generate unique room code"));
+			CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::RoomCodeCollision);
 			return;
 		}
 
-		CreateSessionWithRoomCode(PendingRoomCode);
+		++RoomCodeGenerateAttemptCount;
+		PendingRoomCode = GenerateRoomCode();
+		StartFindSessions(ECWSessionFindPurpose::CheckRoomCodeForCreate);
 		return;
 	}
 
-	if (FinishedPurpose == ECWSessionFindPurpose::JoinByRoomCode)
+	CreateSessionWithRoomCode(PendingRoomCode);
+}
+
+void UCWGameInstance::HandleFindSessionsForJoinByRoomCode(bool bWasSuccessful)
+{
+	if (!bWasSuccessful || !SessionSearch.IsValid())
 	{
-		for (FOnlineSessionSearchResult& SearchResult : SessionSearch->SearchResults)
+		SetStatus(TEXT("FindSessions failed"));
+		CompleteSessionOperation(ECWSessionOperation::JoinRoom, false, ECWSessionFailure::Unknown);
+		return;
+	}
+
+	for (FOnlineSessionSearchResult& SearchResult : SessionSearch->SearchResults)
+	{
+		FString FoundRoomCode;
+
+		if (SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomCodeKey, FoundRoomCode))
 		{
-			FString FoundRoomCode;
-
-			if (SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomCodeKey, FoundRoomCode))
+			if (FoundRoomCode.Equals(PendingJoinRoomCode, ESearchCase::IgnoreCase))
 			{
-				if (FoundRoomCode.Equals(PendingJoinRoomCode, ESearchCase::IgnoreCase))
-				{
-					BindJoinSessionCompleteDelegate();
+				BindJoinSessionCompleteDelegate();
 
-					// [Steam 엔진 버그 우회] JoinFirstFoundRoom과 같은 이유 - 검색 결과의
-					// bUseLobbiesIfAvailable이 로비 데이터 왕복에서 유실돼 항상 false로 복원되고,
-					// bUsesPresence(true)와 어긋나면 JoinSession이 곧바로 UnknownError로 실패한다.
-					SearchResult.Session.SessionSettings.bUseLobbiesIfAvailable =
-						SearchResult.Session.SessionSettings.bUsesPresence;
+				// [Steam 엔진 버그 우회] JoinFirstFoundRoom과 같은 이유 - 검색 결과의
+				// bUseLobbiesIfAvailable이 로비 데이터 왕복에서 유실돼 항상 false로 복원되고,
+				// bUsesPresence(true)와 어긋나면 JoinSession이 곧바로 UnknownError로 실패한다.
+				SearchResult.Session.SessionSettings.bUseLobbiesIfAvailable =
+					SearchResult.Session.SessionSettings.bUsesPresence;
 
-					SetStatus(FString::Printf(TEXT("JoinSession requested. RoomCode: %s"), *PendingJoinRoomCode));
-					SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, SearchResult);
+				SetStatus(FString::Printf(TEXT("JoinSession requested. RoomCode: %s"), *PendingJoinRoomCode));
+				SessionInterface->JoinSession(0, CrosswalkSession::GameSessionName, SearchResult);
 
-					return;
-				}
+				return;
 			}
 		}
-
-		SetStatus(FString::Printf(TEXT("JoinRoomByCode failed: room not found. RoomCode: %s"), *PendingJoinRoomCode));
-		CurrentFindPurpose = ECWSessionFindPurpose::None;
-		CompleteSessionOperation(ECWSessionOperation::JoinRoom, false, ECWSessionFailure::RoomNotFound);
-		return;
 	}
 
-	SetStatus(FString::Printf(TEXT("FindSessions success. Results: %d"), CompletedSearch->SearchResults.Num()));
-	if (FinishedPurpose == ECWSessionFindPurpose::ManualRefresh)
-	{
-		RefreshCachedRoomList();
-		OnRoomListUpdated.Broadcast(CachedRoomList);
-		CompleteSessionOperation(ECWSessionOperation::FindRooms, true, ECWSessionFailure::None);
-	}
+	SetStatus(FString::Printf(TEXT("JoinRoomByCode failed: room not found. RoomCode: %s"), *PendingJoinRoomCode));
+	CompleteSessionOperation(ECWSessionOperation::JoinRoom, false, ECWSessionFailure::RoomNotFound);
 }
 
 void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
