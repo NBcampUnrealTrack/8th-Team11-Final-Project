@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 // CWSupplyCarrierComponent.cpp
 
 #include "Painting/Components/CWSupplyCarrierComponent.h"
@@ -410,7 +410,7 @@ void UCWSupplyCarrierComponent::BreakCansAndSpill(const FVector& SpillLocation)
 	// 레이어를 채우면 사고 한 번이 붓질 수십 번을 요구한다. 오염 반경이 붓 반경의 몇 배라서다.
 	// 게다가 레이어는 스트라이프 자리의 칸을 빼두기 때문에 도색 구역 위 사고는 흔적도 안 남는다.
 	// 자국으로 두면 도색 구역 위에도 남고, 지우는 비용을 자국 개수로 직접 정할 수 있다.
-	if (ACWPaintDecalField* DecalField = FindDecalField())
+	if (ACWPaintDecalField* DecalField = FindDecalField(GroundLocation))
 	{
 		DecalField->AddBurst(GroundLocation, BrokenCount, GetOwner());
 	}
@@ -424,7 +424,7 @@ void UCWSupplyCarrierComponent::Multicast_PlayCanBurst_Implementation(FVector_Ne
 	OnCansBurst.Broadcast(this, BurstLocation, BrokenCount);
 }
 
-ACWPaintDecalField* UCWSupplyCarrierComponent::FindDecalField() const
+ACWPaintDecalField* UCWSupplyCarrierComponent::FindDecalField(const FVector& BurstLocation) const
 {
 	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
 	if (PaintingSubsystem == nullptr)
@@ -432,17 +432,36 @@ ACWPaintDecalField* UCWSupplyCarrierComponent::FindDecalField() const
 		return nullptr;
 	}
 
-	// 스테이지에 하나만 배치하는 존이라 먼저 찾은 것을 그대로 쓴다.
+	// 어느 필드에도 안 들어가는 지점일 때 넘길 필드. 처음 찾은 것을 쓴다.
+	ACWPaintDecalField* FallbackField = nullptr;
+
 	// 배치하지 않았으면 자국이 남지 않는다. 통 손실과 다운만으로 사고가 끝난다.
 	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : PaintingSubsystem->GetZones())
 	{
-		if (ACWPaintDecalField* DecalField = Cast<ACWPaintDecalField>(WeakZone.Get()))
+		ACWPaintDecalField* DecalField = Cast<ACWPaintDecalField>(WeakZone.Get());
+		if (DecalField == nullptr)
+		{
+			continue;
+		}
+
+		// 사고 지점을 품는 필드가 이 사고의 주인이다.
+		//
+		// 필드를 여러 개 나눠 배치할 수 있어서 지점으로 고른다. 먼저 찾은 것을 그냥 쓰면
+		// 다른 필드 위에서 난 사고가 그 필드의 Area 밖이라는 이유로 통째로 버려진다.
+		if (DecalField->ContainsAreaPoint(BurstLocation))
 		{
 			return DecalField;
 		}
+
+		if (FallbackField == nullptr)
+		{
+			FallbackField = DecalField;
+		}
 	}
 
-	return nullptr;
+	// 어느 필드의 범위도 아니다. 넘겨봐야 AddBurst 가 다시 걸러서 아무것도 남지 않는다.
+	// 그래도 넘기는 이유: 걸러내는 기준을 필드 한 곳에만 두기 위해서다.
+	return FallbackField;
 }
 
 int32 UCWSupplyCarrierComponent::BreakAllCans()
