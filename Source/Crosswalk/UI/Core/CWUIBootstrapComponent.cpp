@@ -9,6 +9,13 @@
 #include "UI/Core/CWUISubsystem.h"
 #include "UI/Data/CWUIPageConfigDataAsset.h"
 #include "Core/CWGameInstance.h"
+#include "Camera/CameraActor.h"
+#include "Engine/LevelStreaming.h"
+#include "EngineUtils.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
+#include "TimerManager.h"
+#include "UObject/UObjectGlobals.h"
 
 #pragma region ActorComponentLifecycle
 
@@ -35,6 +42,25 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (!OwnerPC->IsLocalController())
 	{
 		return;
+	}
+
+	// 프런트엔드가 준비되는 동안 원점 카메라 대신 레벨의 대기 구도를 사용한다.
+	if (InitialPage != ECWUIPage::None)
+	{
+		const UCWGameInstance* GI = OwnerPC->GetGameInstance<UCWGameInstance>();
+		const bool bRoomArrival = GetWorld()->GetNetMode() == NM_Client ||
+			(IsValid(GI) && GI->ShouldEnterRoomPage());
+		const FName CameraTag = !bRoomArrival && InitialPage == ECWUIPage::Title
+			? TEXT("CWFrontendTitleCamera") : TEXT("CWFrontendLoadingCamera");
+		for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
+		{
+			if (It->ActorHasTag(CameraTag))
+			{
+				OwnerPC->bAutoManageActiveCameraTarget = false;
+				OwnerPC->SetViewTarget(*It);
+				break;
+			}
+		}
 	}
 
 	// PlayerController가 소유한 LocalPlayer 확인
@@ -164,20 +190,13 @@ void UCWUIBootstrapComponent::BeginPlay()
 		}
 	}
 
-	// 시작 Page가 지정된 최초 진입에서만 화면을 표시
+	// 맵/복제 데이터가 준비되기 전에는 타이틀 UI나 방 연출을 시작하지 않는다.
 	if (StartPage != ECWUIPage::None &&
 		UISubsystem->GetCurrentPage() == ECWUIPage::None)
 	{
-		if (!UISubsystem->OpenPage(StartPage))
-		{
-			UE_LOG(
-				LogCWUI,
-				Error,
-				TEXT("UIBootstrap: failed to open initial page.")
-			);
-
-			return;
-		}
+		PendingInitialPage = StartPage;
+		GetWorld()->GetTimerManager().SetTimer(InitialPageTimer, this,
+			&UCWUIBootstrapComponent::TryOpenInitialPage, 0.1f, true);
 	}
 
 	// HUD 전용 화면은 Page를 열지 않으므로 초기 입력 모드를 직접 적용
@@ -191,6 +210,62 @@ void UCWUIBootstrapComponent::BeginPlay()
 		Log,
 		TEXT("UIBootstrap: initialization completed.")
 	);
+}
+
+void UCWUIBootstrapComponent::TryOpenInitialPage()
+{
+	UWorld* World = GetWorld();
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!World || !IsValid(PC) || !World->HasBegunPlay() || IsAsyncLoading() ||
+		World->IsVisibilityRequestPending())
+	{
+		bInitialWorldReady = false;
+		return;
+	}
+	for (const ULevelStreaming* Level : World->GetStreamingLevels())
+	{
+		if (Level && ((Level->ShouldBeLoaded() && !Level->IsLevelLoaded()) ||
+			(Level->ShouldBeVisible() && !Level->IsLevelVisible())))
+		{
+			bInitialWorldReady = false;
+			return;
+		}
+	}
+	const UCWGameInstance* GI = PC->GetGameInstance<UCWGameInstance>();
+	const bool bEnteringRoom = World->GetNetMode() == NM_Client ||
+		(IsValid(GI) && GI->ShouldEnterRoomPage());
+	if (bEnteringRoom && (!IsValid(World->GetGameState()) || !IsValid(PC->PlayerState) ||
+		!World->GetGameState()->PlayerArray.Contains(PC->PlayerState)))
+	{
+		bInitialWorldReady = false;
+		return;
+	}
+	// 준비된 화면이 한 번 렌더링될 시간을 확보한다. 로딩 완료 여부는 위 조건으로 판정한다.
+	if (!bInitialWorldReady)
+	{
+		bInitialWorldReady = true;
+		return;
+	}
+	if (ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
+	{
+		if (UCWUISubsystem* UI = LocalPlayer->GetSubsystem<UCWUISubsystem>())
+		{
+			World->GetTimerManager().ClearTimer(InitialPageTimer);
+			if (UI->GetCurrentPage() == ECWUIPage::None)
+			{
+				UI->OpenPage(bEnteringRoom ? ECWUIPage::Room : PendingInitialPage);
+			}
+		}
+	}
+}
+
+void UCWUIBootstrapComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(InitialPageTimer);
+	}
+	Super::EndPlay(EndPlayReason);
 }
 
 #pragma endregion

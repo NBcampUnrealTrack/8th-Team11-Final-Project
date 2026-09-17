@@ -286,6 +286,10 @@ void ACWBaseTool::HandleHeldStateChanged()
 	}
 	else
 	{
+		// 패링 중에는 도구 액터 자체가 숨겨진다. 피격으로 먼저 드롭되면
+		// 종료 노티파이가 HeldTool을 찾을 수 없으므로 드롭 시점에 복구한다.
+		// 서버와 OnRep_Holder 양쪽에서 실행되어 원격 화면도 같은 상태가 된다.
+		SetActorHiddenInGame(bStored);
 		OnDropped();
 	}
 }

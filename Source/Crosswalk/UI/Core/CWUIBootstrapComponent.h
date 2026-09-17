@@ -26,6 +26,13 @@ class CROSSWALK_API UCWUIBootstrapComponent : public UActorComponent
 protected:
 	// 로컬 PlayerController의 UI 초기화를 시작
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+private:
+	void TryOpenInitialPage();
+	FTimerHandle InitialPageTimer;
+	ECWUIPage PendingInitialPage = ECWUIPage::None;
+	bool bInitialWorldReady = false;
 
 #pragma endregion
 

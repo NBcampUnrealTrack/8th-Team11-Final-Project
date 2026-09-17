@@ -262,6 +262,8 @@ void ACWPlayerCharacter::BeginPlay()
 
 void ACWPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	RestoreParryVisuals();
+
 	// 앉은 채 접속이 끊기거나 캐릭터가 파괴되면, 존이 빈 자리를 영영 붙잡는다.
 	// 서버가 아니면 EndSitting 이 알아서 빠져나간다.
 	EndSitting();
@@ -429,6 +431,8 @@ void ACWPlayerCharacter::StartRagdoll(const FVector& LaunchVelocity, const FVect
 	 * 몬타주를 세우지 않으면 래그돌 위로 기상 애니가 계속 흘러 포즈가 섞인다.
 	 */
 	StopAnimMontage();
+	// 물리 시뮬레이션 중에는 애니메이션 종료 노티파이에 복구를 맡기지 않는다.
+	RestoreParryVisuals();
 	GetWorldTimerManager().ClearTimer(GetUpTimerHandle);
 
 	// 물리가 도는 동안에는 스냅샷 포즈가 의미 없다. 남아 있으면 다음 기상 때까지 끌려간다.
@@ -1287,16 +1291,48 @@ void ACWPlayerCharacter::PlayParrySwingMontage()
 		return;
 	}
 
-	/**
-	 * 반환값을 Duration 으로 받는다. 지금은 쓰지 않지만, 스윙 동안 조작을 잠그거나
-	 * 배트를 꺼냈다 넣는 타이밍을 맞출 때 필요한 값이 이것이다. 기본값인 MontageLength 는
-	 * 재생 속도를 반영하지 않아 속도를 바꾸는 순간 어긋난다.
-	 */
-	AnimInstance->Montage_Play(
+	const float Duration = AnimInstance->Montage_Play(
 		ParrySwingMontage,
 		1.f,
 		EMontagePlayReturnType::Duration
 	);
+	if (Duration > 0.f)
+	{
+		// 델리게이트는 재생으로 생성된 몬타주 인스턴스에 연결해야 한다.
+		FOnMontageEnded EndDelegate;
+		EndDelegate.BindUObject(this, &ACWPlayerCharacter::HandleParryMontageEnded);
+		AnimInstance->Montage_SetEndDelegate(EndDelegate, ParrySwingMontage);
+	}
+	else
+	{
+		RestoreParryVisuals();
+	}
+}
+
+void ACWPlayerCharacter::HandleParryMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	const UAnimInstance* AnimInstance = GetMesh() != nullptr ? GetMesh()->GetAnimInstance() : nullptr;
+	// 이전 스윙의 지연된 종료 이벤트가 새로 시작한 스윙의 소품을 숨기면 안 된다.
+	if (Montage == ParrySwingMontage &&
+		(AnimInstance == nullptr || !AnimInstance->Montage_IsPlaying(ParrySwingMontage)))
+	{
+		RestoreParryVisuals();
+	}
+}
+
+void ACWPlayerCharacter::RestoreParryVisuals()
+{
+	if (ParryPropMesh != nullptr)
+	{
+		ParryPropMesh->SetVisibility(false);
+	}
+
+	ACWBaseTool* HeldTool = ToolHolderComponent != nullptr ? ToolHolderComponent->GetHeldTool() : nullptr;
+	if (IsValid(HeldTool))
+	{
+		// 보관 상태 자체의 숨김까지 해제하지 않는다.
+		HeldTool->SetActorHiddenInGame(HeldTool->IsStored());
+	}
 }
 
 void ACWPlayerCharacter::PlayParrySwingEffect(const FCWParryProp* Prop, const FCWParrySyncData& ParrySyncData)

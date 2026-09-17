@@ -239,6 +239,10 @@ protected:
 	 */
 	void PlayParrySwingMontage();
 
+	// 정상 종료뿐 아니라 피격·몬타주 중단 때도 작업 도구를 다시 보이게 한다.
+	void HandleParryMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void RestoreParryVisuals();
+
 	/**
 	 * 소품에 맞는 패링 이펙트를 차량 위치에 낸다. 몬타주와 마찬가지로 모든 머신에서 돈다.
 	 *
