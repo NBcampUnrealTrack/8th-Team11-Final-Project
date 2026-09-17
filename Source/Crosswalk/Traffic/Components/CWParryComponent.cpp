@@ -5,6 +5,8 @@
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Data/Assets/CWParryPropCatalog.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "Stats/Stats.h"
 #include "Traffic/CWBaseVehicle.h"
@@ -45,7 +47,8 @@ void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 
 	if (!CanUseLocalCooldown())
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
+			*GetInstigatorTag(),
 			ParryCooldown - (GetWorld()->GetTimeSeconds() - LastLocalParryRequestTime));
 		return;
 	}
@@ -115,7 +118,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	 */
 	if (!CanUseServerCooldown())
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 서버 쿨타임에 막힘."));
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 서버 쿨타임에 막힘."), *GetInstigatorTag());
 		return;
 	}
 
@@ -127,7 +130,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		if (HitReactionComponent->IsHitLocked())
 		{
 			// 타이밍을 놓친 것이 아니라 서버 상태 때문에 못 받은 것이므로 쿨타임을 되돌려준다.
-			UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 히트락 상태라 서버 판정을 거부합니다. 쿨타임을 되돌려줍니다."));
+			UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 히트락 상태라 서버 판정을 거부합니다. 쿨타임을 되돌려줍니다."), *GetInstigatorTag());
 			RejectParry();
 			return;
 		}
@@ -136,7 +139,7 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(OwnerActor);
 	if (TrafficSubsystem == nullptr)
 	{
-		UE_LOG(LogCWTraffic, Warning, TEXT("[Parry] TrafficSubsystem 을 찾지 못했습니다. 쿨타임을 되돌려줍니다."));
+		UE_LOG(LogCWTraffic, Warning, TEXT("[Parry][%s] TrafficSubsystem 을 찾지 못했습니다. 쿨타임을 되돌려줍니다."), *GetInstigatorTag());
 		RejectParry();
 		return;
 	}
@@ -145,7 +148,8 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	const FCWParryAttemptContext ParryAttemptContext = BuildParryAttemptContext(*OwnerActor, CursorWorldLocation);
 
 	// 보정량은 컨텍스트에 들어간 값을 그대로 찍는다. 따로 다시 구하면 두 값이 갈릴 수 있다.
-	UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f, 랙 보정 %.0fms"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 서버 판정 시작. 활성 차량 %d대, 반경 %.0f, 각도 %.0f, 랙 보정 %.0fms"),
+		*GetInstigatorTag(),
 		TrafficSubsystem->GetActiveVehicleCount(), ParryRadius, ParryAngle,
 		ParryAttemptContext.ViewRewindSeconds * 1000.f);
 
@@ -164,7 +168,8 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 
 	if (ParriedVehicle == nullptr)
 	{
-		UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 판정 실패. 조건을 통과한 차량이 없습니다.%s"),
+		UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 판정 실패. 조건을 통과한 차량이 없습니다.%s"),
+			*GetInstigatorTag(),
 			bRefundCooldownOnMiss ? TEXT(" 쿨타임을 되돌려줍니다.") : TEXT(""));
 
 		if (bRefundCooldownOnMiss)
@@ -175,7 +180,8 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 		return;
 	}
 
-	UE_LOG(LogCWTraffic, Log, TEXT("[Parry] 판정 성공. 대상=%s"), *ParriedVehicle->GetName());
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 판정 성공. 대상=%s"),
+		*GetInstigatorTag(), *ParriedVehicle->GetName());
 
 	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ACWBaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.
@@ -293,6 +299,38 @@ void UCWParryComponent::ResetLocalCooldown()
 	// 초기값과 같은 의미다. 월드 시간은 항상 이보다 크므로 곧바로 사용 가능 상태가 된다.
 	// GetCooldownReadyRatio 도 이 값을 보므로 UI 가 함께 되돌아간다.
 	LastLocalParryRequestTime = -999.f;
+}
+
+FString UCWParryComponent::GetInstigatorTag() const
+{
+	const AActor* OwnerActor = GetOwner();
+	if (OwnerActor == nullptr)
+	{
+		return TEXT("(주인없음)");
+	}
+
+	/**
+	 * 폰의 PlayerState 를 쓴다. 컴포넌트가 붙은 액터가 곧 시전자이기 때문이다.
+	 *
+	 * 대수 대조 로그처럼 GetFirstPlayerController 로 집으면 안 된다. 그쪽은 **이 기계의**
+	 * 로컬 플레이어를 가리키는 값이라, 서버에서 부르면 네 명의 패링이 전부 호스트 이름으로
+	 * 찍힌다. 지금 고치려는 것이 정확히 그 구분이다.
+	 */
+	if (const APawn* OwnerPawn = Cast<APawn>(OwnerActor))
+	{
+		if (const APlayerState* OwnerPlayerState = OwnerPawn->GetPlayerState())
+		{
+			const FString PlayerName = OwnerPlayerState->GetPlayerName();
+			if (!PlayerName.IsEmpty())
+			{
+				return PlayerName;
+			}
+		}
+	}
+
+	// 접속 직후처럼 PlayerState 가 아직 없을 때도 줄은 남아야 한다. 이름이 빈 칸으로
+	// 찍히면 "이름 없는 사람" 과 "아직 붙는 중" 이 같은 모양이 된다.
+	return OwnerActor->GetName();
 }
 
 void UCWParryComponent::UpdateLocalCooldown()

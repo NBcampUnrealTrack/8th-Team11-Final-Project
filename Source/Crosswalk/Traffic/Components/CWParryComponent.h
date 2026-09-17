@@ -103,6 +103,18 @@ private:
 	// 쿨타임을 아직 쓰지 않은 상태로 되돌린다. 소유 클라이언트에서만 의미가 있다.
 	void ResetLocalCooldown();
 
+	/**
+	 * 로그에 붙일 시전자 표시. 진단 로그 전용이다.
+	 *
+	 * 판정이 전부 서버에서 도는 탓에 패링 줄은 호스트 로그에만 쌓인다. 그래서 이름이 없으면
+	 * 4인 세션에서 누가 눌렀는지 구분할 방법이 아예 없다. 09-17 로그에서 같은 차를 두 번
+	 * 친 3건과 1초 간격 연타 4회가 한 사람인지 여러 명이 겹친 것인지 끝내 못 갈랐다.
+	 *
+	 * 대수 대조 로그가 쓰는 표시와 같은 모양으로 맞춘다 - 두 로그를 시각으로 붙여 읽는 것이
+	 * 용도라, 같은 사람이 두 줄에서 다른 이름으로 보이면 맞춰 볼 수가 없다.
+	 */
+	FString GetInstigatorTag() const;
+
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryCooldown = 1.f;

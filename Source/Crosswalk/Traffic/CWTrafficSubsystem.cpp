@@ -636,15 +636,22 @@ void UCWTrafficSubsystem::LogStopLineMiss(const ACWTrafficLane* Lane, const TCHA
 	 *
 	 * 되돌아오는 전이도 찍힌다 — 파란불 -> 빨간불 -> 파란불 이면 세 줄이 남는다.
 	 * 조여야 할 것은 "몇 번 찍히나" 가 아니라 "같은 말을 반복하나" 다.
+	 *
+	 * **직전 한 줄이 아니라 차선별로 비교한다.** 이 판정은 차량마다 매 틱 들어오고,
+	 * 차량들이 서로 다른 차선을 물고 번갈아 부른다. 마지막 한 벌만 들고 있으면 A-B-A-B 로
+	 * 갈릴 때 직전 호출과 같은 경우가 사실상 없어서 억제가 통째로 무력해진다.
+	 * 09-17 세션에서 그렇게 새어 나간 줄이 서버 한 대에만 473,890 개였다.
 	 */
 	const FName LaneName = Lane ? Lane->GetFName() : NAME_None;
-	if (LastStopLineMissLane == LaneName && LastStopLineMissReason == Reason)
+	if (const FString* LastReason = LastStopLineMissReasonByLane.Find(LaneName))
 	{
-		return;
+		if (*LastReason == Reason)
+		{
+			return;
+		}
 	}
 
-	LastStopLineMissLane = LaneName;
-	LastStopLineMissReason = Reason;
+	LastStopLineMissReasonByLane.Add(LaneName, Reason);
 
 	/**
 	 * 목록 개수를 같이 찍는다. 이유 문자열만으로는 "제어기가 통행이라 답했다" 와
