@@ -10,7 +10,6 @@
 #include "Materials/MaterialInterface.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
-// FUpdateTextureRegion2D 는 Texture2D.h 에 전방 선언만 있다. 실제로 만들려면 이쪽이 필요하다.
 #include "RHITypes.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
@@ -187,6 +186,10 @@ void ACWWorkZone_Cells::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 void ACWWorkZone_Cells::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 설정이 빠진 존을 시작할 때 한 번 짚는다. 안 그러면 "왜 아무 도구도 안 먹지" 를
+	// 플레이 중에 찾아야 한다.
+	WarnIfToolSetupMissing();
 
 	ApplyCellMaterial();
 	BuildGrid();
@@ -799,9 +802,51 @@ int32 ACWWorkZone_Cells::GetCleanableCellCount() const
 
 bool ACWWorkZone_Cells::CanUseTool(ECWToolType ToolType) const
 {
+	if (ToolType == ECWToolType::None)
+	{
+		return false;
+	}
+
 	// 정리 도구와 채우기 도구는 AcceptedTools 에 없어도 이 존에 들어올 수 있다.
 	// AcceptedTools 에 같이 넣어버리면 검은색 롤러로도 도색 진행도가 올라가서 안 된다.
-	return IsCleanupTool(ToolType) || IsFillTool(ToolType) || Super::CanUseTool(ToolType);
+	if (IsCleanupTool(ToolType) || IsFillTool(ToolType))
+	{
+		return true;
+	}
+
+	if (AcceptedTools.Num() > 0)
+	{
+		return AcceptedTools.Contains(ToolType);
+	}
+
+	/**
+	 * 세 목록이 전부 비어 있으면 받지 않는다. 부모와 반대로 판단하는 유일한 지점이다.
+	 *
+	 * 부모는 AcceptedTools 가 비어 있으면 "도구를 가리지 않는다" 로 읽는다. 그 해석이
+	 * 칸 존에서는 위험하다. 여기까지 들어온 도구는 ResolveFillForTool 의 기본값을 타는데,
+	 * 그 기본값은 모드가 정하므로 등록되지 않은 도구가 전부 지우개(ClearCells)나
+	 * 칠하개(FillCells)가 되어버린다.
+	 *
+	 * 실제로 이것 때문에 라인 테두리 도구가 검은색 롤러 노릇을 했다. 정리 존의 목록이
+	 * 비어 있어서 라이너가 통과했고, ClearCells 모드라 지우기로 해석됐다.
+	 *
+	 * 조용히 허용하는 대신 막는다. 설정이 빠진 존은 아무 도구도 안 먹어서 바로 눈에 띄고,
+	 * 어느 존인지는 BeginPlay 의 경고가 짚어준다. (WarnIfToolSetupMissing)
+	 */
+	return false;
+}
+
+void ACWWorkZone_Cells::WarnIfToolSetupMissing() const
+{
+	if (AcceptedTools.Num() > 0 || FillTools.Num() > 0 || CleanupTools.Num() > 0)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[%s] 도구 목록(AcceptedTools · FillTools · CleanupTools)이 전부 비어 있습니다. ")
+		TEXT("이 존은 어떤 도구도 받지 않습니다. 셋 중 하나에 쓸 도구를 넣어 주세요."),
+		*GetName());
 }
 
 bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
