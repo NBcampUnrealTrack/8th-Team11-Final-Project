@@ -3,6 +3,7 @@
 
 #include "CWGameInstance.h"
 
+#include "Core/CWSessionLog.h"
 #include "CWMusicSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/NetDriver.h"
@@ -225,7 +226,7 @@ void UCWGameInstance::HandleNetworkFailure(
 	}
 
 	UE_LOG(
-		LogTemp,
+		LogCWSession,
 		Warning,
 		TEXT("GameInstance: network failure. Type=%d Error=%s"),
 		static_cast<int32>(FailureType),
@@ -408,7 +409,6 @@ void UCWGameInstance::CancelRoomSearch()
 	CurrentSessionOperation = ECWSessionOperation::None;
 	bSessionOperationInFlight = false;
 	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
-	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] RoomSearch cancelled by user"));
 }
 
 void UCWGameInstance::JoinRoomByCode(const FString& RoomCode)
@@ -652,13 +652,6 @@ bool UCWGameInstance::IsLanOnlySubsystem() const
 void UCWGameInstance::SetStatus(const FString& NewStatus)
 {
 	LastStatus = NewStatus;
-
-	UE_LOG(LogTemp, Log, TEXT("[Crosswalk Online] %s"), *LastStatus);
-
-	if (GEngine != nullptr)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, FString::Printf(TEXT("[Online] %s"), *LastStatus));
-	}
 }
 
 FString UCWGameInstance::GenerateRoomCode() const
@@ -747,8 +740,6 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 
 	SetStatus(TEXT("FindSessions requested"));
 	const bool bAccepted = SessionInterface->FindSessions(0, RequestedSearch);
-	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] FindStart Accepted=%d State=%d Purpose=%d"),
-		bAccepted, static_cast<int32>(RequestedSearch->SearchState), static_cast<int32>(FindPurpose));
 
 	// 동기 완료가 이미 처리됐으면 새 요청의 상태를 건드리지 않는다.
 	if (bAwaitingSearchCompletion && SessionSearch == RequestedSearch &&
@@ -911,7 +902,6 @@ bool UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
 
 	StartSessionOperationTimeout();
 	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
-	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Begin Operation=%d"), static_cast<int32>(Operation));
 
 	return true;
 }
@@ -935,8 +925,6 @@ void UCWGameInstance::CompleteSessionOperation(ECWSessionOperation Operation, bo
 	}
 
 	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
-	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Complete Operation=%d Success=%d Failure=%d Busy=%d"),
-		static_cast<int32>(Operation), bSuccess, static_cast<int32>(Failure), IsSessionOperationInFlight());
 	OnSessionOperationCompleted.Broadcast(Operation, bSuccess, Failure);
 }
 
@@ -999,9 +987,6 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 	const float Timeout = TimedOutOperation == ECWSessionOperation::FindRooms
 		? CrosswalkSession::RoomSearchTimeout : SessionOperationTimeout;
 	SetStatus(FString::Printf(TEXT("Session operation timed out after %.0fs"), Timeout));
-	UE_LOG(LogTemp, Warning, TEXT("[SessionDiag] Timeout Operation=%d AwaitingSearch=%d SearchState=%d"),
-		static_cast<int32>(TimedOutOperation), bAwaitingSearchCompletion,
-		SessionSearch.IsValid() ? static_cast<int32>(SessionSearch->SearchState) : -1);
 	if (TimedOutOperation == ECWSessionOperation::FindRooms)
 	{
 		CachedRoomList.Reset();
@@ -1530,9 +1515,6 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 	const ECWSessionFindPurpose FinishedPurpose = CurrentFindPurpose;
 	CurrentFindPurpose = ECWSessionFindPurpose::None;
 	const TSharedPtr<FOnlineSessionSearch> CompletedSearch = SessionSearch;
-	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] FindComplete Success=%d Discard=%d Purpose=%d Results=%d"),
-		bWasSuccessful, bDiscardSearchResult, static_cast<int32>(FinishedPurpose),
-		CompletedSearch.IsValid() ? CompletedSearch->SearchResults.Num() : 0);
 
 	if (bDiscardSearchResult)
 	{
