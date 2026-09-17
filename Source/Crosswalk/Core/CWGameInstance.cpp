@@ -16,6 +16,8 @@
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemNames.h"
 #include "OnlineSubsystemUtils.h"
+#include "Engine/LocalPlayer.h"
+#include "UI/Core/CWUISubsystem.h"
 
 namespace CrosswalkSession
 {
@@ -1715,6 +1717,15 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 		FinalConnectString += TEXT("?Name=") + CrosswalkSession::SanitizeNameOption(LoggedInDisplayName);
 	}
 
+	// 이동 중에는 이전 메뉴를 남기지 않고 현재 레벨의 대기 구도를 보여준다.
+	if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
+	{
+		if (UCWUISubsystem* UI = LocalPlayer->GetSubsystem<UCWUISubsystem>())
+		{
+			UI->ClosePage();
+			UI->SetHUDVisible(false);
+		}
+	}
 	PlayerController->ClientTravel(FinalConnectString, TRAVEL_Absolute);
 }
 
