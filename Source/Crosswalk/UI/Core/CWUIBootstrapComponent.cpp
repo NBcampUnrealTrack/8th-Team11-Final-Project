@@ -51,6 +51,7 @@ void UCWUIBootstrapComponent::BeginPlay()
 		const bool bRoomArrival = GetWorld()->GetNetMode() == NM_Client ||
 			(IsValid(GI) && GI->ShouldEnterRoomPage());
 		const FName CameraTag = !bRoomArrival && InitialPage == ECWUIPage::Title
+			&& !(IsValid(GI) && GI->ShouldReturnToRoomList())
 			? TEXT("CWFrontendTitleCamera") : TEXT("CWFrontendLoadingCamera");
 		for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
 		{
@@ -188,6 +189,10 @@ void UCWUIBootstrapComponent::BeginPlay()
 		{
 			StartPage = ECWUIPage::Room;
 		}
+		else if (IsValid(CWGameInstance) && CWGameInstance->ShouldReturnToRoomList())
+		{
+			StartPage = ECWUIPage::RoomList;
+		}
 	}
 
 	// 맵/복제 데이터가 준비되기 전에는 타이틀 UI나 방 연출을 시작하지 않는다.
@@ -231,7 +236,7 @@ void UCWUIBootstrapComponent::TryOpenInitialPage()
 			return;
 		}
 	}
-	const UCWGameInstance* GI = PC->GetGameInstance<UCWGameInstance>();
+	UCWGameInstance* GI = PC->GetGameInstance<UCWGameInstance>();
 	const bool bEnteringRoom = World->GetNetMode() == NM_Client ||
 		(IsValid(GI) && GI->ShouldEnterRoomPage());
 	if (bEnteringRoom && (!IsValid(World->GetGameState()) || !IsValid(PC->PlayerState) ||
@@ -250,11 +255,20 @@ void UCWUIBootstrapComponent::TryOpenInitialPage()
 	{
 		if (UCWUISubsystem* UI = LocalPlayer->GetSubsystem<UCWUISubsystem>())
 		{
-			World->GetTimerManager().ClearTimer(InitialPageTimer);
 			if (UI->GetCurrentPage() == ECWUIPage::None)
 			{
-				UI->OpenPage(bEnteringRoom ? ECWUIPage::Room : PendingInitialPage);
+				const ECWUIPage Page = bEnteringRoom ? ECWUIPage::Room :
+					(IsValid(GI) && GI->ShouldReturnToRoomList() ? ECWUIPage::RoomList : PendingInitialPage);
+				if (!UI->OpenPage(Page))
+				{
+					return;
+				}
+				if (Page == ECWUIPage::RoomList && IsValid(GI))
+				{
+					GI->CompleteRoomListReturn();
+				}
 			}
+			World->GetTimerManager().ClearTimer(InitialPageTimer);
 		}
 	}
 }

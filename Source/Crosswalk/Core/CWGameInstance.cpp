@@ -11,6 +11,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/Base64.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
@@ -40,6 +41,39 @@ namespace CrosswalkSession
 
 	// 방 목록에 표시할 제목. 비어 있으면 UI가 호스트 이름으로 대체함
 	static const FName RoomNameKey(TEXT("CW_ROOM_NAME"));
+	static const FName EncodedRoomNameKey(TEXT("CW_ROOM_NAME_B64_V1"));
+
+	// UTF-8 바이트를 ASCII로 감싸 OSS의 ANSI 문자열 변환을 피함
+	static FString EncodeRoomName(const FString& RoomName)
+	{
+		const FTCHARToUTF8 Utf8(*RoomName);
+		return FBase64::Encode(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+	}
+
+	// 새 키를 우선 복원하고 구버전 세션은 기존 제목을 읽음
+	static FString ReadRoomName(const FOnlineSessionSettings& Settings)
+	{
+		FString Encoded;
+		if (Settings.Get(EncodedRoomNameKey, Encoded))
+		{
+			TArray<uint8> Bytes;
+			if (Encoded.IsEmpty())
+			{
+				return FString();
+			}
+			if (!FBase64::Decode(Encoded, Bytes) || Bytes.IsEmpty() || Bytes.Contains(0))
+			{
+				return FString();
+			}
+			const FUTF8ToTCHAR Decoded(reinterpret_cast<const UTF8CHAR*>(Bytes.GetData()), Bytes.Num());
+			const FString RoomName(Decoded.Length(), Decoded.Get());
+			// 손상된 UTF-8은 대체 제목을 표시하도록 빈 값으로 반환함
+			return EncodeRoomName(RoomName) == Encoded ? RoomName : FString();
+		}
+		FString LegacyRoomName;
+		Settings.Get(RoomNameKey, LegacyRoomName);
+		return LegacyRoomName;
+	}
 
 	// 비밀방 여부. 목록 표시에서만 걸러내고 방 코드 입장은 그대로 허용함.
 	// bool 대신 int32로 둔다 - 세션 플래그가 로비 데이터 왕복에서 유실된 전례가 있어(#182)
@@ -654,6 +688,7 @@ bool UCWGameInstance::IsLanOnlySubsystem() const
 void UCWGameInstance::SetStatus(const FString& NewStatus)
 {
 	LastStatus = NewStatus;
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] %s"), *NewStatus);
 }
 
 FString UCWGameInstance::GenerateRoomCode() const
@@ -698,6 +733,8 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 	if (bAwaitingSearchCompletion)
 	{
 		DeferredFindPurpose = FindPurpose;
+		UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Search queued Purpose=%d Operation=%d"),
+			static_cast<int32>(FindPurpose), static_cast<int32>(CurrentSessionOperation));
 		SetStatus(TEXT("FindSessions queued: waiting for the cancelled search to finish"));
 		return;
 	}
@@ -735,6 +772,17 @@ void UCWGameInstance::StartFindSessions(ECWSessionFindPurpose FindPurpose)
 		EOnlineComparisonOp::Equals
 	);
 
+	// 코드 검색은 해당 코드만 조회해 무관한 로비의 상세 응답 대기를 줄임
+	const FString SearchRoomCode = FindPurpose == ECWSessionFindPurpose::CheckRoomCodeForCreate
+		? PendingRoomCode : (FindPurpose == ECWSessionFindPurpose::JoinByRoomCode
+			? PendingJoinRoomCode : FString());
+	if (!SearchRoomCode.IsEmpty())
+	{
+		SessionSearch->QuerySettings.Set(
+			CrosswalkSession::RoomCodeKey, SearchRoomCode, EOnlineComparisonOp::Equals);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Search start Purpose=%d Code=%s"),
+		static_cast<int32>(FindPurpose), *SearchRoomCode);
 	BindFindSessionsCompleteDelegate();
 	const TSharedRef<FOnlineSessionSearch> RequestedSearch = SessionSearch.ToSharedRef();
 	bAwaitingSearchCompletion = true;
@@ -790,6 +838,7 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 	SessionSettings.Set(CrosswalkSession::RoomCodeKey, RoomCode, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::GameIdKey, CrosswalkSession::GameIdValue, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::RoomNameKey, PendingRoomName, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	SessionSettings.Set(CrosswalkSession::EncodedRoomNameKey, CrosswalkSession::EncodeRoomName(PendingRoomName), EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::IsPrivateKey, bPendingIsPrivate ? 1 : 0, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 
 	BindCreateSessionCompleteDelegate();
@@ -838,7 +887,7 @@ FCWRoomSummary UCWGameInstance::BuildRoomSummary(const FOnlineSessionSearchResul
 	FCWRoomSummary Summary;
 
 	SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomCodeKey, Summary.RoomCode);
-	SearchResult.Session.SessionSettings.Get(CrosswalkSession::RoomNameKey, Summary.RoomName);
+	Summary.RoomName = CrosswalkSession::ReadRoomName(SearchResult.Session.SessionSettings);
 
 	Summary.HostName = SearchResult.Session.OwningUserName;
 
@@ -1422,6 +1471,7 @@ void UCWGameInstance::FinishNetworkFailureRecovery()
 	// 남은 세션이 착지를 오염시키지 않기 때문이다 - 새 월드는 NM_Standalone 이고
 	// ShouldEnterRoomPage 가 넷 모드를 함께 보므로 자동으로 메뉴로 간다.
 	bRecoveringFromNetworkFailure = false;
+	bReturnToRoomList = bReturnToRoomList || !CurrentRoomCode.IsEmpty();
 
 	CurrentRoomCode.Empty();
 	CurrentRoomName.Empty();
@@ -1515,6 +1565,9 @@ void UCWGameInstance::OnFindSessionsComplete(bool bWasSuccessful)
 	bAwaitingSearchCompletion = false;
 
 	const ECWSessionFindPurpose FinishedPurpose = CurrentFindPurpose;
+	UE_LOG(LogTemp, Log, TEXT("[SessionDiag] Search complete Purpose=%d Success=%d Discard=%d Deferred=%d Results=%d"),
+		static_cast<int32>(FinishedPurpose), bWasSuccessful, bDiscardSearchResult,
+		static_cast<int32>(DeferredFindPurpose), SessionSearch.IsValid() ? SessionSearch->SearchResults.Num() : 0);
 	CurrentFindPurpose = ECWSessionFindPurpose::None;
 
 	if (bDiscardSearchResult)
@@ -1689,7 +1742,7 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 	if (FNamedOnlineSession* NamedSession = SessionInterface->GetNamedSession(SessionName))
 	{
 		NamedSession->SessionSettings.Get(CrosswalkSession::RoomCodeKey, JoinedRoomCode);
-		NamedSession->SessionSettings.Get(CrosswalkSession::RoomNameKey, CurrentRoomName);
+		CurrentRoomName = CrosswalkSession::ReadRoomName(NamedSession->SessionSettings);
 		CurrentHostName = NamedSession->OwningUserName;
 	}
 
@@ -1754,6 +1807,8 @@ void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSucce
 		return;
 	}
 
+	// 유령 세션 정리와 실제 방 나가기를 구분함
+	bReturnToRoomList = bReturnToRoomList || !CurrentRoomCode.IsEmpty();
 	CurrentRoomCode.Empty();
 	CurrentRoomName.Empty();
 	CurrentHostName.Empty();
