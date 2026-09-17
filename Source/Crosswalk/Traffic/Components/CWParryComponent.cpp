@@ -5,9 +5,29 @@
 #include "Characters/Components/CWVehicleHitReactionComponent.h"
 #include "Data/Assets/CWParryPropCatalog.h"
 #include "GameFramework/Actor.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+#include "Stats/Stats.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
 #include "Traffic/CWTrafficLog.h"
+
+/**
+ * 패링 서버 판정을 한 구간으로 잰다.
+ *
+ * 프레임 예산표의 복제·판정 배정(0.5ms)에 패링이 빠져 있었다. 그 칸의 실측은 래그돌
+ * 동기화만 잡은 값이라, 패링이 더해지면 배정이 다시 잡혀야 한다.
+ *
+ * 쪼개지 않고 HandleServerParryRequest 전체를 한 구간으로 두는 이유는, 그 표가 파트
+ * 단위 합계를 쓰기 때문이다. 후보 탐색·방향 계산·멀티캐스트 중 어디가 비싼지는 이 값이
+ * 배정을 위협할 때 쪼개서 보면 된다. 지금 쪼개면 표에 넣을 수 없는 숫자가 세 개 늘어난다.
+ *
+ * stat 과 CSV 를 같이 내보낸다. 표의 다른 수치가 CSV 캡처로 나온 값이라 CSV 컬럼이
+ * 없으면 같은 표에 넣을 수 없고, 에디터에서 바로 보려면 stat 이 필요하다.
+ * 둘 다 Shipping 에서는 컴파일되지 않으므로 최종 빌드 비용은 0 이다.
+ */
+DECLARE_STATS_GROUP(TEXT("CWTraffic"), STATGROUP_CWTraffic, STATCAT_Advanced);
+DECLARE_CYCLE_STAT(TEXT("Parry ServerJudge"), STAT_CWParryServerJudge, STATGROUP_CWTraffic);
+CSV_DEFINE_CATEGORY(CWTraffic, true);
 
 UCWParryComponent::UCWParryComponent()
 {
@@ -81,6 +101,11 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 	{
 		return;
 	}
+
+	// 권한 확인 뒤에 잰다. 클라이언트에서 불려 바로 빠지는 호출까지 표본에 넣으면
+	// 프레임 합계는 그대로인데 "판정 한 번의 비용" 으로 읽을 때 값이 희석된다.
+	SCOPE_CYCLE_COUNTER(STAT_CWParryServerJudge);
+	CSV_SCOPED_TIMING_STAT(CWTraffic, ParryServerJudge);
 
 	/**
 	 * 서버 쿨타임에 걸린 것은 환불하지 않는다.
