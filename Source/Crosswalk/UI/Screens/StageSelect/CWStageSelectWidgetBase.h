@@ -1,4 +1,4 @@
-﻿// CWStageSelectWidgetBase.h
+// CWStageSelectWidgetBase.h
 
 #pragma once
 
@@ -7,6 +7,8 @@
 #include "CWStageSelectWidgetBase.generated.h"
 
 class UCWClipboardPresenterSubsystem;
+class ACWClipboardPropActor;
+class USizeBox;
 class UWidget;
 
 // 클립보드 내리기 연출 완료 후 부모 위젯에 제거 가능 시점을 알림
@@ -26,6 +28,10 @@ protected:
 	virtual void NativeConstruct() override;
 
 	virtual void NativeDestruct() override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual void NativeOnMouseCaptureLost(const FCaptureLostEvent& CaptureLostEvent) override;
 
 #pragma endregion
 
@@ -61,6 +67,9 @@ private:
 
 	void FinishCloseStageSelect();
 
+	void AttachPaperContent();
+	void RestorePaperContent();
+
 #pragma endregion
 
 #pragma region Variables
@@ -70,9 +79,18 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	TObjectPtr<UWidget> Panel_StageSelectInteraction;
 
+	// Designer에서는 일반 패널, 실행 중에는 클립보드 표면으로 옮김
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Panel_ClipboardPaper;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> SizeBox_PaperHost;
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCWClipboardPresenterSubsystem> ClipboardPresenter;
+
+	TWeakObjectPtr<ACWClipboardPropActor> PaperActor;
 
 	// 연출 완료 후 Designer에서 지정한 원래 Visibility로 복구
 	ESlateVisibility OriginalInteractionVisibility =
