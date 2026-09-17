@@ -212,16 +212,20 @@ private:
 	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
 
 	/**
-	 * 마지막으로 찍은 정지선 미발견 줄의 내용. 같은 말을 반복하지 않는 데만 쓴다.
+	 * 차선별로 마지막에 찍은 정지선 미발견 사유. 같은 말을 반복하지 않는 데만 쓴다.
 	 * const 경로에서 갱신되므로 mutable 이다 - 진단 로그가 판정을 못 바꾸게 하려면
 	 * FindActiveStopLine 이 const 로 남아 있어야 한다.
 	 *
 	 * 사유를 포인터가 아니라 문자열로 들고 있는 이유: 넘어오는 값이 전부 리터럴이라
 	 * 대개는 포인터 비교로도 맞지만, 리터럴을 한 곳에 모아 준다는 보장이 표준에 없다.
-	 * 1초에 몇 번 도는 비교라 내용 비교로 두는 편이 안전하고 비용도 문제되지 않는다.
+	 *
+	 * **차선 하나가 아니라 차선마다 들고 있어야 한다.** 예전에는 마지막 줄 한 벌만 들고
+	 * "직전 호출과 같으면 건너뛴다" 로 막았는데, 이 판정은 차량마다 매 틱 들어오고 차량들이
+	 * 서로 다른 차선을 물고 번갈아 부른다. 그래서 A-B-A-B 로 갈리면 직전 호출과 같은 경우가
+	 * 사실상 없어 전부 통과했다. 2026-09-17 4인 세션에서 서버 한 대가 473,890 줄을 찍었고,
+	 * 그 로그 안의 패링 줄 111 개가 묻혀서 안 보였다.
 	 */
-	mutable FName LastStopLineMissLane;
-	mutable FString LastStopLineMissReason;
+	mutable TMap<FName, FString> LastStopLineMissReasonByLane;
 
 	/**
 	 * 이 월드에서 마지막으로 경적이 난 시각(초). TryConsumeHornBudget 만 만진다.
