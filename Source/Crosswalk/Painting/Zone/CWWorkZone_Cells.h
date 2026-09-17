@@ -142,6 +142,9 @@ public:
 	 */
 	bool ResolveFillForTool(ECWToolType ToolType) const;
 
+	/** 도구 목록이 하나도 설정되지 않은 존을 시작할 때 한 번 짚는다. */
+	void WarnIfToolSetupMissing() const;
+
 	/**
 	 * 바깥 고리가 있는가. (OverspillMargin > 0)
 	 *
@@ -160,6 +163,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsFilledAt(const FVector& WorldLocation) const;
 
+	/**
+	 * 이 도구가 이 존에 들어올 수 있는가.
+	 *
+	 * 부모와 한 군데가 다르다. 부모는 AcceptedTools 가 비어 있으면 "도구를 가리지 않는다" 로
+	 * 읽지만, 칸 존은 세 목록(AcceptedTools · FillTools · CleanupTools)이 전부 비어 있으면
+	 * 아무 도구도 받지 않는다. 이유는 구현부 주석에 적어 뒀다.
+	 */
 	virtual bool CanUseTool(ECWToolType ToolType) const override;
 
 	virtual bool CanWorkNow(ECWToolType ToolType) const override;

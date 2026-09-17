@@ -1,4 +1,4 @@
-// Copyright Crosswalk Team. All Rights Reserved.
+﻿// Copyright Crosswalk Team. All Rights Reserved.
 // CWSupplyCarrierComponent.h
 
 #pragma once
@@ -145,8 +145,17 @@ private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayCanBurst(FVector_NetQuantize BurstLocation, int32 BrokenCount);
 
-	/** 스테이지에 배치된 자국 필드. 없으면 nullptr. */
-	ACWPaintDecalField* FindDecalField() const;
+	/**
+	 * 이 사고를 맡을 자국 필드. 없으면 nullptr.
+	 *
+	 * 사고 지점을 품는 필드를 고른다. 스테이지에 필드를 여러 개 나눠 배치할 수 있어서다.
+	 * 먼저 찾은 것을 그냥 쓰면, 다른 필드 위에서 난 사고가 그 필드의 Area 밖이라는 이유로
+	 * 통째로 버려진다. (터지긴 하는데 바닥에 아무것도 안 남는다)
+	 *
+	 * 어느 필드에도 안 들어가는 지점이면 처음 찾은 필드를 넘긴다. 거기서 다시 걸러져
+	 * 아무 자국도 남지 않는다. 인도나 맵 밖에서 터진 사고가 여기에 해당한다.
+	 */
+	ACWPaintDecalField* FindDecalField(const FVector& BurstLocation) const;
 
 	UFUNCTION(Server, Reliable)
 	void Server_PickUpCan(ACWPaintSupplyBox* RequestedBox);
