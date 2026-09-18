@@ -6,6 +6,7 @@
 #include "Engine/TimerHandle.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/Structs/CWParryAttemptContext.h"
+#include "Traffic/CWTrafficDiagnostics.h"
 #include "CWTrafficSubsystem.generated.h"
 
 class ACWBaseVehicle;
@@ -31,28 +32,8 @@ public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
 
-	/**
-	 * 정지선·신호 동기화 진단 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogSync 0` 으로 끈다.
-	 *
-	 * 서버와 클라이언트가 같은 사건을 각자 찍으므로, 두 로그를 나란히 놓으면
-	 * "서버는 세웠는데 클라는 그냥 지나갔다" 가 줄 단위로 드러난다.
-	 * 두 화면을 눈으로 비교해서는 이 판정을 낼 수 없다 - 카메라와 시점이 다르기 때문이다.
-	 */
-	static bool IsSyncLoggingEnabled();
-
-	/**
-	 * 스폰 순간의 커넥션별 관련성 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogNetRelevancy 0` 으로 끈다.
-	 *
-	 * 서버에서만 찍는다. 클라이언트는 자기가 왜 그 차를 못 받았는지 알 방법이 없다 -
-	 * 관련성 판정은 서버가 커넥션마다 따로 내리고, 탈락한 액터는 아예 보내지지 않는다.
-	 */
-	static bool IsNetRelevancyLoggingEnabled();
-
-	/** 진단 로그의 역할 표시. 두 로그를 섞어 놓아도 어느 쪽 것인지 알아야 한다. */
-	static const TCHAR* GetNetRoleTag(const AActor* Actor);
-
-	/** 진단 로그의 액터 식별자. 서버와 클라이언트에서 같은 값이 나오는 것을 고른다. */
-	static FString GetNetIdTag(const AActor* Actor);
+	// 진단 로그(콘솔 변수·역할 태그·대수 대조)는 여기 없다. CWTrafficDiagnostics 참고.
+	// 판정을 바꾸면 안 되는 코드라 판정 코드와 파일을 나눠 둔다.
 
 	/**
 	 * 이 사람의 화면이 서버보다 얼마나 뒤처져 있는가(초). 판정 직전에 차량을 되돌릴 양이다.
@@ -144,63 +125,20 @@ private:
 	 */
 	bool PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext, float& OutTimeToImpact) const;
 
-	/**
-	 * 이 화면의 차량 대수를 세 갈래로 나눠 찍는다. 서버·클라이언트 양쪽에서 돈다.
-	 *
-	 * 트랜스폼을 복제하지 않는 구조라(ACWBaseVehicle 의 네트워크 주석 참고) 클라이언트 화면에
-	 * 차가 보이려면 **세 가지가 전부** 성립해야 하고, 셋 중 무엇이 깨져도 증상은 똑같이
-	 * "차가 안 보인다" 로 나온다. 눈으로는 갈래를 가를 수 없어서 숫자로 가른다.
-	 *
-	 *   차량      액터 채널이 이 커넥션에 열렸는가. 서버보다 적으면 관련성이나 대역폭이다
-	 *   차선연결  CurrentLane 이 해결됐는가. 적으면 Tick 이 매 프레임 빠져나가 차가 얼어붙는다
-	 *   메쉬      VariantPick 의 OnRep 이 돌았는가. 적으면 차는 있는데 투명하다
-	 *
-	 * 세 숫자가 서버와 모두 같은데도 안 보인다면 네트워크 문제가 아니다. 그 판정 자체가
-	 * 이 로그의 산출물이다 - 아니라는 것을 확인하는 데 드는 시간이 제일 아깝다.
-	 *
-	 * 숫자 뒤에 차량 목록을 네트워크 GUID 로 붙인다. **개수만으로는 갈래가 하나 더 남는다** -
-	 * "호스트 2대, 클라 1대" 가 그 차가 아예 안 온 것인지, 늦게 온 것인지, 먼저 사라진
-	 * 것인지 구분되지 않는다. 셋은 원인이 다르다(전달 실패 / 채널 개설 지연 / 소멸 전파).
-	 * GUID 는 서버와 클라이언트가 같은 값을 가지므로(GetNetIdTag 주석 참고) 두 로그의
-	 * 차량을 한 대씩 짝지어 생존 구간을 비교할 수 있다.
-	 *
-	 * 줄 앞에 순번과 **직전 줄로부터 실제로 흐른 시간**을 적는다. 이 로그를 읽는 방식이
-	 * "머신마다 한 줄씩 같은 초에 놓고 비교" 인데, 그러려면 양쪽이 같은 간격으로 찍혔다는
-	 * 보장이 있어야 한다. 그 보장이 없으면 **"차가 없던 초" 와 "로그가 안 찍힌 초" 가
-	 * 구분되지 않아서**, 부하로 프레임이 밀린 클라이언트가 차량을 잃은 것처럼 보인다.
-	 * 실제로 PIE 부하 판에서 이 착시로 한 번 오판했다. (수치는 노션 검증 문서)
-	 *
-	 * 순번은 로그 줄 자체가 유실됐는지, 간격은 타이머가 밀렸는지를 각각 가른다. 둘은
-	 * 원인이 다르므로 한 값으로 합칠 수 없다.
-	 */
-	void LogVehicleCensus();
-
-	/**
-	 * FindActiveStopLine 이 "세울 정지선 없음" 으로 빠져나간 이유를 남긴다.
-	 *
-	 * 클라이언트에서 차가 정지선을 그냥 지나갈 때, 눈으로는 세 갈래가 구분되지 않는다.
-	 * 셋은 고칠 곳이 완전히 다르다.
-	 *
-	 *   제어기 목록이 비었다   등록이 클라이언트에서 안 돌았다
-	 *   통행 신호라고 답한다   제어기는 있는데 GroupStates 가 안 왔다 (기본색으로 답하는 중)
-	 *   정지선 목록이 비었다   정지선 액터 등록 문제
-	 *
-	 * 매 프레임 차량마다 불리는 자리라 초당 한 줄로 조인다. 갈래를 가리는 것이 목적이라
-	 * 모든 줄이 필요하지 않고, 이유가 프레임 단위로 바뀌는 성질도 아니다.
-	 */
+	/** FindActiveStopLine 이 "세울 정지선 없음" 으로 빠져나간 이유를 진단 로그에 넘긴다. */
 	void LogStopLineMiss(const ACWTrafficLane* Lane, const TCHAR* Reason) const;
 
 private:
 	TArray<TWeakObjectPtr<ACWBaseVehicle>> ActiveVehicles;
 
-	/** 대수 대조 줄의 순번. 로그 줄이 통째로 유실됐는지 보는 값이다. */
-	int32 CensusSequence = 0;
-
 	/**
-	 * 직전 대조를 찍은 실제 시각. 월드 시간이 아니라 벽시계다 -
-	 * 이 값과 맞춰 볼 상대가 로그 타임스탬프이기 때문이다.
+	 * 직전 줄을 기억하는 진단 로그(대수 대조 순번, 차선별 미발견 사유).
+	 *
+	 * mutable 인 이유: FindActiveStopLine 이 const 인데 그 안에서 사유를 남긴다.
+	 * 진단 로그가 판정을 못 바꾸게 하려면 판정 함수가 const 로 남아 있어야 하고,
+	 * 그러면서도 "같은 말 반복" 을 거르려면 마지막 사유는 갱신돼야 한다.
 	 */
-	double LastCensusRealTime = -1.0;
+	mutable FCWTrafficDiagnostics Diagnostics;
 
 	/** 대수 대조 로그의 타이머. 주기는 1초 고정이고, 켜고 끄는 것은 콘솔 변수가 한다. */
 	FTimerHandle CensusTimerHandle;
@@ -210,22 +148,6 @@ private:
 
 	/** 레벨에 배치된 정지선들. 같은 이유로 클라이언트에도 등록된다. */
 	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
-
-	/**
-	 * 차선별로 마지막에 찍은 정지선 미발견 사유. 같은 말을 반복하지 않는 데만 쓴다.
-	 * const 경로에서 갱신되므로 mutable 이다 - 진단 로그가 판정을 못 바꾸게 하려면
-	 * FindActiveStopLine 이 const 로 남아 있어야 한다.
-	 *
-	 * 사유를 포인터가 아니라 문자열로 들고 있는 이유: 넘어오는 값이 전부 리터럴이라
-	 * 대개는 포인터 비교로도 맞지만, 리터럴을 한 곳에 모아 준다는 보장이 표준에 없다.
-	 *
-	 * **차선 하나가 아니라 차선마다 들고 있어야 한다.** 예전에는 마지막 줄 한 벌만 들고
-	 * "직전 호출과 같으면 건너뛴다" 로 막았는데, 이 판정은 차량마다 매 틱 들어오고 차량들이
-	 * 서로 다른 차선을 물고 번갈아 부른다. 그래서 A-B-A-B 로 갈리면 직전 호출과 같은 경우가
-	 * 사실상 없어 전부 통과했다. 2026-09-17 4인 세션에서 서버 한 대가 473,890 줄을 찍었고,
-	 * 그 로그 안의 패링 줄 111 개가 묻혀서 안 보였다.
-	 */
-	mutable TMap<FName, FString> LastStopLineMissReasonByLane;
 
 	/**
 	 * 이 월드에서 마지막으로 경적이 난 시각(초). TryConsumeHornBudget 만 만진다.

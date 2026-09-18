@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+#include "CWTrafficDiagnostics.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficStopLine.h"
 #include "CWTrafficSubsystem.h"
@@ -262,7 +263,7 @@ void ACWTrafficDirector::BeginPlay()
 	 * 증상은 "클라이언트 차량이 정지선을 그냥 지나간다" 하나로 뭉쳐서 나오므로, 이 줄이
 	 * 없으면 복제가 꺼진 것인지 관련성에 걸린 것인지 휴면인지 갈라낼 수 없다.
 	 */
-	if (UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	if (CWTrafficDiagnostics::IsSyncLoggingEnabled())
 	{
 		/**
 		 * 월드 역할과 액터 권한을 따로 찍는다. 복제되지 않는 액터는 클라이언트에서도
@@ -270,7 +271,7 @@ void ACWTrafficDirector::BeginPlay()
 		 * 칸이 "클라 / 있음" 으로 나오면 그 자체가 복제가 안 됐다는 증거가 된다.
 		 */
 		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] %s 복제설정 - 권한 %s / 복제 %s / 항상관련 %s / 휴면 %d / 갱신빈도 %.1f / 그룹 %d개"),
-			GetWorld() && GetWorld()->GetNetMode() == NM_Client ? TEXT("클라") : TEXT("서버"),
+			CWTrafficDiagnostics::GetNetRoleTag(this),
 			*GetName(),
 			HasAuthority() ? TEXT("있음") : TEXT("없음"),
 			GetIsReplicated() ? TEXT("켜짐") : TEXT("꺼짐"),
@@ -466,13 +467,13 @@ void ACWTrafficDirector::SetGroupStateAt(int32 GroupIndex, ECWTrafficSignalState
 
 void ACWTrafficDirector::LogSyncSignalChange(FName GroupName, ECWTrafficSignalState NewState, ECWTrafficSignalState OldState) const
 {
-	if (!UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	if (!CWTrafficDiagnostics::IsSyncLoggingEnabled())
 	{
 		return;
 	}
 
 	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] %s 그룹 '%s' %s <- %s"),
-		UCWTrafficSubsystem::GetNetRoleTag(this),
+		CWTrafficDiagnostics::GetNetRoleTag(this),
 		*GetName(),
 		*GroupName.ToString(),
 		*GetSignalStateText(NewState).ToString(),

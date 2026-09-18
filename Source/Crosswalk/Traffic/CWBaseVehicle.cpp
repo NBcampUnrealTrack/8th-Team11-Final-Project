@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
+#include "CWTrafficDiagnostics.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficMath.h"
 #include "CWTrafficSubsystem.h"
@@ -1101,7 +1102,7 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 	// 로그보다 먼저 알린다. 진단 스위치를 껐다고 보정이 안 도는 일이 없어야 한다.
 	OnStopStateChanged.Broadcast(this, bStoppedAtStopLine, StopTargetDistance);
 
-	if (!UCWTrafficSubsystem::IsSyncLoggingEnabled())
+	if (!CWTrafficDiagnostics::IsSyncLoggingEnabled())
 	{
 		return;
 	}
@@ -1111,8 +1112,8 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 		// 목표 지점과 실제로 선 자리를 같이 남긴다. 양쪽 로그에서 목표가 같은데 선 자리가
 		// 다르면 도착 지연 탓이고, 목표부터 다르면 신호색이 아직 안 갔거나 차선을 다르게 보고 있다.
 		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선 앞 정지 - 차선 %s / 진행거리 %.1fcm / 목표지점 %.1fcm / 오차 %.1fcm"),
-			UCWTrafficSubsystem::GetNetRoleTag(this),
-			*UCWTrafficSubsystem::GetNetIdTag(this),
+			CWTrafficDiagnostics::GetNetRoleTag(this),
+			*CWTrafficDiagnostics::GetNetIdTag(this),
 			CurrentLane ? *CurrentLane->GetName() : TEXT("(없음)"),
 			DistanceAlongLane,
 			StopTargetDistance,
@@ -1122,8 +1123,8 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 	}
 
 	UE_LOG(LogCWTraffic, Log, TEXT("[TrafficSync][%s] 차량 %s 정지선에서 출발 - 진행거리 %.1fcm"),
-		UCWTrafficSubsystem::GetNetRoleTag(this),
-		*UCWTrafficSubsystem::GetNetIdTag(this),
+		CWTrafficDiagnostics::GetNetRoleTag(this),
+		*CWTrafficDiagnostics::GetNetIdTag(this),
 		DistanceAlongLane);
 }
 
