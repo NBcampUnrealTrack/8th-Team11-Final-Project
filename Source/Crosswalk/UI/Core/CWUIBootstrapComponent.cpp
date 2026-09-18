@@ -16,6 +16,15 @@
 #include "GameFramework/PlayerState.h"
 #include "TimerManager.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Components/TextBlock.h"
+
+UCWUIBootstrapComponent::UCWUIBootstrapComponent()
+{
+	static ConstructorHelpers::FClassFinder<UUserWidget> NoticeClass(
+		TEXT("/Game/CrossWalk/UI/Common/Feedback/WBP_ConfirmDialog"));
+	SessionNoticeClass = NoticeClass.Class;
+}
 
 #pragma region ActorComponentLifecycle
 
@@ -267,6 +276,26 @@ void UCWUIBootstrapComponent::TryOpenInitialPage()
 				{
 					GI->CompleteRoomListReturn();
 				}
+			}
+			// 복귀 페이지가 준비된 뒤 안내하며, 팝업이 열렸을 때만 대기 내용을 소비함
+			if (!bEnteringRoom && IsValid(GI) && !GI->GetPendingSessionNotice().IsEmpty())
+			{
+				UUserWidget* Notice = SessionNoticeClass ? CreateWidget<UUserWidget>(PC, SessionNoticeClass) : nullptr;
+				UTextBlock* Message = Notice ? Cast<UTextBlock>(Notice->GetWidgetFromName(TEXT("Text_Message"))) : nullptr;
+				UWidget* Cancel = Notice ? Notice->GetWidgetFromName(TEXT("WBP_ButtonCommon_Cancel")) : nullptr;
+				if (!Message || !Cancel)
+				{
+					UE_LOG(LogCWUI, Error, TEXT("Session notice: confirm dialog configuration is invalid."));
+					World->GetTimerManager().ClearTimer(InitialPageTimer);
+					return;
+				}
+				Message->SetText(GI->GetPendingSessionNotice());
+				Cancel->SetVisibility(ESlateVisibility::Collapsed);
+				if (!UI->OpenPopup(Notice))
+				{
+					return;
+				}
+				GI->ClearPendingSessionNotice();
 			}
 			World->GetTimerManager().ClearTimer(InitialPageTimer);
 		}

@@ -272,6 +272,12 @@ void UCWGameInstance::HandleNetworkFailure(
 	// UE 연결이 끊겨도 세션 멤버십은 남을 수 있다.
 	// 남은 멤버십을 정리하고 메뉴까지 돌려보낸다.
 	// 사용자용 DestroyRoom 은 조기 반환 경로가 있어 완료 델리게이트가 오지 않을 수 있으므로 쓰지 않는다.
+	// 직접 나가는 중 발생한 연결 종료는 별도 안내하지 않음
+	if (CurrentSessionOperation != ECWSessionOperation::DestroyRoom && !bRecoveringFromNetworkFailure)
+	{
+		PendingSessionNotice = NSLOCTEXT("CWSession", "ConnectionClosedNotice",
+			"호스트가 방을 나갔거나 연결이 끊어졌습니다.");
+	}
 	RecoverToMenuAfterNetworkFailure();
 }
 
