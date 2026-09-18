@@ -6,8 +6,8 @@
 #include "CWBaseVehicle.h"
 #include "CWTrafficDirector.h"
 #include "CWTrafficLane.h"
+#include "CWTrafficMath.h"
 #include "CWTrafficStopLine.h"
-#include "Interfaces/Interface_ParryReceiver.h"
 
 #include "Components/SkinnedMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -411,7 +411,8 @@ ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptCo
 		return nullptr;
 	}
 
-	if (!IInterface_ParryReceiver::Execute_ReceiveParryAttempt(BestVehicle, ParryAttemptContext))
+	// 최종 판정은 고른 차량이 내린다. 인터페이스를 거치지 않는다 - 구현체가 차량 하나뿐이다.
+	if (!BestVehicle->ReceiveParryAttempt(ParryAttemptContext))
 	{
 		return nullptr;
 	}
@@ -445,17 +446,13 @@ bool UCWTrafficSubsystem::PassesAttemptFilter(ACWBaseVehicle& Vehicle, const FCW
 	// 커서가 향한 쪽만 친다. 쿼터뷰라 높이 차이는 보지 않는다.
 	const FVector AttemptDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 	const FVector ToVehicle = (Vehicle.GetActorLocation() - ParryAttemptContext.AttemptLocation).GetSafeNormal2D();
-	if (!AttemptDirection.IsNearlyZero() && !ToVehicle.IsNearlyZero())
+	if (!AttemptDirection.IsNearlyZero() && !ToVehicle.IsNearlyZero()
+		&& !CWTrafficMath::IsInsideCone(ToVehicle, AttemptDirection, ParryAttemptContext.ParryAngle))
 	{
-		// ParryAngle 은 부채꼴 전체 각이므로 절반을 기준선으로 쓴다.
-		const float HalfAngle = FMath::Clamp(ParryAttemptContext.ParryAngle, 0.f, 360.f) * 0.5f;
-		const float Dot = FVector::DotProduct(AttemptDirection, ToVehicle);
-		if (Dot < FMath::Cos(FMath::DegreesToRadians(HalfAngle)))
-		{
-			UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
-				*Vehicle.GetName(), FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))), HalfAngle);
-			return false;
-		}
+		UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 각도 밖 (커서와 %.0f도 차이, 허용 %.0f도)"),
+			*Vehicle.GetName(), CWTrafficMath::AngleBetweenDegrees(AttemptDirection, ToVehicle),
+			FMath::Clamp(ParryAttemptContext.ParryAngle, 0.f, 360.f) * 0.5f);
+		return false;
 	}
 
 	// 충돌 직전 윈도우 안이어야 한다. 윈도우 값은 차량이 단일 관리한다.
