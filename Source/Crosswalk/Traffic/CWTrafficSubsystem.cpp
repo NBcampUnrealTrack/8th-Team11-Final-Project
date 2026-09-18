@@ -336,10 +336,12 @@ void UCWTrafficSubsystem::RegisterVehicle(ACWBaseVehicle* Vehicle)
 
 void UCWTrafficSubsystem::UnregisterVehicle(ACWBaseVehicle* Vehicle)
 {
-	if (Vehicle)
+	// 죽은 약참조도 같이 걷어낸다. 제어기·정지선 등록부와 같은 규칙이다 - 세 등록부가
+	// 서로 다르게 정리하면 "왜 이 목록만 빈 칸이 남나" 를 따로 따져야 한다.
+	ActiveVehicles.RemoveAllSwap([Vehicle](const TWeakObjectPtr<ACWBaseVehicle>& Entry)
 	{
-		ActiveVehicles.RemoveSingleSwap(Vehicle);
-	}
+		return !Entry.IsValid() || Entry.Get() == Vehicle;
+	});
 }
 
 ACWBaseVehicle* UCWTrafficSubsystem::FindVehicleAhead(const ACWBaseVehicle* Vehicle) const

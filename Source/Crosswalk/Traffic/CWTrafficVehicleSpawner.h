@@ -81,17 +81,14 @@ private:
 	/** 1대 스폰한 뒤 다음 간격을 뽑아 다시 타이머를 건다. */
 	void HandleSpawnTimer();
 
-	/** 차종을 지정해 실제로 스폰한다. */
-	ACWBaseVehicle* SpawnVehicleOfClass(TSubclassOf<ACWBaseVehicle> SpawnClass, float StartDistance);
-
 	/**
-	 * 입구 점유를 보지 않고 지정 거리에 1대 스폰. 차종은 비율대로 뽑는다. 프리웜 전용이다.
+	 * 차종을 지정해 실제로 스폰한다. 입구 점유는 보지 않는다.
 	 *
 	 * 블루프린트에 열지 않는다. 입구 점유 판정(IsLaneEntranceBlocked)은 "가장 최근에 스폰한
 	 * 차가 맨 뒤" 를 전제하는데, 밖에서 임의 거리에 스폰하면 그 전제가 깨져 다음 차가
 	 * 겹쳐 나온다. 밖에서 1대 넣고 싶으면 RequestSpawn 이다.
 	 */
-	ACWBaseVehicle* SpawnVehicle(float StartDistance);
+	ACWBaseVehicle* SpawnVehicleOfClass(TSubclassOf<ACWBaseVehicle> SpawnClass, float StartDistance);
 
 	/**
 	 * 방금 스폰한 차량이 각 커넥션에 관련 있는지, 그리고 얼마나 떨어져 있는지 찍는다.
