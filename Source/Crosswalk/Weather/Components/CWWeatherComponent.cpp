@@ -6,6 +6,10 @@
 #include "Data/Structs/CWWeatherStateRow.h"
 #include "Engine/DataTable.h"
 #include "Net/UnrealNetwork.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+
+// 카테고리 정의는 CWWeatherControlComponent.cpp에 있다. 여기선 선언만.
+CSV_DECLARE_CATEGORY_EXTERN(CWWeather);
 
 UCWWeatherComponent::UCWWeatherComponent()
 {
@@ -37,6 +41,8 @@ void UCWWeatherComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 
 void UCWWeatherComponent::AdvanceWeatherState()
 {
+	CSV_SCOPED_TIMING_STAT(CWWeather, WeatherAdvanceState);
+
 	if (!GetOwner()->HasAuthority())
 	{
 		return;

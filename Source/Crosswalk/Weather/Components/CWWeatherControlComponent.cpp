@@ -6,7 +6,12 @@
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"
 #include "NiagaraComponent.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 #include "Weather/Components/CWWeatherComponent.h"
+
+// 날씨 연출 프레임 비용 측정용. 카테고리 정의는 여기서만 한다 - CWWeatherComponent.cpp는
+// 선언만 가져다 쓴다 (같은 이름을 여러 파일에서 정의하면 링커가 다중 정의로 터진다).
+CSV_DEFINE_CATEGORY(CWWeather, true);
 
 UCWWeatherControlComponent::UCWWeatherControlComponent()
 {
@@ -36,6 +41,8 @@ void UCWWeatherControlComponent::BeginPlay()
 
 void UCWWeatherControlComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	CSV_SCOPED_TIMING_STAT(CWWeather, WeatherControlTick);
+
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	if (TargetNiagaraComponent == nullptr)
