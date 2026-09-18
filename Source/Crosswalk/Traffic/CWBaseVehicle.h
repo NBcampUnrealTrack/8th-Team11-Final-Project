@@ -452,8 +452,21 @@ private:
 	 * 패링당했을 때 날아갈 방향을 정한다. 기준점은 플레이어가 아니라 이 차량이다.
 	 *
 	 * 커서 지점을 못 쓰면 플레이어 기준 방향으로, 그것도 비면 TryParry 가 온 길로 되돌려 보낸다.
+	 * 정해진 방향은 ApplySelfLaunchDeadZone 을 거쳐 시전자 쪽이 걸러진다.
 	 */
 	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
+
+	/**
+	 * 시전자 쪽으로 향한 발사 방향을 데드존 경계로 밀어낸다. (SelfLaunchDeadZoneAngle)
+	 *
+	 * 막으려고 차 쪽을 가리켰을 뿐인데 차가 자기한테 되돌아오는 것을 막는다. 커서가 차량과
+	 * 시전자 사이에 있으면 (커서 - 차량위치)가 곧 (시전자 - 차량위치)와 같은 방향이 되어,
+	 * 차량이 원래 오던 방향 그대로 다시 온다. 패링에 성공했는데 그대로 치이는 상태다.
+	 *
+	 * 방향을 버리지 않고 경계로 밀기만 한다. 좌우 중 원래 가리킨 쪽으로 밀어야
+	 * "왼쪽을 가리켰는데 오른쪽으로 날아가는" 일이 생기지 않는다.
+	 */
+	FVector ApplySelfLaunchDeadZone(const FVector& LaunchDirection, const FCWParryAttemptContext& ParryAttemptContext) const;
 
 	/**
 	 * 패링 판정을 확정하고 차량을 LaunchDirection 으로 튕겨낸다. 성공하면 true.
@@ -832,6 +845,36 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParriedSpeedMultiplier = 1.f;
+
+	/**
+	 * 시전자 쪽을 금지 구역으로 두는 부채꼴 전체 각(도). 0 이면 제한 없음.
+	 *
+	 * 차량에서 본 시전자 방향을 중심으로 이 각 안에 들어온 발사 방향은 경계로 밀려난다.
+	 * ThreatLateralTolerance 처럼 좌우 각각이 아니라 부채꼴 전체 각이다. 각도 판정을
+	 * 쓰는 다른 값(FCWParryAttemptContext::ParryAngle)과 같은 뜻으로 맞췄다.
+	 *
+	 * 60 은 임의값이다. 산출은 이렇다 - 차량은 방향이 꺾인 뒤 직진하므로 시전자와의 최소
+	 * 거리가 (패링 시점 거리 x sin(반각))으로 정해진다. 윈도우 0.3초에 750cm/s 면 거리가
+	 * 225cm 이고, 반각 30도면 225 x sin(30) = 112cm 가 남는다. 캐릭터 캡슐 반경이 40cm
+	 * 안팎이니 차체 반폭 70cm 까지는 스치지 않는다는 계산이다.
+	 *
+	 * 그런데 차체 반폭은 차종마다 다르고(CollisionBox 를 메시에서 잡는다) 속도도 개체별
+	 * 배율이 붙으므로, 이 계산은 기준선일 뿐 보장이 아니다. 고정 각이라 거리가 계산 전제와
+	 * 다를 때 구멍이 남는다 - 각을 거리로 나누는 방식(sin(반각) = 막을 폭 / 거리)으로
+	 * 바꾸면 그 구멍이 사라지지만, 값이 자동으로 정해져 튜닝 손잡이가 없어진다.
+	 * 지금은 손으로 잡아 보고 구멍이 실제로 보이면 그때 옮긴다.
+	 *
+	 * 좁히면 자기 쪽으로 되돌아오는 사고가 남고, 넓히면 "내 앞을 지나가게 날리는" 조준이
+	 * 통째로 막힌다. 후자가 커버 패링 직후의 흔한 조작이라 넓히는 쪽이 더 위험하다.
+	 *
+	 * 구간마다 성질이 다르다. 180 은 반각 90, 곧 시전자 쪽 반구 전체를 막아 차가 시전자에게
+	 * 한 발짝도 다가가지 못하는 상태다. 그 위로는 조준 가능 범위가 시전자 뒤쪽으로 좁혀지고,
+	 * 360 에서는 반각이 180 이라 정확히 반대 방향 하나만 데드존 밖에 남아 모든 발사가
+	 * 시전자 정반대로 모인다. 커서가 결과에 영향을 주지 못하므로 그 값은 금지 구역이 아니라
+	 * 방향 강제로 읽어야 한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	float SelfLaunchDeadZoneAngle = 60.f;
 
 	/**
 	 * 현재 주행 중인 차선.
