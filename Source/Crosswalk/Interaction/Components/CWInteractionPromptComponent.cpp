@@ -7,6 +7,11 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerState.h"
 #include "Interaction/CWInteractionLog.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+
+// 프레임 예산표(W7 재점검 테스트 시트)의 "상호작용 프롬프트" 영역이 이 카테고리로 잡힌다.
+// 카테고리 정의는 여기서만 한다 - 같은 이름을 여러 파일에서 정의하면 링커가 다중 정의로 터진다.
+CSV_DEFINE_CATEGORY(CWInteraction, true);
 
 namespace
 {
@@ -104,6 +109,13 @@ void UCWInteractionPromptComponent::BeginPlay()
 
 void UCWInteractionPromptComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	// 프레임 예산 캡처용. 다른 영역(CWTraffic/CWWeather)과 같은 방식으로 걸어 두어야
+	// CsvProfile 캡처에서 같은 컬럼으로 잡히고 예산표에 나란히 올릴 수 있다.
+	//
+	// 조종 중이 아닌 폰의 틱도 이 스코프에 들어온다. 그쪽은 아래에서 바로 빠져나가지만,
+	// 예산은 "이 기계에서 이 시스템이 쓰는 총량" 이라 같이 재는 쪽이 맞다.
+	CSV_SCOPED_TIMING_STAT(CWInteraction, PromptTick);
+
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	// 조종 중인 본인인지를 BeginPlay 가 아니라 여기서 본다.
