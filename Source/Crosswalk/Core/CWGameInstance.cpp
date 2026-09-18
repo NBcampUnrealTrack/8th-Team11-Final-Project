@@ -5,6 +5,7 @@
 
 #include "Core/CWSessionLog.h"
 #include "CWMusicSubsystem.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Engine/Engine.h"
 #include "Engine/NetDriver.h"
 #include "Engine/World.h"
@@ -1762,6 +1763,13 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 
 	SetStatus(FString::Printf(TEXT("JoinSession success. RoomCode: %s Travel: %s"), *CurrentRoomCode, *ConnectString));
 
+	// 접속 성공 알림이 기존 메뉴를 닫기 전에 로컬 월드를 가린다.
+	// 서버 맵의 새 카메라는 UIBootstrap에서 암전을 이어받고 로비 준비 후 해제한다.
+	if (IsValid(PlayerController->PlayerCameraManager))
+	{
+		PlayerController->PlayerCameraManager->SetManualCameraFade(1.f, FLinearColor::Black, false);
+	}
+
 	// CurrentRoomCode를 채운 뒤에 알려야 ViewModel이 빈 값을 읽지 않음
 	CompleteSessionOperation(ECWSessionOperation::JoinRoom, true, ECWSessionFailure::None);
 
@@ -1776,7 +1784,7 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 		FinalConnectString += TEXT("?Name=") + CrosswalkSession::SanitizeNameOption(LoggedInDisplayName);
 	}
 
-	// 이동 중에는 이전 메뉴를 남기지 않고 현재 레벨의 대기 구도를 보여준다.
+	// 이동 중에는 이전 메뉴 UI도 숨긴다. 차량이 교체되는 배경은 위 암전으로 가린다.
 	if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
 	{
 		if (UCWUISubsystem* UI = LocalPlayer->GetSubsystem<UCWUISubsystem>())
