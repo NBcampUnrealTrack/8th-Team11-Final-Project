@@ -10,6 +10,7 @@
 #include "UI/Data/CWUIPageConfigDataAsset.h"
 #include "Core/CWGameInstance.h"
 #include "Camera/CameraActor.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Engine/LevelStreaming.h"
 #include "EngineUtils.h"
 #include "GameFramework/GameStateBase.h"
@@ -59,6 +60,14 @@ void UCWUIBootstrapComponent::BeginPlay()
 		const UCWGameInstance* GI = OwnerPC->GetGameInstance<UCWGameInstance>();
 		const bool bRoomArrival = GetWorld()->GetNetMode() == NM_Client ||
 			(IsValid(GI) && GI->ShouldEnterRoomPage());
+		// ClientTravel로 카메라 매니저도 새로 생성된다. 로비가 준비되기 전까지
+		// 새 서버 월드의 차량과 대기 카메라를 노출하지 않는다.
+		// 인게임/스테이지 화면과 호스트의 방 생성 연출에는 적용하지 않는다.
+		if (InitialPage == ECWUIPage::Title && GetWorld()->GetNetMode() == NM_Client &&
+			IsValid(OwnerPC->PlayerCameraManager))
+		{
+			OwnerPC->PlayerCameraManager->SetManualCameraFade(1.f, FLinearColor::Black, false);
+		}
 		const FName CameraTag = !bRoomArrival && InitialPage == ECWUIPage::Title
 			&& !(IsValid(GI) && GI->ShouldReturnToRoomList())
 			? TEXT("CWFrontendTitleCamera") : TEXT("CWFrontendLoadingCamera");
