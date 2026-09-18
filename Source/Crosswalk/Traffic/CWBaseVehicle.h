@@ -7,7 +7,7 @@
 #include "Data/CWTrafficVehicleSpawnParams.h"
 #include "Data/CWVehicleMeshVariant.h"
 #include "Data/CWVehicleVariantPick.h"
-#include "Interfaces/Interface_ParryReceiver.h"
+#include "Data/Structs/CWParryAttemptContext.h"
 #include "CWBaseVehicle.generated.h"
 
 class ACWBaseVehicle;
@@ -110,7 +110,7 @@ struct FCWVehicleStepResolution
  *   따로 복제하고 클라이언트가 그 지점에서 직진을 시작한다. (bParried / ParriedLaunch*)
  */
 UCLASS()
-class CROSSWALK_API ACWBaseVehicle : public AActor, public IInterface_ParryReceiver
+class CROSSWALK_API ACWBaseVehicle : public AActor
 {
 	GENERATED_BODY()
 
@@ -137,8 +137,13 @@ public:
 	/**
 	 * 서버 권한 패링 판정. 대상 선별은 트래픽 서브시스템이 끝낸 뒤 이 차량에게만 들어온다.
 	 * 반경·각도는 선별 단계에서 걸러지므로, 여기서는 차량이 단일 관리하는 윈도우만 다시 본다.
+	 *
+	 * UFUNCTION 이 아니다. 예전에는 Interface_ParryReceiver 의 BlueprintNativeEvent 였는데,
+	 * 구현체가 이 클래스 하나이고 호출자가 서브시스템 하나라 인터페이스가 하는 일이 없었다.
+	 * 게다가 BlueprintCallable 이어서 BP 에서 선별을 건너뛰고 직접 부를 수 있는 구멍이 있었다.
+	 * 들어오는 길을 C++ 하나로 두어야 패링이 왜 됐는지를 한 경로에서만 따지면 된다.
 	 */
-	virtual bool ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext) override;
+	bool ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext);
 
 	/** 스포너가 스폰 직후 호출. 주행할 차선과 개체별 편차를 지정한다. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Vehicle")
@@ -434,10 +439,20 @@ private:
 	FVector ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const;
 
 	/**
-	 * 패링당했을 때 날아갈 방향을 정한다. 기준점은 플레이어가 아니라 이 차량이다.
+	 * 액터 원점에서 콜리전 박스 앞면까지의 거리(cm). 스케일 적용 후 값이고 차 길이의 절반이다.
 	 *
-	 * 커서 지점을 못 쓰면 플레이어 기준 방향으로, 그것도 비면 TryParry 가 온 길로 되돌려 보낸다.
-	 * 정해진 방향은 ApplySelfLaunchDeadZone 을 거쳐 시전자 쪽이 걸러진다.
+	 * 패링 예측·피격 랙 보정·차간 거리가 전부 이 값을 기준으로 잰다. 세 곳이 각자
+	 * 박스에서 읽으면 어느 한 곳만 스케일 전 값을 쓰는 실수가 생긴다.
+	 */
+	float GetVehicleHalfLength() const;
+
+	/**
+	 * 패링당했을 때 날아갈 방향을 정한다. 기준점은 플레이어가 아니라 이 차량이다. 항상 유효한 방향을 돌려준다.
+	 *
+	 * 폴백 사슬은 여기 한 곳에만 있다: 커서 지점 -> 플레이어 기준 방향 -> 온 길 되돌림.
+	 * 어느 것이 뽑히든 마지막에 ApplySelfLaunchDeadZone 을 한 번 거쳐 시전자 쪽이 걸러진다.
+	 * TryParry 는 이 결과를 그대로 믿는다 - 폴백이 두 파일에 나뉘어 있으면 어느 쪽이 실제로
+	 * 방향을 정했는지 로그만 보고는 알 수 없다.
 	 */
 	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
 
@@ -460,6 +475,7 @@ private:
 	 * 있으므로 여기서는 윈도우만 다시 본다. 블루프린트에 열지 않는다 - 선별을 건너뛰고
 	 * 직접 부르는 길이 하나 더 있으면, 패링이 왜 됐는지 안 됐는지를 두 경로에서 따져야 한다.
 	 *
+	 * @param LaunchDirection   날아갈 방향(수평, 정규화). ResolveLaunchDirection 이 낸 값이라 비어 있지 않다.
 	 * @param ViewRewindSeconds 랙 보정량. 선별 단계와 같은 값을 넘겨야 한다.
 	 *                          다른 값을 넘기면 선별은 통과했는데 여기서 떨어지는 일이 생긴다.
 	 */

@@ -12,6 +12,7 @@
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 #include "CWTrafficLane.h"
+#include "CWTrafficMath.h"
 #include "CWTrafficSubsystem.h"
 #include "Core/CWDecalStatics.h"
 #include "Data/Structs/CWVehicleHitContext.h"
@@ -183,12 +184,17 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 
 float ACWBaseVehicle::GetVehicleLength() const
 {
+	return GetVehicleHalfLength() * 2.f;
+}
+
+float ACWBaseVehicle::GetVehicleHalfLength() const
+{
 	// 스케일을 적용한 크기로 잰다. 차종 BP 가 콜리전 박스를 키워 놓으면 그만큼 길어져야 한다.
 	//
 	// GetDistanceToPoint 는 실제 콜리전 바디로 거리를 재기 때문에 이미 스케일이 반영돼 있다.
 	// 여기만 스케일 전 크기를 쓰면 두 기준이 갈려서, 패링 반경 판정과 스포너 간격 계산이
 	// 서로 다른 차량 크기를 보게 된다.
-	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X * 2.f : 0.f;
+	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
 }
 
 void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params)
@@ -643,9 +649,7 @@ bool ACWBaseVehicle::PredictTimeToImpact(const AActor* Target, float& OutTimeToI
 	}
 
 	// 차량 앞면 기준으로 재서, 이미 박스 안에 들어온 대상은 0초로 취급한다.
-	// 크기 기준은 GetVehicleLength 와 맞춘다. (스케일 적용 후)
-	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
-	OutTimeToImpact = FMath::Max(0.f, (RewoundForwardDistance - FrontOffset) / CurrentSpeed);
+	OutTimeToImpact = FMath::Max(0.f, (RewoundForwardDistance - GetVehicleHalfLength()) / CurrentSpeed);
 
 	return true;
 }
@@ -667,14 +671,9 @@ float ACWBaseVehicle::GetDistanceToPoint(const FVector& Point) const
 	return FVector::Dist(GetActorLocation(), Point);
 }
 
-bool ACWBaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptContext& ParryAttemptContext)
+bool ACWBaseVehicle::ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext)
 {
-	// 클라에서 통과시키면 그 클라에서만 차가 멈춘다. 판정은 서버만 한다.
-	if (!HasAuthority())
-	{
-		return false;
-	}
-
+	// 권한 검사는 TryParry 가 한다. 상태를 실제로 바꾸는 곳이 거기라 검사도 거기 한 번이면 된다.
 	// 튕겨나갈 방향은 플레이어가 찍은 커서 지점 쪽이다.
 	// 랙 보정량은 선별 단계가 쓴 값을 그대로 넘겨야 판정이 갈리지 않는다.
 	return TryParry(ParryAttemptContext.Parrier, ResolveLaunchDirection(ParryAttemptContext),
@@ -683,8 +682,10 @@ bool ACWBaseVehicle::ReceiveParryAttempt_Implementation(const FCWParryAttemptCon
 
 FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
 {
+	FVector BaseDirection = FVector::ZeroVector;
+
 	/**
-	 * 커서 지점을 향해 날아간다. 기준점이 플레이어가 아니라 이 차량이라는 게 핵심이다.
+	 * 1순위: 커서 지점을 향해 날아간다. 기준점이 플레이어가 아니라 이 차량이라는 게 핵심이다.
 	 *
 	 * 플레이어 기준 방향(AttemptDirection)을 그대로 쓰면, 차량은 커서 쪽이 아니라
 	 * 커서 방향과 "평행하게" 날아간다. 플레이어와 차량의 위치가 다르기 때문이다.
@@ -693,17 +694,24 @@ FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Par
 	 */
 	if (ParryAttemptContext.bHasCursorTarget)
 	{
-		const FVector ToCursor = (ParryAttemptContext.CursorWorldLocation - GetActorLocation()).GetSafeNormal2D();
-		if (!ToCursor.IsNearlyZero())
-		{
-			return ApplySelfLaunchDeadZone(ToCursor, ParryAttemptContext);
-		}
+		BaseDirection = (ParryAttemptContext.CursorWorldLocation - GetActorLocation()).GetSafeNormal2D();
 	}
 
-	// 커서가 차량 바로 위에 찍혔거나 트레이스가 빗나갔다. 플레이어 기준 방향으로 대체한다.
-	// 이 방향도 데드존을 거친다. 여기로 빠지는 경우가 드물다고 해서 자기 쪽으로 쏠 수 있게
-	// 두면, 판정 결과가 커서 트레이스의 성패에 따라 갈린다.
-	return ApplySelfLaunchDeadZone(ParryAttemptContext.AttemptDirection.GetSafeNormal2D(), ParryAttemptContext);
+	// 2순위: 커서가 차량 바로 위에 찍혔거나 트레이스가 빗나갔다. 플레이어 기준 방향으로 대체한다.
+	if (BaseDirection.IsNearlyZero())
+	{
+		BaseDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	}
+
+	// 3순위: 그것도 비었다. 온 길로 되돌려 보낸다. 시전자 쪽이 아니라 데드존에 걸릴 일도 없다.
+	if (BaseDirection.IsNearlyZero())
+	{
+		BaseDirection = -GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	// 어느 순위에서 나왔든 데드존은 한 번만 거친다. 폴백 경로라고 자기 쪽으로 쏠 수 있게
+	// 두면 판정 결과가 커서 트레이스의 성패에 따라 갈린다.
+	return ApplySelfLaunchDeadZone(BaseDirection, ParryAttemptContext);
 }
 
 FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, const FCWParryAttemptContext& ParryAttemptContext) const
@@ -713,11 +721,10 @@ FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, 
 		return LaunchDirection;
 	}
 
+	// 부르는 쪽(ResolveLaunchDirection)이 빈 방향을 넘기지 않는다. 방어로만 남긴다.
 	const FVector Launch = LaunchDirection.GetSafeNormal2D();
 	if (Launch.IsNearlyZero())
 	{
-		// 방향이 비었다. TryParry 가 온 길로 되돌려 보내는 경로이고, 그 방향은 차량의 진행
-		// 반대쪽이라 시전자 쪽이 아니다. 여기서 손댈 것이 없다.
 		return LaunchDirection;
 	}
 
@@ -734,14 +741,13 @@ FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, 
 		return Launch;
 	}
 
-	const float HalfAngleDegrees = FMath::Clamp(SelfLaunchDeadZoneAngle, 0.f, 360.f) * 0.5f;
-	const float Dot = FVector::DotProduct(Launch, ToParrier);
-
-	// 각도 비교는 코사인으로 한다. acos 를 쓰면 통과하는 대다수의 호출까지 값을 치르게 된다.
-	if (Dot <= FMath::Cos(FMath::DegreesToRadians(HalfAngleDegrees)))
+	if (!CWTrafficMath::IsInsideCone(Launch, ToParrier, SelfLaunchDeadZoneAngle))
 	{
 		return Launch;
 	}
+
+	const float HalfAngleDegrees = FMath::Clamp(SelfLaunchDeadZoneAngle, 0.f, 360.f) * 0.5f;
+	const float Dot = FVector::DotProduct(Launch, ToParrier);
 
 	/**
 	 * 데드존 안이다. 가리킨 쪽에서 가장 가까운 경계로 밀어낸다.
@@ -777,8 +783,8 @@ FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, 
 	// 확정된 패링 1건에 한 줄이라 로그가 쌓이지 않는다. 여기서는 acos 를 써도 된다.
 	UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 시전자 쪽이라 발사 방향을 %.0f도에서 %.0f도로 밀어냅니다. (데드존 반각 %.0f도)"),
 		*GetName(),
-		FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))),
-		FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(ClampedDirection, ToParrier), -1.f, 1.f))),
+		CWTrafficMath::AngleBetweenDegrees(Launch, ToParrier),
+		CWTrafficMath::AngleBetweenDegrees(ClampedDirection, ToParrier),
 		HalfAngleDegrees);
 
 	return ClampedDirection;
@@ -852,9 +858,14 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 	}
 
 	// 패링당한 차량은 멈추는 게 아니라 커서 방향으로 튕겨나간다.
-	// 방향이 비어 있으면 온 길로 되돌려 보낸다.
+	// 빈 방향은 여기까지 오지 않는다. 폴백은 전부 ResolveLaunchDirection 이 끝냈다.
 	const FVector LaunchForward = LaunchDirection.GetSafeNormal2D();
-	SetActorRotation((LaunchForward.IsNearlyZero() ? -GetActorForwardVector().GetSafeNormal2D() : LaunchForward).Rotation());
+	if (!ensureMsgf(!LaunchForward.IsNearlyZero(), TEXT("[Parry] %s: 발사 방향이 비어 있다. ResolveLaunchDirection 을 거치지 않은 호출이다."), *GetName()))
+	{
+		return false;
+	}
+
+	SetActorRotation(LaunchForward.Rotation());
 
 	// 클라이언트가 같은 지점·같은 자세에서 직진을 시작할 수 있도록 남긴다.
 	// 회전이 끝난 뒤의 정면이라 차가 실제로 가는 쪽과 항상 일치한다.
@@ -1253,8 +1264,7 @@ bool ACWBaseVehicle::PassesHitLagCompensation(const AActor* Target) const
 	 */
 	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
 	const float ForwardDistance = FVector::DotProduct(ToTarget, GetActorForwardVector());
-	const float FrontOffset = CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
-	const float PenetrationDepth = FrontOffset - ForwardDistance;
+	const float PenetrationDepth = GetVehicleHalfLength() - ForwardDistance;
 
 	/**
 	 * 파고든 깊이가 되돌릴 거리보다 얕으면, 되돌린 차의 앞면은 아직 대상 뒤에 있다.
