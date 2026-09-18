@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "Data/Structs/CWInteractionPrompt.h"
 #include "Data/Structs/CWParrySyncData.h"
 #include "GameFramework/Character.h"
 #include "InputCoreTypes.h"
@@ -11,6 +12,7 @@ class ACWRestZone;
 class UAnimMontage;
 class UCameraComponent;
 class UNiagaraSystem;
+class UCWInteractionPromptComponent;
 class UCWParryComponent;
 class UCWAsphaltGunnerComponent;
 class UCWSinkholeFallComponent;
@@ -41,7 +43,8 @@ class UMaterialInstanceDynamic;
  *   - UCWParryComponent      : 우클릭으로 커서 방향의 차량을 패링한다
  *   - UCWVehicleHitReactionComponent : 차에 치였을 때 행동 잠금 상태를 관리한다
  *   - UCWTemperatureComponent : 작업으로 오른 체온에 따라 이동속도와 작업속도를 깎는다
- *   - UCWSupplyCarrierComponent : F/G/R 로 페인트 통을 꺼내고 반납하고 도구에 붓는다
+ *   - UCWSupplyCarrierComponent : E 로 통을 꺼내고 R 로 도구에 붓거나 박스에 반납한다
+ *   - UCWInteractionPromptComponent : 지금 E/R 이 향할 대상을 화면에 알려준다
  *   - UCWWearableComponent    : H 로 헬멧을 갈아 끼우고 J 로 작업복을 입고 벗는다
  *
  * 입력 구성
@@ -104,6 +107,35 @@ public:
 	bool IsSitting() const { return bIsSitting; }
 
 	/**
+	 * E 가 지금 향할 대상 하나. 대상이 없으면 Action 이 None 인 빈 값이 돌아온다.
+	 *
+	 * 판정을 여기 한 곳에만 두는 이유: Interact() 와 화면 프롬프트가 같은 답을 써야 한다.
+	 * 두 곳에서 따로 재면 머리 위에 뜬 대상과 실제로 잡히는 대상이 갈리고,
+	 * 그 순간 프롬프트는 도움이 아니라 거짓말이 된다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FCWInteractionPrompt ResolveInteractPrompt() const;
+
+	/** R 이 지금 향할 대상 하나. 위와 같은 이유로 판정이 여기 한 곳에만 있다. */
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FCWInteractionPrompt ResolveChargePrompt() const;
+
+	/**
+	 * [진단] 직전 상호작용 후보 탐색이 걸린 시간(초).
+	 *
+	 * UCWInteractionPromptComponent 가 읽어 구간 평균/최대로 요약한다.
+	 * 이 탐색은 반경 250cm 구체를 WorldStatic 까지 훑기 때문에, 도로·인도·건물이 많은
+	 * 맵에서 결과가 얼마나 불어나는지 실측해 두려는 것이다.
+	 */
+	double GetLastInteractQuerySeconds() const { return LastInteractQuerySeconds; }
+
+	/** [진단] 직전 탐색이 되돌려준 오버랩 개수 전부. */
+	int32 GetLastInteractQueryOverlapCount() const { return LastInteractQueryOverlapCount; }
+
+	/** [진단] 그중 ECC_WorldStatic 이 몇 개였나. 정적 지오메트리가 결과를 채우는지 보는 값이다. */
+	int32 GetLastInteractQueryStaticOverlapCount() const { return LastInteractQueryStaticOverlapCount; }
+
+	/**
 	 * 휴식구역 의자에 앉힌다. 서버에서만 유효하다. ACWRestZone 이 승인한 뒤 부른다.
 	 *
 	 * 전환 애니메이션이 생기면 여기서 몽타주를 재생하고 노티파이로 완료를 받으면 된다.
@@ -136,8 +168,10 @@ protected:
 	/**
 	 * E. 상호작용.
 	 *
-	 * 대상이 두 종류다. 바닥의 도구는 도구 소지 컴포넌트가, 작업차량처럼 도구가 아닌 것은
-	 * IInterface_Interactable 이 받는다. 둘 중 가까운 쪽을 고른다.
+	 * 대상이 세 종류다. 바닥의 도구는 도구 소지 컴포넌트가, 작업차량처럼 도구가 아닌 것은
+	 * IInterface_Interactable 이, 보급 박스는 보급 컴포넌트가 받는다. 셋 중 가까운 쪽을 고른다.
+	 *
+	 * 어느 것을 고를지는 ResolveInteractPrompt 가 정한다. 이 함수는 그 답을 실행만 한다.
 	 */
 	void Interact();
 
@@ -150,13 +184,14 @@ protected:
 	/** 취소 키(Q). 미니게임을 빠져나와 다시 움직일 수 있게 한다. */
 	void CancelWork();
 
-	/** F. 보급 박스에서 페인트 통을 꺼낸다. (기획서 6-1) */
-	void PickUpCan();
-
-	/** G. 페인트 통을 박스에 반납한다. (기획서 6-2) */
-	void DropCan();
-
-	/** R. 가장 가까운 도구에 페인트를 붓는다. (기획서 6-3) */
+	/**
+	 * R. 사거리 안에서 가장 가까운 대상을 채운다.
+	 *
+	 * 아스팔트 건을 들고 있으면 재장전, 아니면 도구 충전과 통 반납 중 가까운 쪽이다.
+	 * (기획서 6-2, 6-3 / 싱크홀 기획서 7-5)
+	 *
+	 * 어느 것을 고를지는 ResolveChargePrompt 가 정한다. 이 함수는 그 답을 실행만 한다.
+	 */
 	void ChargePaint();
 
 	/** 우클릭. 커서 방향으로 패링을 시도한다. 판정은 서버가 한다. */
@@ -484,6 +519,14 @@ private:
 	void EnsureInputAction(TObjectPtr<UInputAction>& Action, const TCHAR* ActionName, EInputActionValueType ValueType);
 
 	/**
+	 * 이 액션에 실제로 묶여 있는 키. 프롬프트에 그려줄 값이다.
+	 *
+	 * 등록된 매핑에서 뽑아오는 이유: 여기든 위젯이든 E/R 을 글자로 적어두면
+	 * IMC 를 고친 날 화면에 뜬 키와 진짜 키가 갈린다. 못 찾으면 EKeys::Invalid.
+	 */
+	FKey ResolvePromptKey(const UInputAction* Action) const;
+
+	/**
 	 * 지정된 IMC 애셋이 다루지 않는 액션만 기본 키로 매핑해 둔다.
 	 *
 	 * BP 가 IMC 를 물고 있어도 그 안에 빠진 입력이 있으면 조용히 죽는데,
@@ -587,6 +630,10 @@ public:
 	// 페인트 통 운반. (기획서 6-1 ~ 6-3, 6-6)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
 	TObjectPtr<UCWSupplyCarrierComponent> SupplyCarrierComponent;
+
+	// 지금 E/R 이 향할 대상을 화면에 알려준다. 조종 중인 본인 기계에서만 돈다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
+	TObjectPtr<UCWInteractionPromptComponent> InteractionPromptComponent;
 
 	/**
 	 * 헬멧과 옷을 함께 관리한다. 어떤 슬롯이 있고 무엇을 입을 수 있는지는
@@ -906,7 +953,7 @@ protected:
 	float AttenuationFalloffDistance = 2500.f;
 
 protected:
-	// 아래 7개는 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
+	// 아래 입력 애셋들은 비워두면 C++ 이 만든 기본 입력이 쓰인다. 채우면 그쪽이 우선한다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
@@ -930,15 +977,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> SwapHelmetAction;
 
-	// 보급 박스에서 페인트 통을 꺼내는 키(F). (기획서 6-1)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
-	TObjectPtr<UInputAction> PickUpCanAction;
-
-	// 페인트 통을 박스에 반납하는 키(G). (기획서 6-2)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
-	TObjectPtr<UInputAction> DropCanAction;
-
-	// 근처 도구에 페인트를 붓는 키(R). (기획서 6-3)
+	// 사거리 안 대상을 채우는 키(R). 도구 충전 / 통 반납 / 아스팔트 건 재장전.
+	// (기획서 6-2, 6-3 / 싱크홀 기획서 7-5)
+	//
+	// 통 꺼내기(F)와 반납(G) 전용 키를 없애고 E·R 로 합쳤다. 조작키를 줄이면서
+	// "제일 가까운 대상이 잡힌다" 는 규칙 하나로 통일하기 위해서다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ChargePaintAction;
 
@@ -968,6 +1011,15 @@ private:
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> SupplementContext;
+
+	// [진단] 직전 FindNearestInteractable 호출의 비용. 위 Get* 접근자로 읽는다.
+	//
+	// 켜고 끄는 분기를 두지 않고 항상 잰다. 초당 20회 FPlatformTime::Seconds 두 번이라
+	// 재는 비용 자체가 무시할 수준이고, 분기를 넣으면 측정 대상과 다른 코드가 돌아
+	// 정작 켰을 때의 숫자를 믿을 수 없게 된다.
+	mutable double LastInteractQuerySeconds = 0.0;
+	mutable int32 LastInteractQueryOverlapCount = 0;
+	mutable int32 LastInteractQueryStaticOverlapCount = 0;
 
 	// SoundAttenuation 이 비었을 때 C++ 이 만들어 쓰는 기본 감쇠. 한 번만 만든다.
 	UPROPERTY(Transient)
