@@ -125,7 +125,9 @@ void UCWTrafficLightComponent::ApplyState(ECWTrafficSignalState NewState)
 	SetTaggedComponentsVisible(YellowComponentTag, NewState == ECWTrafficSignalState::Yellow);
 	SetTaggedComponentsVisible(GreenComponentTag, NewState == ECWTrafficSignalState::Green);
 
-	UE_LOG(LogCWTraffic, Log, TEXT("[%s] %s -> %s"),
+	// Verbose 다. 같은 사건을 제어기가 [TrafficSync] 로 그룹 단위로 이미 찍는데,
+	// 여기까지 Log 로 두면 신호등 수만큼 같은 전환이 반복돼 8차선에서 한 단계에 8줄이 쌓인다.
+	UE_LOG(LogCWTraffic, Verbose, TEXT("[%s] %s -> %s"),
 		*GetReadableName(),
 		*ACWTrafficDirector::GetSignalStateText(OldState).ToString(),
 		*ACWTrafficDirector::GetSignalStateText(NewState).ToString());

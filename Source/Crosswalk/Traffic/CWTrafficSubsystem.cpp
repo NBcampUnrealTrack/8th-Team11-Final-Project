@@ -411,11 +411,7 @@ ACWBaseVehicle* UCWTrafficSubsystem::TryParryWithAttempt(const FCWParryAttemptCo
 		return nullptr;
 	}
 
-	// 수신 측이 차종 분기를 할 수 있도록 서버가 확정한 차종을 채워서 넘긴다.
-	FCWParryAttemptContext ResolvedContext = ParryAttemptContext;
-	ResolvedContext.VehicleType = BestVehicle->GetVehicleType();
-
-	if (!IInterface_ParryReceiver::Execute_ReceiveParryAttempt(BestVehicle, ResolvedContext))
+	if (!IInterface_ParryReceiver::Execute_ReceiveParryAttempt(BestVehicle, ParryAttemptContext))
 	{
 		return nullptr;
 	}

@@ -15,7 +15,6 @@ class ACWTrafficLane;
 class UDataTable;
 class UBoxComponent;
 class UCWVehicleAudioComponent;
-class UCWVehicleStopSyncComponent;
 class UPoseableMeshComponent;
 class USceneComponent;
 class USkeletalMesh;
@@ -155,9 +154,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetEffectiveSpeed() const { return Speed * SpeedMultiplier * (bParried ? ParriedSpeedMultiplier : 1.f); }
 
-	/** 차종 기본 주행 속도(cm/s). 개체 편차가 곱해지기 전의 값이다. */
-	float GetSpeed() const { return Speed; }
-
 	/**
 	 * 지금 실제로 내고 있는 속도(cm/s). 앞차에 막혀 느려졌으면 그만큼 낮고, 서 있으면 0 이다.
 	 *
@@ -214,17 +210,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetDistanceAlongLane() const { return DistanceAlongLane; }
-
-	/**
-	 * 차선 위 진행 거리를 Delta(cm) 만큼 민다. UCWVehicleStopSyncComponent 전용이다.
-	 *
-	 * 값만 열어 준다. 얼마나 밀지, 한 번에 밀지 나눠 밀지 같은 판단은 전부 그 컴포넌트가 한다.
-	 * 여기서 판단까지 하면 정지 구간의 보정이 주행 로직과 같은 파일에 섞인다.
-	 *
-	 * 블루프린트에 열지 않는다. 이 값은 위치 그 자체라, 아무 데서나 밀 수 있으면
-	 * 차가 어디서 왜 움직였는지를 추적할 수 없게 된다.
-	 */
-	void AdjustDistanceAlongLane(float Delta) { DistanceAlongLane += Delta; }
 
 	/**
 	 * 지금 정지선 때문에 서 있는가. 서버·클라이언트 각자의 판단이라 두 값이 다를 수 있고,
@@ -632,18 +617,8 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TObjectPtr<UPoseableMeshComponent> VehicleSkeletalMesh;
 
-	/**
-	 * 정지선 앞에 선 동안 서버-클라 위치 오차를 좁힌다. (보정 담당은 전부 이 컴포넌트 안)
-	 *
-	 * 서버·클라이언트 양쪽에서 돈다. 트랜스폼을 복제하지 않는 구조라 클라이언트 화면의
-	 * 차량 위치는 클라이언트 자신이 계산한 DistanceAlongLane 이 만든다. 서버에서만 돌리면
-	 * 정작 고쳐야 할 화면이 안 고쳐진다.
-	 *
-	 * 치팅 통로가 아니다. 충돌·패링 판정은 서버가 서버 자신의 DistanceAlongLane 으로 따로
-	 * 계산하고, 차가 다시 움직이면 복제가 다시 흘러 클라이언트 값을 덮는다.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
-	TObjectPtr<UCWVehicleStopSyncComponent> StopSyncComponent;
+	// 정지선 앞 서버-클라 오차를 좁히던 StopSyncComponent 는 없앴다. Tick 의 정지 확정 분기가
+	// 양쪽에서 같은 목표 지점에 못 박으면서(StopSettleTolerance) 그 컴포넌트가 잴 오차가 항상 0 이 됐다.
 
 	/**
 	 * 엔진음·경적·도플러 담당. 소리는 연출이라 복제하지 않고 각자 화면에서 운다.
@@ -667,8 +642,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TArray<FCWVehicleMeshVariant> MeshVariants;
 
+	/**
+	 * 아래 튜닝값은 전부 EditDefaultsOnly + BlueprintReadOnly 다. 런타임에 쓸 수 없다.
+	 *
+	 * 이 값들은 복제되지 않는다. 서버와 클라이언트가 각자 같은 값으로 감속·정지·패링을
+	 * 계산한다는 전제로 돌아가므로, BP 가 한쪽에서만 바꾸면 정지 위치나 패링 윈도우가
+	 * 갈리는데 그걸 잡는 로그가 없다. 차종 BP 의 기본값으로만 정한다.
+	 */
+
 	/** 차종 기본 주행 속도(cm/s). 플레이어 기본 이동속도 500의 1.5배. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float Speed = 750.f;
 
 	// 개체별 속도 편차는 여기 없다. 차종별 범위는 데이터 테이블(FCWVehicleSpeedRow)이 들고
@@ -684,7 +667,7 @@ protected:
 	 *
 	 * 0 이면 바퀴를 돌리지 않는다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float WheelRadius = 34.f;
 
 	/**
@@ -696,18 +679,18 @@ protected:
 	 * 넣으면 대부분이 덮인다. 나머지 둘(3축 세미, 오토바이)은 본 구성 자체가 달라
 	 * 변형 쪽에서 따로 지정한다. 자세한 이름은 FCWVehicleMeshVariant::WheelBones 주석 참고.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TArray<FName> WheelBones;
 
 	/**
 	 * 피격 연출 분기에 쓰이는 차종 ID. FCWVehicleHitContext로 전달된다.
 	 * 차종 BP마다 다른 값을 지정해야 피격 프로파일이 제대로 잡힌다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	FName VehicleType = TEXT("Sedan");
 
 	/** 대형 트럭처럼 납작해지는 특수 피격을 쓸지. 차종 BP에서 켠다. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	bool bFlattenOnHit = false;
 
 	/**
@@ -722,14 +705,14 @@ protected:
 	 *
 	 * 0 을 넣으면 이 판정이 꺼지고 예전처럼 속도와 무관하게 친다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float MinHitSpeed = 100.f;
 
 	// 피격 랙 보정의 되돌림 양과 상한은 여기 없다. 패링과 같은 값이어야 해서
 	// UCWTrafficSubsystem::ResolveViewRewindSeconds 하나가 두 판정에 답한다.
 
 	/** 앞차 뒤범퍼와 유지할 최소 여유 거리(cm). 차 길이에 더해서 쓴다. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float FollowingGap = 150.f;
 
 	/**
@@ -742,7 +725,7 @@ protected:
 	 * 감속이 시작되는 거리는 StopLineBrakeDistance 가 따로 정한다. 이 값을 줄여도
 	 * 급제동이 되지 않고, 서는 자리만 정지선에 가까워진다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopLineGap = 60.f;
 
 	/**
@@ -756,7 +739,7 @@ protected:
 	 * 기본값 900 은 감속도 3m/s^2 기준이다. v^2 / 2a = 7.5^2 / 6 = 9.4m.
 	 * 차선이 짧아 900cm 를 못 잡는 맵에서는 줄여야 하는데, 그만큼 제동이 급해진다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopLineBrakeDistance = 900.f;
 
 	/**
@@ -771,7 +754,7 @@ protected:
 	 * 보낸다. 바닥을 까는 것이라 제동 곡선 자체는 그대로다 - 이 값이 걸리기 시작하는
 	 * 지점은 StopLineBrakeDistance x (이 값 / 주행 속도), 기본값으로 정지 30cm 전이다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopFinalCrawlSpeed = 25.f;
 
 	/**
@@ -783,7 +766,7 @@ protected:
 	 *
 	 * 이 값이 0 이면 확정이 영영 안 걸린다. StopFinalCrawlSpeed 주석 참고.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle", meta = (ClampMin = "0.0"))
 	float StopSettleTolerance = 5.f;
 
 	/**
@@ -792,15 +775,15 @@ protected:
 	 * 주행 속도보다 한참 느려야 한다. 이 값이 크면 좁히는 동작 자체가 순간이동처럼 보여서
 	 * 덮어쓰기를 없앤 의미가 사라진다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
 	float ClientCorrectionSpeed = 200.f;
 
 	/** 서버와의 차이가 이 값(cm)을 넘으면 좁히지 않고 그대로 스냅한다. (OnRep_DistanceAlongLane 참고) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|VehicleSync", meta = (ClampMin = "0.0"))
 	float ClientSnapThreshold = 300.f;
 
 	/** 패링 판정 윈도우(초). 충돌 직전 이 시간 안에 입력해야 성공. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParryWindow = 0.3f;
 
 	/**
@@ -823,10 +806,10 @@ protected:
 	 * 확인 방법: 스테이지에서 같은 방향 차선 두 개 사이에 서서 양쪽 차량에 각각 패링을
 	 * 시도한다. 옆 차선 차가 후보에서 빠져야 맞다. (좌표 계산만 했고 플레이 확인은 아직이다)
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ThreatLateralTolerance = 120.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Parry")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry")
 	bool bCanBeParried = true;
 
 	/**
@@ -836,14 +819,14 @@ protected:
 	 * 0 은 "즉시 소멸" 이 아니라 "소멸 없음" 이 되기 쉬운 값이라 하한을 둔다.
 	 * 코드에서 0 이 들어와도 소멸 타이머는 반드시 걸린다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.1"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.1"))
 	float ParriedDespawnDelay = 2.f;
 
 	/**
 	 * 튕겨나갈 때 주행 속도에 곱하는 배율. 1이면 원래 속도 그대로 날아간다.
 	 * 튕김 세기는 정해진 값이 없어 플레이로 잡는다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ParriedSpeedMultiplier = 1.f;
 
 	/**
@@ -873,7 +856,7 @@ protected:
 	 * 시전자 정반대로 모인다. 커서가 결과에 영향을 주지 못하므로 그 값은 금지 구역이 아니라
 	 * 방향 강제로 읽어야 한다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float SelfLaunchDeadZoneAngle = 60.f;
 
 	/**

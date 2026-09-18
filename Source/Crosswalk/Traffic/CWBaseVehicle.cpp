@@ -17,7 +17,6 @@
 #include "Data/Structs/CWVehicleHitContext.h"
 #include "Interfaces/Interface_VehicleHitReceiver.h"
 #include "Traffic/Components/CWVehicleAudioComponent.h"
-#include "Traffic/Components/CWVehicleStopSyncComponent.h"
 #include "Traffic/CWTrafficLog.h"
 #include "Data/CWVehicleSpeedRow.h"
 
@@ -59,10 +58,6 @@ ACWBaseVehicle::ACWBaseVehicle()
 	VehicleSkeletalMesh = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("VehicleSkeletalMesh"));
 	VehicleSkeletalMesh->SetupAttachment(VehicleRoot);
 	VehicleSkeletalMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	// 정지 구간은 DistanceAlongLane 이 얼어붙어 복제가 흐르지 않는다. 그동안의 오차는
-	// 이 컴포넌트가 좁힌다. (양쪽에서 도는 이유는 헤더의 StopSyncComponent 주석 참고)
-	StopSyncComponent = CreateDefaultSubobject<UCWVehicleStopSyncComponent>(TEXT("StopSyncComponent"));
 
 	// 엔진음·경적·도플러. 소리가 나지 않아도 주행에는 영향이 없다.
 	AudioComponent = CreateDefaultSubobject<UCWVehicleAudioComponent>(TEXT("AudioComponent"));
@@ -227,8 +222,8 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	// 이전 주행에서 남은 빚을 새 출발 지점에 갚으면 차가 엉뚱하게 끌려간다.
 	DistanceCorrectionRemaining = 0.f;
 
-	// 0 이하가 들어오면 차량이 멈춰버리므로 하한을 둔다.
-	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, Params.SpeedMultiplier);
+	// 속도 배율은 차체가 뽑힌 뒤 RollSpeedForVariant 가 정한다. 변형이 없는 차종은 1 그대로다.
+	SpeedMultiplier = 1.f;
 
 	/**
 	 * 외형 변형은 서버가 골라 복제한다. 클라이언트가 각자 굴리면 화면마다 다른 차가 보인다.

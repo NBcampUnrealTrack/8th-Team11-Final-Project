@@ -21,18 +21,11 @@ struct FCWTrafficVehicleSpawnParams
 	float StartDistance = 0.f;
 
 	/**
-	 * 차종 기본 속도에 곱할 배율. 1.0이면 BP에 설정된 속도 그대로.
-	 *
-	 * 스포너가 정하지 않는다. 차량이 외형 변형을 뽑은 뒤 그 차체의 SpeedType 으로
-	 * 아래 표를 찾아 스스로 채운다 - 어느 차체가 뽑힐지는 추첨 전에는 알 수 없기 때문이다.
-	 */
-	float SpeedMultiplier = 1.f;
-
-	/**
 	 * 차종별 속도 범위표(FCWVehicleSpeedRow). 비어 있으면 모든 차가 BP 의 Speed 로 달린다.
 	 *
 	 * 표를 참조만 넘기고 추첨은 차량이 한다. 스포너가 미리 뽑아 두려면 어느 차체가
 	 * 나올지 먼저 알아야 하는데, 그 추첨은 복제 때문에 차량 쪽(InitializeOnLane)에 있다.
+	 * 그래서 속도 배율 자체는 여기 없다 - 차량이 뽑은 차체의 SpeedType 으로 스스로 채운다.
 	 */
 	UPROPERTY()
 	TObjectPtr<UDataTable> SpeedTable;

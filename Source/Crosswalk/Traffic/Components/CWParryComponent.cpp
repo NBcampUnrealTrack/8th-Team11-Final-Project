@@ -296,9 +296,8 @@ void UCWParryComponent::Client_ParryRejected_Implementation()
 
 void UCWParryComponent::ResetLocalCooldown()
 {
-	// 초기값과 같은 의미다. 월드 시간은 항상 이보다 크므로 곧바로 사용 가능 상태가 된다.
 	// GetCooldownReadyRatio 도 이 값을 보므로 UI 가 함께 되돌아간다.
-	LastLocalParryRequestTime = -999.f;
+	LastLocalParryRequestTime = CooldownNeverUsedTime;
 }
 
 FString UCWParryComponent::GetInstigatorTag() const
