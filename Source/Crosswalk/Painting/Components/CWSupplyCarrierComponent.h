@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Data/Enums/CWInteractionPromptTypes.h"
 #include "Data/Enums/CWSupplyTypes.h"
 #include "CWSupplyCarrierComponent.generated.h"
 
@@ -102,6 +103,47 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Supply")
 	void ChargeNearestTool();
+
+	/**
+	 * R 키. 도구 충전과 통 반납 중 가까운 쪽을 실행한다.
+	 *
+	 * 전용 키(G)를 없애고 R 하나로 합쳤다. "제일 가까운 대상이 잡힌다" 는 규칙을 E 와 똑같이
+	 * 쓰기 위해서다.
+	 *
+	 * 도구를 먼저 보는 우선순위를 두지 않는 이유: 잔량이 가득 찬 도구도 충전 대상이라
+	 * (아래 CanChargeTool 참고) 도구를 먼저 보면 박스 옆에 도구 하나만 굴러다녀도
+	 * 반납이 영영 막힌다. 거리로 가르면 규칙이 하나로 통일되고 화면 프롬프트가 결과를 미리 보여준다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Supply")
+	void ChargeOrReturn();
+
+	/**
+	 * R 이 지금 향할 대상을 고른다.
+	 *
+	 * 실행(ChargeOrReturn)과 화면 프롬프트가 같은 답을 쓰도록 판정을 이 함수 하나에만 둔다.
+	 * 두 곳에서 따로 재면 화면에 뜬 대상과 실제로 잡히는 대상이 갈린다.
+	 *
+	 * @param OutTarget 고른 대상. None 을 반환할 때는 건드리지 않는다.
+	 * @return 고른 동작. 대상이 없으면 None.
+	 */
+	ECWInteractionPromptAction ResolveChargeOrReturnTarget(AActor*& OutTarget) const;
+
+	/**
+	 * E 로 지금 통을 꺼낼 수 있는 박스. 없으면 nullptr.
+	 *
+	 * 거리·양손·소지 한도를 전부 보므로, 여기서 나온 박스는 눌렀을 때 반드시 성공한다.
+	 * 프롬프트를 "범위 안" 이 아니라 "실제로 잡힐 대상" 에만 띄우기 위한 함수다.
+	 */
+	ACWPaintSupplyBox* FindPickUpBox() const;
+
+	/**
+	 * 사거리 안에 보급 박스가 있는가.
+	 *
+	 * 잡을 대상이 하나도 없을 때 거절 이유를 보급 쪽이 발행할지 도구 쪽이 발행할지 고르는 데 쓴다.
+	 * 박스 앞에서 막힌 것과 아무 데서나 막힌 것은 이유가 다르다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Supply")
+	bool IsNearSupplyBox() const;
 
 	/**
 	 * 들고 있던 통을 전부 터뜨리고 터진 연출을 뿌린다. 차량에 치였을 때 부른다. (기획서 6-4)
@@ -235,6 +277,18 @@ private:
 
 	// 마지막으로 알린 개수. 이것과 다를 때만 델리게이트가 나간다.
 	int32 LastBroadcastCount = -1;
+
+	// 같은 프레임에 박스를 두 번 찾지 않으려고 결과를 들고 있는다.
+	//
+	// 프롬프트 갱신 한 번에 FindPickUpBox(E 후보)와 ResolveChargeOrReturnTarget(R 후보)이
+	// 둘 다 FindNearestBox 를 부른다. 반경 600cm 오버랩이라 두 번 돌릴 이유가 없고,
+	// 하필 통을 들고 박스 앞에 서 있을 때 — 이 기능이 제일 많이 쓰이는 자리에서 — 겹친다.
+	//
+	// 프레임 안에서는 캐릭터가 움직이지 않으므로 답이 달라지지 않는다.
+	mutable uint64 CachedNearestBoxFrame = 0;
+
+	// 약참조로 드는 이유: 캐시가 살아 있는 동안 박스가 파괴되면 강참조는 허상이 된다.
+	mutable TWeakObjectPtr<ACWPaintSupplyBox> CachedNearestBox;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCWToolHolderComponent> ToolHolderComponent;

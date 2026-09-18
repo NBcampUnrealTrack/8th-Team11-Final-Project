@@ -172,6 +172,92 @@ void UCWSupplyCarrierComponent::ChargeNearestTool()
 	PerformCharge(TargetTool);
 }
 
+ECWInteractionPromptAction UCWSupplyCarrierComponent::ResolveChargeOrReturnTarget(AActor*& OutTarget) const
+{
+	const AActor* Owner = GetOwner();
+	if (Owner == nullptr || IsSupplyInputBlocked() || CarriedCount <= 0)
+	{
+		return ECWInteractionPromptAction::None;
+	}
+
+	ACWBaseTool* NearestTool = FindNearestChargeableTool();
+	ACWPaintSupplyBox* NearestBox = FindNearestBox();
+
+	const FVector OwnerLocation = Owner->GetActorLocation();
+	const float ToolDistanceSquared = NearestTool != nullptr
+		? FVector::DistSquared(OwnerLocation, NearestTool->GetActorLocation())
+		: TNumericLimits<float>::Max();
+	const float BoxDistanceSquared = NearestBox != nullptr
+		? FVector::DistSquared(OwnerLocation, NearestBox->GetActorLocation())
+		: TNumericLimits<float>::Max();
+
+	// 거리가 같으면 도구가 이긴다. 충전은 남을 돕는 동작이고 반납은 언제든 한 발 물러나서
+	// 다시 누르면 되는 동작이라, 비기는 순간에는 되돌리기 비싼 쪽을 피한다.
+	if (NearestTool != nullptr && ToolDistanceSquared <= BoxDistanceSquared)
+	{
+		OutTarget = NearestTool;
+		return ECWInteractionPromptAction::ChargeTool;
+	}
+
+	if (NearestBox != nullptr)
+	{
+		OutTarget = NearestBox;
+		return ECWInteractionPromptAction::ReturnCan;
+	}
+
+	return ECWInteractionPromptAction::None;
+}
+
+void UCWSupplyCarrierComponent::ChargeOrReturn()
+{
+	AActor* Target = nullptr;
+
+	switch (ResolveChargeOrReturnTarget(Target))
+	{
+	case ECWInteractionPromptAction::ChargeTool:
+		// 대상을 다시 고르게 두지만 같은 함수가 같은 프레임에 다시 도는 것이라 답이 갈리지 않는다.
+		// 거절 이유 발행과 서버 요청 경로를 한 곳에 두려고 기존 함수를 그대로 쓴다.
+		ChargeNearestTool();
+		break;
+
+	case ECWInteractionPromptAction::ReturnCan:
+		DropCan();
+		break;
+
+	default:
+		// 잡을 대상이 없다. 왜 없는지는 기존 경로가 그대로 발행한다.
+		// 통이 없으면 NoCans, 다운/미니게임 중이면 Busy, 그 외에는 NoTargetTool 이다.
+		ChargeNearestTool();
+		break;
+	}
+}
+
+ACWPaintSupplyBox* UCWSupplyCarrierComponent::FindPickUpBox() const
+{
+	if (IsSupplyInputBlocked())
+	{
+		return nullptr;
+	}
+
+	// 도구를 든 채로는 통을 들 수 없다. (기획서 6-6)
+	if (ToolHolderComponent != nullptr && ToolHolderComponent->GetHeldTool() != nullptr)
+	{
+		return nullptr;
+	}
+
+	if (CarriedCount >= MaxCarriedCount)
+	{
+		return nullptr;
+	}
+
+	return FindNearestBox();
+}
+
+bool UCWSupplyCarrierComponent::IsNearSupplyBox() const
+{
+	return FindNearestBox() != nullptr;
+}
+
 void UCWSupplyCarrierComponent::Server_PickUpCan_Implementation(ACWPaintSupplyBox* RequestedBox)
 {
 	PerformPickUp(RequestedBox);
@@ -275,6 +361,14 @@ ACWPaintSupplyBox* UCWSupplyCarrierComponent::FindNearestBox(float RadiusScale) 
 		return nullptr;
 	}
 
+	// 기본 배율일 때만 프레임 캐시를 쓴다.
+	// 서버 검증은 ServerRangeTolerance 를 곱해 부르므로 답이 다를 수 있어 캐시를 건너뛴다.
+	const bool bUseFrameCache = FMath::IsNearlyEqual(RadiusScale, 1.f);
+	if (bUseFrameCache && CachedNearestBoxFrame == GFrameCounter)
+	{
+		return CachedNearestBox.Get();
+	}
+
 	// 박스마다 반경이 다를 수 있어서, 넉넉히 훑은 뒤 각 박스의 반경으로 다시 거른다.
 	//
 	// 훑는 반경을 ChargeRadius 로 잡으면 안 된다. 그건 도구 충전 사거리라 박스와 무관하고,
@@ -306,6 +400,14 @@ ACWPaintSupplyBox* UCWSupplyCarrierComponent::FindNearestBox(float RadiusScale) 
 
 		NearestDistanceSquared = DistanceSquared;
 		NearestBox = Box;
+	}
+
+	// 못 찾은 결과(nullptr)도 캐시한다. 박스에서 멀리 떨어져 있을 때가 대부분이라
+	// 그때 쿼리를 건너뛰는 것이 실제로는 더 이득이다.
+	if (bUseFrameCache)
+	{
+		CachedNearestBoxFrame = GFrameCounter;
+		CachedNearestBox = NearestBox;
 	}
 
 	return NearestBox;

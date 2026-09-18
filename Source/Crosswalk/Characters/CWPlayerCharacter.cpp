@@ -31,7 +31,9 @@
 #include "Characters/Components/CWWearableComponent.h"
 #include "Characters/Wearables/CWWearableItem.h"
 #include "Core/CWDecalStatics.h"
+#include "Interaction/Components/CWInteractionPromptComponent.h"
 #include "Interfaces/Interface_Interactable.h"
+#include "Painting/CWPaintSupplyBox.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWRestZone.h"
 #include "Painting/Components/CWTemperatureComponent.h"
@@ -42,6 +44,7 @@
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Sinkhole/Components/CWAsphaltGunnerComponent.h"
 #include "Sinkhole/Components/CWSinkholeFallComponent.h"
+#include "Sinkhole/Tools/CWAsphaltGun.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/Assets/CWParryPropCatalog.h"
 #include "Traffic/Components/CWParryComponent.h"
@@ -100,6 +103,7 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	SinkholeFallComponent = CreateDefaultSubobject<UCWSinkholeFallComponent>(TEXT("SinkholeFallComponent"));
 	AsphaltGunnerComponent = CreateDefaultSubobject<UCWAsphaltGunnerComponent>(TEXT("AsphaltGunnerComponent"));
 	SupplyCarrierComponent = CreateDefaultSubobject<UCWSupplyCarrierComponent>(TEXT("SupplyCarrierComponent"));
+	InteractionPromptComponent = CreateDefaultSubobject<UCWInteractionPromptComponent>(TEXT("InteractionPromptComponent"));
 
 	/**
 	 * 착용물 컴포넌트. 헬멧과 옷을 하나로 관리한다.
@@ -1714,11 +1718,11 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	// 헬멧 교체. 누르는 순간 한 번만.
 	EnhancedInput->BindAction(SwapHelmetAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::SwapHelmet);
 
-	// 보급 입력 3종. (기획서 6-1 ~ 6-3)
-	// 도구 집기(E)와 별도 키인 이유: 도구와 통은 동시에 들 수 없어서(6-6), 같은 키로 묶으면
-	// 박스 앞에 도구가 떨어져 있을 때 무엇이 집히는지 플레이어가 예측할 수 없다.
-	EnhancedInput->BindAction(PickUpCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::PickUpCan);
-	EnhancedInput->BindAction(DropCanAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::DropCan);
+	// 보급 채우기. (기획서 6-2, 6-3)
+	//
+	// 통 꺼내기는 E(Interact)로 넘어갔고, 반납은 이 키가 도구 충전과 같이 받는다.
+	// 전용 키(F/G)를 없앤 자리다. 무엇이 잡히는지는 UCWInteractionPromptComponent 가
+	// 대상 머리 위에 띄워 알려주므로, 키 하나가 여러 일을 해도 예측할 수 있다.
 	EnhancedInput->BindAction(ChargePaintAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ChargePaint);
 
 	// 옷 입기/벗기.
@@ -1739,8 +1743,6 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	EnsureInputAction(ParryAction, TEXT("BuiltIn_Parry"), EInputActionValueType::Boolean);
 	EnsureInputAction(CancelWorkAction, TEXT("BuiltIn_CancelWork"), EInputActionValueType::Boolean);
 	EnsureInputAction(SwapHelmetAction, TEXT("BuiltIn_SwapHelmet"), EInputActionValueType::Boolean);
-	EnsureInputAction(PickUpCanAction, TEXT("BuiltIn_PickUpCan"), EInputActionValueType::Boolean);
-	EnsureInputAction(DropCanAction, TEXT("BuiltIn_DropCan"), EInputActionValueType::Boolean);
 	EnsureInputAction(ChargePaintAction, TEXT("BuiltIn_ChargePaint"), EInputActionValueType::Boolean);
 	EnsureInputAction(ToggleOutfitAction, TEXT("BuiltIn_ToggleOutfit"), EInputActionValueType::Boolean);
 
@@ -1814,20 +1816,14 @@ void ACWPlayerCharacter::BuildSupplementContext()
 		SupplementContext->MapKey(SwapHelmetAction, EKeys::H);
 	}
 
-	// 보급 키. F 로 꺼내고 G 로 반납하고 R 로 붓는다. (기획서 6-1 ~ 6-3)
+	// 보급 채우기 키(R). 꺼내기는 E 가 받으므로 전용 키는 이것 하나뿐이다. (기획서 6-2, 6-3)
 	//
-	// 들기와 내려놓기를 한 키로 토글하지 않는 이유: 둘 다 박스 근처에서만 되는 조작이라
-	// 같은 자리에서 두 의도가 겹친다. 통을 더 꺼내려다 반납하는 사고가 난다.
-	if (PickUpCanAction != nullptr)
-	{
-		SupplementContext->MapKey(PickUpCanAction, EKeys::F);
-	}
-
-	if (DropCanAction != nullptr)
-	{
-		SupplementContext->MapKey(DropCanAction, EKeys::G);
-	}
-
+	// 꺼내기(F)와 반납(G)을 없앤 이유: 통을 들고 박스 앞에 서 있는 것이 보급 담당의
+	// 기본 자세라, 그 자리에서만 쓰이는 키를 둘이나 따로 두면 손가락만 늘어난다.
+	//
+	// 꺼내기를 E 로, 반납을 R 로 나눠 보낸 이유: 두 동작을 한 키에 토글로 묶으면
+	// 통을 더 꺼내려다 반납하는 사고가 난다. 1~2개를 든 상태는 "더 꺼내기" 와 "반납" 이
+	// 둘 다 말이 되는 상태여서, 상태만으로는 의도를 가를 수 없다.
 	if (ChargePaintAction != nullptr)
 	{
 		SupplementContext->MapKey(ChargePaintAction, EKeys::R);
@@ -1936,48 +1932,127 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 		+ CameraYaw.RotateVector(FVector::RightVector) * MoveInput.X);
 }
 
-void ACWPlayerCharacter::Interact()
+FCWInteractionPrompt ACWPlayerCharacter::ResolveInteractPrompt() const
 {
+	FCWInteractionPrompt Prompt;
+
+	// 쓰러졌거나 앉아 있으면 E 는 아무 데도 향하지 않는다. (기획서 6.2 / 착석 기획서 7절)
+	// 착석 중 일어나기는 WASD 가 받으므로 여기서 열어 줄 필요가 없다.
 	if (IsActionLocked())
 	{
-		return;
+		return Prompt;
 	}
+
+	Prompt.Key = ResolvePromptKey(InteractAction);
 
 	float InteractableDistanceSquared = TNumericLimits<float>::Max();
 	AActor* Interactable = FindNearestInteractable(InteractableDistanceSquared);
 
-	if (Interactable == nullptr)
-	{
-		ToolHolderComponent->Interact();
-		return;
-	}
-
 	// 도구를 들고 있으면 도구 쪽 경로는 "내려놓기" 다. 트렁크 앞에서 E 를 눌렀는데 발밑에
 	// 도구가 떨어지면 반납한 것으로 착각하게 되므로, 이 경우는 상호작용 대상을 우선한다.
-	if (ToolHolderComponent->GetHeldTool() != nullptr)
+	//
+	// 통은 후보에 오르지 않는다. 도구를 든 채로는 꺼낼 수 없기 때문이다. (기획서 6-6)
+	if (ACWBaseTool* HeldTool = ToolHolderComponent->GetHeldTool())
 	{
-		PerformInteractWith(Interactable);
-		return;
+		if (Interactable != nullptr)
+		{
+			Prompt.TargetActor = Interactable;
+			Prompt.Action = ECWInteractionPromptAction::Interact;
+			return Prompt;
+		}
+
+		Prompt.TargetActor = HeldTool;
+		Prompt.Action = ECWInteractionPromptAction::DropTool;
+		return Prompt;
 	}
 
-	// 맨손이면 둘 다 후보다. 가까운 쪽을 고른다.
-	// 차량 옆에 도구가 떨어져 있어도 바로 집을 수 있어야 한다.
-	if (const ACWBaseTool* FocusedTool = ToolHolderComponent->GetFocusedTool())
+	// 맨손이면 후보가 셋이다. 가장 가까운 하나를 고른다.
+	// 차량 옆에 도구가 떨어져 있어도, 박스 옆에 도구가 굴러다녀도 바로 집을 수 있어야 한다.
+	AActor* BestTarget = Interactable;
+	float BestDistanceSquared = InteractableDistanceSquared;
+	ECWInteractionPromptAction BestAction = Interactable != nullptr
+		? ECWInteractionPromptAction::Interact
+		: ECWInteractionPromptAction::None;
+
+	// 통을 들고 있으면 도구를 집을 수 없다. (기획서 6-6)
+	// 잡히지도 않을 대상에 프롬프트를 띄우지 않으려고 여기서 미리 자른다.
+	if (!ToolHolderComponent->IsBlockedByCarriedCans())
 	{
-		const float ToolDistanceSquared = FVector::DistSquared(GetActorLocation(), FocusedTool->GetActorLocation());
-		if (ToolDistanceSquared <= InteractableDistanceSquared)
+		if (ACWBaseTool* FocusedTool = ToolHolderComponent->GetFocusedTool())
 		{
-			ToolHolderComponent->Interact();
-			return;
+			const float ToolDistanceSquared = FVector::DistSquared(GetActorLocation(), FocusedTool->GetActorLocation());
+			if (ToolDistanceSquared <= BestDistanceSquared)
+			{
+				BestTarget = FocusedTool;
+				BestDistanceSquared = ToolDistanceSquared;
+				BestAction = ECWInteractionPromptAction::PickUpTool;
+			}
 		}
 	}
 
-	PerformInteractWith(Interactable);
+	// 박스는 꺼낼 수 있을 때만 후보가 된다. 거리·양손·소지 한도를 이 안에서 전부 본다.
+	if (ACWPaintSupplyBox* PickUpBox = SupplyCarrierComponent->FindPickUpBox())
+	{
+		const float BoxDistanceSquared = FVector::DistSquared(GetActorLocation(), PickUpBox->GetActorLocation());
+		if (BoxDistanceSquared < BestDistanceSquared)
+		{
+			BestTarget = PickUpBox;
+			BestDistanceSquared = BoxDistanceSquared;
+			BestAction = ECWInteractionPromptAction::PickUpCan;
+		}
+	}
+
+	Prompt.TargetActor = BestTarget;
+	Prompt.Action = BestAction;
+	return Prompt;
+}
+
+void ACWPlayerCharacter::Interact()
+{
+	// 판정은 ResolveInteractPrompt 한 곳에서만 한다. 여기서 다시 고르면
+	// 머리 위에 뜬 대상과 실제로 잡히는 대상이 갈린다.
+	const FCWInteractionPrompt Prompt = ResolveInteractPrompt();
+
+	switch (Prompt.Action)
+	{
+	case ECWInteractionPromptAction::PickUpTool:
+	case ECWInteractionPromptAction::DropTool:
+		ToolHolderComponent->Interact();
+		break;
+
+	case ECWInteractionPromptAction::PickUpCan:
+		SupplyCarrierComponent->PickUpCan();
+		break;
+
+	case ECWInteractionPromptAction::Interact:
+		PerformInteractWith(Prompt.TargetActor);
+		break;
+
+	default:
+		// 잡을 대상이 없다. 입력이 조용히 씹힌 것처럼 보이지 않게 이유만 발행한다.
+		// 박스 앞이면 보급 쪽이 (더 들 수 없음 / 도구를 들고 있음), 아니면 도구 쪽이
+		// (양손이 찼음) 이유를 안다. 두 함수 모두 막히면 NotifyActionRejected 를 부른다.
+		if (SupplyCarrierComponent->IsNearSupplyBox())
+		{
+			SupplyCarrierComponent->PickUpCan();
+		}
+		else
+		{
+			ToolHolderComponent->Interact();
+		}
+		break;
+	}
 }
 
 AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) const
 {
 	OutDistanceSquared = TNumericLimits<float>::Max();
+
+	// [진단] 이번 호출의 측정값을 먼저 비운다. 아래에서 일찍 빠져나가도 직전 호출의
+	// 숫자가 남아 있으면 요약이 그만큼 부풀어 오른다.
+	LastInteractQuerySeconds = 0.0;
+	LastInteractQueryOverlapCount = 0;
+	LastInteractQueryStaticOverlapCount = 0;
 
 	const UWorld* World = GetWorld();
 	if (World == nullptr)
@@ -1995,6 +2070,9 @@ AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) c
 	QueryParams.AddIgnoredActor(this);
 
 	TArray<FOverlapResult> Overlaps;
+
+	const double QueryStartSeconds = FPlatformTime::Seconds();
+
 	World->OverlapMultiByObjectType(
 		Overlaps,
 		GetActorLocation(),
@@ -2003,10 +2081,23 @@ AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) c
 		FCollisionShape::MakeSphere(InteractRadius),
 		QueryParams);
 
+	LastInteractQuerySeconds = FPlatformTime::Seconds() - QueryStartSeconds;
+	LastInteractQueryOverlapCount = Overlaps.Num();
+
 	AActor* NearestActor = nullptr;
 
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
+		// [진단] 걸린 것 중 정적 지오메트리가 몇 개인지 센다.
+		// 필터에 걸려 버려질 결과도 오버랩이 만들어낸 비용이라 거르기 전에 센다.
+		if (const UPrimitiveComponent* OverlapComponent = Overlap.GetComponent())
+		{
+			if (OverlapComponent->GetCollisionObjectType() == ECC_WorldStatic)
+			{
+				++LastInteractQueryStaticOverlapCount;
+			}
+		}
+
 		AActor* OverlapActor = Overlap.GetActor();
 		if (OverlapActor == nullptr || !OverlapActor->Implements<UInterface_Interactable>())
 		{
@@ -2071,48 +2162,92 @@ void ACWPlayerCharacter::Server_InteractWith_Implementation(AActor* Target)
 	PerformInteractWith(Target);
 }
 
-void ACWPlayerCharacter::PickUpCan()
+FCWInteractionPrompt ACWPlayerCharacter::ResolveChargePrompt() const
 {
-	// 앉아 있는 동안은 WASD 말고 아무것도 받지 않는다. (착석 기획서 7절)
-	//
-	// 이 함수들은 IsActionLocked 를 보지 않아서 착석도 자동으로 걸리지 않는다.
-	// 그래서 여기서만 따로 막는다.
-	if (bIsSitting)
-	{
-		return;
-	}
+	FCWInteractionPrompt Prompt;
 
-	SupplyCarrierComponent->PickUpCan();
-}
-
-void ACWPlayerCharacter::DropCan()
-{
-	if (bIsSitting)
-	{
-		return;
-	}
-
-	SupplyCarrierComponent->DropCan();
-}
-
-void ACWPlayerCharacter::ChargePaint()
-{
+	// 쓰러졌거나 앉아 있으면 R 도 아무 데도 향하지 않는다. (기획서 6.2, 6-7 / 착석 기획서 7절)
 	if (IsActionLocked())
 	{
-		return;
+		return Prompt;
 	}
+
+	Prompt.Key = ResolvePromptKey(ChargePaintAction);
 
 	// 아스팔트 건을 들고 있으면 같은 키가 수동 재장전이 된다. (싱크홀 기획서 7-5)
 	//
 	// R 은 "든 도구를 채운다" 는 자리다. 아스팔트 건은 페인트를 쓰지 않으므로
 	// 이 키가 놀고 있고, 채운다는 의미도 그대로 이어진다.
+	//
+	// 충전/반납과 겹치지 않는다. 건도 도구라서 들고 있으면 통을 들 수 없고,
+	// 통이 없으면 충전도 반납도 후보가 되지 않는다. (기획서 6-6)
+	if (ACWAsphaltGun* HeldGun = AsphaltGunnerComponent->GetHeldAsphaltGun())
+	{
+		Prompt.TargetActor = HeldGun;
+		Prompt.Action = ECWInteractionPromptAction::ReloadAsphaltGun;
+		return Prompt;
+	}
+
+	AActor* SupplyTarget = nullptr;
+	const ECWInteractionPromptAction SupplyAction = SupplyCarrierComponent->ResolveChargeOrReturnTarget(SupplyTarget);
+	if (SupplyAction == ECWInteractionPromptAction::None)
+	{
+		return FCWInteractionPrompt();
+	}
+
+	Prompt.TargetActor = SupplyTarget;
+	Prompt.Action = SupplyAction;
+	return Prompt;
+}
+
+void ACWPlayerCharacter::ChargePaint()
+{
+	// 판정은 ResolveChargePrompt 와 ChargeOrReturn 이 쓰는 함수 하나에만 있다.
+	// 여기서는 아스팔트 건만 갈라내고 나머지는 보급 컴포넌트에 넘긴다.
+	if (IsActionLocked())
+	{
+		return;
+	}
+
 	if (AsphaltGunnerComponent->GetHeldAsphaltGun() != nullptr)
 	{
 		AsphaltGunnerComponent->Reload();
 		return;
 	}
 
-	SupplyCarrierComponent->ChargeNearestTool();
+	SupplyCarrierComponent->ChargeOrReturn();
+}
+
+FKey ACWPlayerCharacter::ResolvePromptKey(const UInputAction* Action) const
+{
+	if (Action == nullptr)
+	{
+		return EKeys::Invalid;
+	}
+
+	const APlayerController* OwningController = Cast<APlayerController>(GetController());
+	if (OwningController == nullptr)
+	{
+		return EKeys::Invalid;
+	}
+
+	ULocalPlayer* LocalPlayer = OwningController->GetLocalPlayer();
+	if (LocalPlayer == nullptr)
+	{
+		return EKeys::Invalid;
+	}
+
+	UEnhancedInputLocalPlayerSubsystem* InputSubsystem = LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (InputSubsystem == nullptr)
+	{
+		return EKeys::Invalid;
+	}
+
+	// 애셋 IMC 와 보완 컨텍스트 중 어느 쪽이 이 액션을 물고 있든 여기서 같이 나온다.
+	// 키가 여러 개면 첫 번째만 쓴다. 작업 키처럼 Space 와 좌클릭 둘 다 걸린 경우가 있는데,
+	// 프롬프트에 두 개를 나란히 그리면 줄이 길어져 머리 위에서 읽기 어렵다.
+	const TArray<FKey> MappedKeys = InputSubsystem->QueryKeysMappedToAction(Action);
+	return MappedKeys.Num() > 0 ? MappedKeys[0] : EKeys::Invalid;
 }
 
 void ACWPlayerCharacter::CancelWork()
