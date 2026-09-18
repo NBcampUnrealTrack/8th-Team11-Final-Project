@@ -673,6 +673,12 @@ bool UCWUISubsystem::EnsureUIRoot()
 	CurrentScreen.Reset();
 	CurrentPage = ECWUIPage::None;
 
+	// 참가 시 숨겼던 이전 Root의 상태가 새 월드의 HUD 복원값으로 남지 않도록 함
+	bIsHUDVisible = true;
+	bHUDWasVisibleBeforePage = true;
+	bCurrentPageHidesHUD = false;
+	NewRoot->SetHUDLayerVisible(true);
+
 	// Root의 Viewport ZOrder를 명시해 화면에 추가
 	NewRoot->AddToPlayerScreen(0);
 	UIRoot = NewRoot;
@@ -878,6 +884,9 @@ bool UCWUISubsystem::RemoveHUDWidget(UUserWidget* InWidget)
 
 void UCWUISubsystem::ClearHUDWidgets()
 {
+	UE_LOG(LogCWUI, Log, TEXT("[HUDState] Clear widgets World=%s Page=%d"),
+		*GetNameSafe(GetWorld()), static_cast<int32>(CurrentPage));
+
 	// 현재 Root의 HUD Widget을 모두 정리
 	if (UCWUIRootWidget* RootWidget = UIRoot.Get())
 	{
@@ -895,6 +904,12 @@ void UCWUISubsystem::SetHUDVisible(bool bVisible)
 		return;
 	}
 
+	if (bIsHUDVisible != bVisible)
+	{
+		UE_LOG(LogCWUI, Log, TEXT("[HUDState] Visible=%d -> %d World=%s Page=%d PageHidesHUD=%d RestoreVisible=%d"),
+			bIsHUDVisible, bVisible, *GetNameSafe(GetWorld()), static_cast<int32>(CurrentPage),
+			bCurrentPageHidesHUD, bHUDWasVisibleBeforePage);
+	}
 	RootWidget->SetHUDLayerVisible(bVisible);
 	// 복원 계산에서 현재 상태를 참조하므로 함께 갱신
 	bIsHUDVisible = bVisible;
