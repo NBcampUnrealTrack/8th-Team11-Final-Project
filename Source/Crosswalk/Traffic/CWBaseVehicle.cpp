@@ -5,9 +5,6 @@
 #include "Components/BoxComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "Engine/SkeletalMesh.h"
-#include "Engine/SkinnedAsset.h"
-#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
@@ -16,9 +13,9 @@
 #include "CWTrafficMath.h"
 #include "CWTrafficSubsystem.h"
 #include "Core/CWDecalStatics.h"
-#include "Data/Structs/CWVehicleHitContext.h"
-#include "Interfaces/Interface_VehicleHitReceiver.h"
+#include "Traffic/Components/CWVehicleAppearanceComponent.h"
 #include "Traffic/Components/CWVehicleAudioComponent.h"
+#include "Traffic/Components/CWVehicleHitDetectionComponent.h"
 #include "Traffic/CWTrafficLog.h"
 #include "Data/CWVehicleSpeedRow.h"
 
@@ -63,6 +60,12 @@ ACWBaseVehicle::ACWBaseVehicle()
 
 	// 엔진음·경적·도플러. 소리가 나지 않아도 주행에는 영향이 없다.
 	AudioComponent = CreateDefaultSubobject<UCWVehicleAudioComponent>(TEXT("AudioComponent"));
+
+	// 차체·색 변형과 바퀴. 변형 목록은 이 액터의 MeshVariants 이고 컴포넌트는 뽑아 씌우기만 한다.
+	AppearanceComponent = CreateDefaultSubobject<UCWVehicleAppearanceComponent>(TEXT("AppearanceComponent"));
+
+	// 플레이어 피격 판정. 콜리전 박스의 오버랩을 BeginPlay 에서 스스로 바인딩한다.
+	HitDetectionComponent = CreateDefaultSubobject<UCWVehicleHitDetectionComponent>(TEXT("HitDetectionComponent"));
 }
 
 void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -75,7 +78,7 @@ void ACWBaseVehicle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 	DOREPLIFETIME(ACWBaseVehicle, DistanceAlongLane);
 	DOREPLIFETIME(ACWBaseVehicle, SpeedMultiplier);
 	DOREPLIFETIME(ACWBaseVehicle, LaneLateralOffset);
-	DOREPLIFETIME(ACWBaseVehicle, VariantPick);
+	// 차체·색(VariantPick)은 외형 컴포넌트가 자기 GetLifetimeReplicatedProps 에서 복제한다.
 
 	DOREPLIFETIME(ACWBaseVehicle, bParried);
 	DOREPLIFETIME(ACWBaseVehicle, ParryLaunchSerial);
@@ -95,10 +98,10 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	 * 속도를 채운 뒤에 불러야 하는데, 그러면 호출 지점이 둘로 갈라져 한쪽을 빼먹기 쉽다.
 	 * 판정이 한 프레임 늦는 것이 전부이고, 그 어긋남은 보정량(핑)에 비하면 무시할 만하다.
 	 */
-	RetryPendingHits();
+	HitDetectionComponent->RetryPendingHits();
 
 	// 바퀴 각도. 아래 두 경로가 각자 return 으로 빠져나가므로 갈라지기 전에 한 번만 민다.
-	UpdateWheelSpin(DeltaSeconds);
+	AppearanceComponent->UpdateWheelSpin(DeltaSeconds);
 
 	// 패링당한 차량은 차선을 벗어나 튕겨나간 방향으로 직진한다.
 	// 앞차와의 간격도 보지 않는다. 소멸은 패링 시 걸어둔 타이머가 맡는다. (서버 전용)
@@ -198,6 +201,11 @@ float ACWBaseVehicle::GetVehicleHalfLength() const
 	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
 }
 
+float ACWBaseVehicle::GetWheelSpinDegrees() const
+{
+	return AppearanceComponent ? AppearanceComponent->GetWheelSpinDegrees() : 0.f;
+}
+
 void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params)
 {
 	CurrentLane = InLane;
@@ -233,45 +241,28 @@ void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVe
 	SpeedMultiplier = 1.f;
 
 	/**
-	 * 외형 변형은 서버가 골라 복제한다. 클라이언트가 각자 굴리면 화면마다 다른 차가 보인다.
+	 * 외형 변형은 서버가 골라 복제한다. 추첨과 씌우기는 외형 컴포넌트가 하고, 여기서는
+	 * 뽑힌 차체의 차종 이름만 받아 속도를 굴린다.
 	 *
-	 * 차체를 먼저 균등하게 뽑고 그 안에서 색을 뽑는다. 색까지 한 번에 늘어놓고 뽑으면
-	 * 색이 네 가지인 차체가 한 가지인 차체보다 네 배 자주 나온다. (FCWVehicleVariantPick 주석)
-	 *
-	 * 색 목록이 빈 차체도 뽑힐 수 있다. 그때 Color 는 0 이 되고 ApplyMeshVariant 가
-	 * 정적 메쉬 쪽으로 떨어뜨린다. 유효하지 않은 인덱스를 들고 있는 것이 아니라,
-	 * 애초에 색을 고를 것이 없는 차체다.
+	 * 속도는 차체가 정해진 다음에야 뽑을 수 있다. 세단과 밴이 같은 BP 에 들어 있어서
+	 * 어느 쪽이 나올지는 추첨 전에는 알 수 없다. 그래서 속도 굴리기가 외형 컴포넌트 호출
+	 * 뒤에 온다 - 이 순서가 외형과 주행이 만나는 유일한 지점이다.
 	 */
-	if (HasAuthority() && MeshVariants.Num() > 0)
+	if (HasAuthority() && AppearanceComponent)
 	{
-		const int32 FamilyIndex = FMath::RandHelper(MeshVariants.Num());
-		const int32 ColorCount = MeshVariants[FamilyIndex].ColorMeshes.Num();
-
-		VariantPick.Family = static_cast<uint8>(FamilyIndex);
-		VariantPick.Color = ColorCount > 0 ? static_cast<uint8>(FMath::RandHelper(ColorCount)) : 0;
-
-		ApplyMeshVariant();
-
-		// 속도는 차체가 정해진 다음에야 뽑을 수 있다. 세단과 밴이 같은 BP 에 들어 있어서
-		// 어느 쪽이 나올지는 위 추첨 전에는 알 수 없다.
-		RollSpeedForVariant(MeshVariants[FamilyIndex].SpeedType, Params.SpeedTable);
+		if (const FCWVehicleMeshVariant* PickedVariant = AppearanceComponent->PickVariant())
+		{
+			RollSpeedForVariant(PickedVariant->SpeedType, Params.SpeedTable);
+		}
 	}
 
 	// 이전 주행의 피격 기록이 남아 있으면 안 된다.
-	HitActors.Reset();
-	OverlappingReceivers.Reset();
-
-	UpdateTransformOnLane();
-}
-
-const FCWVehicleMeshVariant* ACWBaseVehicle::GetActiveVariant() const
-{
-	if (!VariantPick.IsPicked() || !MeshVariants.IsValidIndex(VariantPick.Family))
+	if (HitDetectionComponent)
 	{
-		return nullptr;
+		HitDetectionComponent->ResetHitRecords();
 	}
 
-	return &MeshVariants[VariantPick.Family];
+	UpdateTransformOnLane();
 }
 
 void ACWBaseVehicle::RollSpeedForVariant(FName SpeedType, const UDataTable* SpeedTable)
@@ -311,59 +302,6 @@ void ACWBaseVehicle::RollSpeedForVariant(FName SpeedType, const UDataTable* Spee
 	SpeedMultiplier = FMath::Max(KINDA_SMALL_NUMBER, FMath::FRandRange(Row->SpeedMin, Row->SpeedMax) / Speed);
 }
 
-void ACWBaseVehicle::ApplyMeshVariant()
-{
-	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
-	if (!Variant)
-	{
-		return;
-	}
-
-	/**
-	 * 뽑은 색의 메쉬. 색 목록이 비었거나 그 칸이 비어 있으면 널이고, 그러면 아래에서
-	 * 정적 메쉬 쪽으로 떨어진다. 양쪽 다 비면 BP 가 물려 둔 기본 메쉬가 그대로 남는다.
-	 */
-	USkeletalMesh* ColorMesh = Variant->ColorMeshes.IsValidIndex(VariantPick.Color)
-		? Variant->ColorMeshes[VariantPick.Color]
-		: nullptr;
-
-	/**
-	 * 지정한 쪽을 채우고 반대쪽은 비운다. 둘 다 남겨 두면 BP 가 물려 둔 기본 메쉬와
-	 * 변형 메쉬가 한 자리에 겹쳐 보인다. 둘 다 비어 있을 때만 아무것도 건드리지 않는다.
-	 *
-	 * SetSkeletalMeshAsset 이 아니라 SetSkinnedAssetAndUpdate 를 쓰는 이유는 앞의 것이
-	 * USkeletalMeshComponent 의 함수이기 때문이다. 포저블 메쉬는 그 아래 USkinnedMeshComponent
-	 * 를 상속하고, 본 배열 재할당(AllocateTransformData)은 이쪽이 대신 불러 준다.
-	 */
-	if (ColorMesh)
-	{
-		VehicleSkeletalMesh->SetSkinnedAssetAndUpdate(ColorMesh);
-		VehicleMesh->SetStaticMesh(nullptr);
-	}
-	else if (Variant->Mesh)
-	{
-		VehicleMesh->SetStaticMesh(Variant->Mesh);
-		VehicleSkeletalMesh->SetSkinnedAssetAndUpdate(nullptr);
-	}
-
-	/**
-	 * 콜리전도 같이 바꾼다.
-	 *
-	 * 같은 승용차 팩 안에서도 폭이 178~253cm 로 벌어져서, 박스를 하나로 고정하면
-	 * 넓은 차는 옆구리 판정이 비고 좁은 차는 스치기만 해도 맞는다.
-	 *
-	 * 이 값은 GetVehicleLength 를 통해 스포너의 간격 계산에도 들어간다. 다만 스폰 주기가
-	 * 차 길이에 비해 훨씬 길어서(8초면 6000cm 이동) 실제로 간격 제한에 걸리는 일은 없다.
-	 */
-	if (!Variant->BoxExtent.IsNearlyZero())
-	{
-		ApplyCollisionExtent(Variant->BoxExtent);
-	}
-
-	// 메쉬가 바뀌었으니 바퀴 본의 레퍼런스 자세를 다시 받는다. 지금이 포즈가 손타지 않은 유일한 시점이다.
-	CacheWheelBoneRestRotations();
-}
-
 void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
 {
 	if (!CollisionBox)
@@ -386,174 +324,6 @@ void ACWBaseVehicle::ApplyCollisionExtent(const FVector& Extent)
 	 */
 	const float HalfHeight = Extent.Z * CollisionBox->GetRelativeScale3D().Z;
 	CollisionBox->SetRelativeLocationAndRotation(FVector(0.f, 0.f, HalfHeight), FRotator::ZeroRotator);
-}
-
-float ACWBaseVehicle::GetActiveWheelRadius() const
-{
-	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
-	if (Variant && Variant->WheelRadius > 0.f)
-	{
-		return Variant->WheelRadius;
-	}
-
-	return WheelRadius;
-}
-
-void ACWBaseVehicle::CacheWheelBoneRestRotations()
-{
-	CachedWheelBones.Reset();
-	WheelBoneRestRotations.Reset();
-	bWheelRestCached = true;
-
-	if (!VehicleSkeletalMesh->GetSkinnedAsset())
-	{
-		return;
-	}
-
-	for (const FName& BoneName : GetActiveWheelBones())
-	{
-		/**
-		 * 없는 이름을 여기서 걸러낸다.
-		 *
-		 * 거르지 않고 매 틱 SetBoneRotationByName 에 넘기면 엔진이 그때마다 경고를 찍어
-		 * 차량 수 x 바퀴 수 x 프레임만큼 로그가 쌓인다. 한 번만 확인하고 목록에서 빼면
-		 * 경고도 스폰당 한 줄로 끝난다.
-		 */
-		if (VehicleSkeletalMesh->GetBoneIndex(BoneName) == INDEX_NONE)
-		{
-			/**
-			 * 같은 (메쉬, 본) 조합은 판당 한 번만 찍는다.
-			 *
-			 * 스폰당 한 줄이어도 차는 계속 스폰된다 — 09-16 로그에서 오토바이 한 종류가
-			 * 408줄을 냈다. 이건 그 차 인스턴스의 문제가 아니라 **데이터의 문제**라서,
-			 * 같은 말을 400번 해도 새로 알게 되는 것이 없다. 고칠 사람에게 필요한 정보는
-			 * "어느 메쉬의 어느 본 이름이 틀렸나" 한 줄이 전부다. 그래서 인스턴스 이름
-			 * 대신 메쉬 이름으로 묶는다.
-			 */
-			static TSet<TPair<FName, FName>> ReportedMissingWheelBones;
-
-			const USkinnedAsset* SkinnedAsset = VehicleSkeletalMesh->GetSkinnedAsset();
-			const FName MeshName = SkinnedAsset ? SkinnedAsset->GetFName() : NAME_None;
-
-			bool bAlreadyReported = false;
-			ReportedMissingWheelBones.Add(TPair<FName, FName>(MeshName, BoneName), &bAlreadyReported);
-
-			if (!bAlreadyReported)
-			{
-				UE_LOG(LogCWTraffic, Warning, TEXT("[Traffic] 메쉬 '%s' 에 바퀴 본 '%s' 이 없다. 이 본은 건너뛴다. (차종 데이터의 WheelBones 확인)"),
-					*MeshName.ToString(), *BoneName.ToString());
-			}
-
-			continue;
-		}
-
-		/**
-		 * 레퍼런스 포즈의 컴포넌트 공간 회전을 받아 둔다.
-		 *
-		 * 메쉬를 막 씌운 직후라 본 포즈가 아직 레퍼런스 그대로다. 여기서 받지 않고
-		 * 주행 중에 받으면 이미 우리가 돌려 놓은 각도가 섞여 들어온다.
-		 */
-		CachedWheelBones.Add(BoneName);
-		WheelBoneRestRotations.Add(
-			VehicleSkeletalMesh->GetBoneTransformByName(BoneName, EBoneSpaces::ComponentSpace).GetRotation());
-	}
-}
-
-const TArray<FName>& ACWBaseVehicle::GetActiveWheelBones() const
-{
-	const FCWVehicleMeshVariant* Variant = GetActiveVariant();
-	if (Variant && Variant->WheelBones.Num() > 0)
-	{
-		return Variant->WheelBones;
-	}
-
-	return WheelBones;
-}
-
-void ACWBaseVehicle::UpdateWheelSpin(float DeltaSeconds)
-{
-	const float Radius = GetActiveWheelRadius();
-	if (Radius <= KINDA_SMALL_NUMBER)
-	{
-		// 반지름이 0 인 차종은 바퀴를 돌리지 않는다. 정적 메쉬 차량이 여기로 들어온다.
-		return;
-	}
-
-	/**
-	 * 굴림 조건으로 각속도를 낸다. 바퀴가 원주만큼 나아가면 정확히 한 바퀴다.
-	 *
-	 *   각속도(도/초) = 이동속도 / 원주 * 360
-	 *
-	 * GetCurrentSpeed 는 매 Tick 이 채우는 값이라 서버·클라이언트 양쪽에 있다. 그래서
-	 * 각 클라이언트가 스스로 굴려도 화면마다 크게 다르지 않고, 달라 봐야 바퀴 각도다.
-	 */
-	const float Circumference = 2.f * PI * Radius;
-	WheelSpinDegrees += GetCurrentSpeed() / Circumference * 360.f * DeltaSeconds;
-
-	// 무한히 키우면 부동소수 정밀도가 떨어져 회전이 눈에 띄게 튄다.
-	WheelSpinDegrees = FMath::Fmod(WheelSpinDegrees, 360.f);
-
-	ApplyWheelSpinToBones();
-}
-
-void ACWBaseVehicle::ApplyWheelSpinToBones()
-{
-	if (!bWheelRestCached)
-	{
-		// 변형을 쓰지 않는 차종 BP 도 있다. 그쪽은 ApplyMeshVariant 를 타지 않으므로 여기서 채운다.
-		CacheWheelBoneRestRotations();
-	}
-
-	const TArray<FName>& Bones = CachedWheelBones;
-	if (Bones.Num() == 0)
-	{
-		// 정적 메쉬 변형을 뽑았거나, 본 이름이 없거나, 넣은 이름이 메쉬에 없는 경우다.
-		return;
-	}
-
-	/**
-	 * 화면에 안 잡히는 동안은 본을 건드리지 않는다.
-	 *
-	 * 차량은 화면 밖에서 스폰돼 한참 달려온 뒤에 시야에 들어온다. 그동안의 바퀴 각도는
-	 * 아무도 보지 않는데 포즈 갱신 비용은 그대로 든다. 각도 자체는 위에서 계속 누적하므로
-	 * 다시 보이는 순간의 각도는 맞다. 안 보이는 동안의 중간 프레임만 건너뛴다.
-	 *
-	 * (스켈레탈 메쉬 컴포넌트의 VisibilityBasedAnimTickOption 이 하던 일을 옮겨온 것이다.
-	 *  포저블 메쉬는 애님 틱을 돌지 않으므로 그 옵션이 없다.)
-	 */
-	if (!VehicleSkeletalMesh->WasRecentlyRendered())
-	{
-		return;
-	}
-
-	/**
-	 * 레퍼런스 자세 위에 회전을 얹는다. 덮어쓰지 않는다.
-	 *
-	 * SetBoneRotationByName 은 본의 회전을 통째로 갈아 끼운다. 그래서 회전만 넘기면
-	 * 바퀴가 원래 들고 있던 자세가 날아간다. MegaCity 팩은 바퀴 본이 옆을 보도록 돌아간
-	 * 채로 바인드돼 있어서, 각도만 넣으면 바퀴가 누운 채로 돌았다 (2026-09-15 실기).
-	 *
-	 * 곱하는 순서가 중요하다. UE 는 A * B 를 "B 를 먼저, 그 다음 A" 로 해석하므로
-	 * Spin * Rest 는 레퍼런스 자세를 잡은 뒤 그 위에서 돌리는 것이 된다. 반대로 쓰면
-	 * 바퀴 자기 축을 기준으로 돌아 네 바퀴가 제각각 다른 방향으로 구른다.
-	 *
-	 * 축은 컴포넌트 공간의 Y 다. 차량이 +X 를 보고 서 있으니 바퀴 축이 Y 이고, 이 축은
-	 * 본이 어떤 자세로 바인드됐든 상관없이 네 바퀴가 똑같이 쓴다.
-	 *
-	 * 부호가 음수인 이유는 Pitch 양수가 +Z 를 -X 로 보내기 때문이다. 바퀴 꼭대기는 차가
-	 * 전진할 때 앞(+X)으로 가야 한다. 거꾸로 구르면 이 부호만 뒤집으면 된다.
-	 */
-	const FQuat Spin = FRotator(-WheelSpinDegrees, 0.f, 0.f).Quaternion();
-	for (int32 Index = 0; Index < Bones.Num(); ++Index)
-	{
-		const FQuat Rotation = Spin * WheelBoneRestRotations[Index];
-		VehicleSkeletalMesh->SetBoneRotationByName(Bones[Index], Rotation.Rotator(), EBoneSpaces::ComponentSpace);
-	}
-}
-
-void ACWBaseVehicle::OnRep_VariantPick()
-{
-	ApplyMeshVariant();
 }
 
 void ACWBaseVehicle::OnRep_DistanceAlongLane()
@@ -886,19 +656,12 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 	// 차선에서 뺀다. 그대로 두면 뒤차들이 튕겨나간 차를 앞차로 보고 줄줄이 멈춘다.
 	CurrentLane = nullptr;
 
-	/**
-	 * 쳐낸 사람이 지금 차와 겹쳐 있으면 이번 겹침 동안만 피격에서 뺀다.
-	 * 충돌 직전에 쳐낸 경우라 차와 몸이 이미 닿아 있고, 그대로 두면 패링에 성공하자마자 맞는다.
-	 *
-	 * 겹치지 않은 상태에서 쳐냈으면 아무것도 하지 않는다. 커서를 자기 쪽으로 찍어
-	 * 차를 자신에게 날려보냈다면 그건 맞아야 하는 상황이다.
-	 *
-	 * 어느 쪽이든 차에서 떨어지는 순간 HandleEndOverlap 이 기록을 지우므로,
-	 * 다시 닿으면 쳐낸 사람도 똑같이 피격된다.
-	 */
-	if (CollisionBox && CollisionBox->IsOverlappingActor(Parrier))
+	// 쳐낸 사람이 지금 차와 겹쳐 있으면 이번 겹침 동안만 피격에서 뺀다. 충돌 직전에 쳐낸
+	// 경우라 차와 몸이 이미 닿아 있고, 그대로 두면 패링에 성공하자마자 맞는다.
+	// 겹침이 풀렸다 다시 닿으면 똑같이 맞는다. (피격 컴포넌트의 IgnoreWhileOverlapping 주석)
+	if (HitDetectionComponent)
 	{
-		HitActors.Add(Parrier);
+		HitDetectionComponent->IgnoreWhileOverlapping(Parrier);
 	}
 
 	/**
@@ -980,8 +743,7 @@ void ACWBaseVehicle::BeginPlay()
 	 */
 	UCWDecalStatics::DisableDecalReceiveOnActor(this);
 
-	CollisionBox->OnComponentBeginOverlap.AddDynamic(this, &ACWBaseVehicle::HandleBeginOverlap);
-	CollisionBox->OnComponentEndOverlap.AddDynamic(this, &ACWBaseVehicle::HandleEndOverlap);
+	// 콜리전 박스의 오버랩은 피격 컴포넌트가 자기 BeginPlay 에서 바인딩한다.
 
 	if (UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this))
 	{
@@ -1188,189 +950,4 @@ void ACWBaseVehicle::UpdateTransformOnLane(float StepSpeed)
 	// GetVehicleLength 가 재는 콜리전 크기와 화면에 보이는 크기가 어긋나면서
 	// 스포너의 간격 계산이 실제보다 짧아져 차가 겹쳐 스폰된다.
 	SetActorLocationAndRotation(LaneTransform.GetLocation(), LaneTransform.GetRotation());
-}
-
-void ACWBaseVehicle::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool bFromSweep, const FHitResult& SweepResult)
-{
-	// 겹치는 동안 다시 볼 수 있게 기록해 둔다. 인터페이스를 구현한 대상만 담는다.
-	// (겹침 자체는 서버·클라 양쪽에서 일어나지만, 재검사는 서버만 하므로 서버에서만 채운다)
-	if (HasAuthority() && OtherActor && OtherActor != this
-		&& OtherActor->Implements<UInterface_VehicleHitReceiver>())
-	{
-		OverlappingReceivers.Add(OtherActor);
-	}
-
-	TryApplyHit(OtherActor, bFromSweep, SweepResult);
-}
-
-void ACWBaseVehicle::RetryPendingHits()
-{
-	// 피격은 서버만 확정한다.
-	if (!HasAuthority() || OverlappingReceivers.IsEmpty())
-	{
-		return;
-	}
-
-	/**
-	 * 순회 중에 TryApplyHit 가 피격을 넣고, 그 수신 측이 넉백으로 대상을 차 밖으로 밀어내
-	 * HandleEndOverlap 이 이 집합을 건드릴 수 있다. 사본으로 돌아야 안전하다.
-	 */
-	TArray<TWeakObjectPtr<AActor>> PendingReceivers = OverlappingReceivers.Array();
-
-	for (const TWeakObjectPtr<AActor>& ReceiverPtr : PendingReceivers)
-	{
-		AActor* Receiver = ReceiverPtr.Get();
-		if (!Receiver)
-		{
-			// 겹친 채로 사라진 대상. EndOverlap 이 오지 않으므로 여기서 지운다.
-			OverlappingReceivers.Remove(ReceiverPtr);
-			continue;
-		}
-
-		// 이미 친 대상은 TryApplyHit 이 기록으로 걸러낸다. 여기서 다시 볼 것은
-		// 아직 못 친 대상뿐이라, 조건이 갖춰지는 순간 그 프레임에 성립한다.
-		//
-		// 스윕 정보가 없으므로 피격 지점은 최근접점으로 대체된다. (ResolveHitLocation)
-		TryApplyHit(Receiver, false, FHitResult());
-	}
-}
-
-bool ACWBaseVehicle::PassesHitLagCompensation(const AActor* Target) const
-{
-	// 판정 주체가 쳐내는 사람이 아니라 맞는 사람이라 대상 폰의 핑으로 되돌린다.
-	// 계산과 상한은 패링과 공유한다. 두 판정이 같은 차를 다른 만큼 되돌리면 안 된다.
-	const float RewindSeconds = UCWTrafficSubsystem::ResolveViewRewindSeconds(Target);
-	if (RewindSeconds <= 0.f)
-	{
-		return true;
-	}
-
-	/**
-	 * 되돌릴 거리. 차량은 진행 방향으로 등속 직진하므로, RewindSeconds 전의 차량은
-	 * 지금 위치에서 정확히 이만큼 뒤에 있었다. (PredictTimeToImpact 의 랙 보정과 같은 가정)
-	 *
-	 * 희망 속도가 아니라 실제 속도를 쓴다. 앞차에 막혀 느리게 굴러온 차를 제 속도로
-	 * 되돌리면 있지도 않았던 위치까지 물러나 맞아야 할 피격을 흘려보낸다.
-	 */
-	const float RewindDistance = GetCurrentSpeed() * RewindSeconds;
-	if (RewindDistance <= KINDA_SMALL_NUMBER)
-	{
-		return true;
-	}
-
-	/**
-	 * 차가 대상을 얼마나 파고들었는가. 앞면이 대상에 막 닿은 순간이 0 이고,
-	 * 더 지나갈수록 커진다. 기준은 GetVehicleLength 와 같은 스케일 적용 후 크기다.
-	 */
-	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
-	const float ForwardDistance = FVector::DotProduct(ToTarget, GetActorForwardVector());
-	const float PenetrationDepth = GetVehicleHalfLength() - ForwardDistance;
-
-	/**
-	 * 파고든 깊이가 되돌릴 거리보다 얕으면, 되돌린 차의 앞면은 아직 대상 뒤에 있다.
-	 * 그 사람 화면에서는 차가 안 왔다는 뜻이라 이번 판정은 흘려보낸다.
-	 *
-	 * 몸을 빼면 겹침이 끝나면서 영영 안 맞고(피한 것이 맞다), 가만히 있으면 차가 계속
-	 * 파고들어 이 조건을 넘는 순간 맞는다. 그 순간이 곧 그 사람 화면에서 차가 닿는 때다.
-	 */
-	return PenetrationDepth >= RewindDistance;
-}
-
-void ACWBaseVehicle::TryApplyHit(AActor* OtherActor, bool bFromSweep, const FHitResult& SweepResult)
-{
-	// 튕겨나가는 중에도 피격 판정은 살아 있다. 날아간 차가 다른 플레이어를 치는 게
-	// 패링이 노리는 그림이다. 쳐낸 사람도 차에서 떨어졌다가 다시 닿으면 똑같이 맞는다.
-	if (!HasAuthority() || !OtherActor || OtherActor == this)
-	{
-		return;
-	}
-
-	/**
-	 * 너무 느린 차는 치지 않는다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우다.
-	 *
-	 * 여기서 기록(HitActors)을 남기지 않는 것이 중요하다. 남기면 그 차가 다시 출발해도
-	 * 이미 판정한 대상으로 걸러져서 영영 맞지 않는다. 대신 RetryPendingHits 가
-	 * 겹쳐 있는 동안 매 틱 다시 보므로, 속도가 하한을 넘는 프레임에 그대로 성립한다.
-	 */
-	if (GetCurrentSpeed() < MinHitSpeed)
-	{
-		return;
-	}
-
-	// 피격 인터페이스를 구현한 액터만 대상으로 본다.
-	// ACWPlayerCharacter 가 이 인터페이스를 구현하므로 폰을 따로 받아줄 이유가 없다.
-	if (!OtherActor->Implements<UInterface_VehicleHitReceiver>())
-	{
-		return;
-	}
-
-	/**
-	 * 이 사람의 화면에서도 실제로 닿았는지 본다. 아직이면 이번 판정은 흘려보낸다.
-	 *
-	 * 기록(HitActors)을 남기지 않는 것이 핵심이다. 남기면 화면에서 곧 닿을 사람도
-	 * 이미 판정한 대상으로 걸러져 영영 안 맞는다. 대신 겹쳐 있는 동안 RetryPendingHits 가
-	 * 매 틱 다시 보므로, 파고든 깊이가 보정 거리를 넘는 순간에 정상 피격이 성립한다.
-	 */
-	if (!PassesHitLagCompensation(OtherActor))
-	{
-		return;
-	}
-
-	// 한 번의 접촉이 여러 프레임에 걸쳐 중복으로 들어가지 않게 막는다.
-	// 차에서 떨어지면 기록이 지워지므로, 떨어졌다 다시 닿는 건 새로운 피격이다.
-	if (HitActors.Contains(OtherActor))
-	{
-		return;
-	}
-	HitActors.Add(OtherActor);
-
-	FCWVehicleHitContext HitContext;
-	HitContext.HitLocation = ResolveHitLocation(OtherActor, bFromSweep, SweepResult);
-	HitContext.HitDirection = GetActorForwardVector();
-	// 실제로 내고 있는 속도를 넘긴다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우
-	// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
-	HitContext.VehicleSpeed = GetCurrentSpeed();
-	HitContext.VehicleType = VehicleType;
-	HitContext.bFlattenOnHit = bFlattenOnHit;
-
-	// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.
-	IInterface_VehicleHitReceiver::Execute_ReceiveVehicleHit(OtherActor, HitContext);
-}
-
-void ACWBaseVehicle::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/)
-{
-	// 피격 기록은 서버만 들고 있다.
-	if (!HasAuthority() || !OtherActor)
-	{
-		return;
-	}
-
-	HitActors.Remove(OtherActor);
-
-	// 겹침이 끝났으니 재검사 대상에서도 뺀다. 랙 보정으로 보류된 채 몸을 뺀 대상은
-	// 여기서 빠지면서 영영 안 맞게 된다 - 화면에서 피한 것이므로 그게 맞다.
-	OverlappingReceivers.Remove(OtherActor);
-}
-
-FVector ACWBaseVehicle::ResolveHitLocation(const AActor* HitActor, bool bFromSweep, const FHitResult& SweepResult) const
-{
-	// 스윕으로 발생한 오버랩이 아니면 SweepResult는 비어 있다.
-	// 차량은 SetActorTransform으로 위치를 덮어쓰므로 대부분 이 경우다.
-	if (bFromSweep)
-	{
-		return SweepResult.ImpactPoint;
-	}
-
-	const FVector TargetLocation = HitActor ? HitActor->GetActorLocation() : GetActorLocation();
-
-	FVector ClosestPoint = FVector::ZeroVector;
-	if (CollisionBox && CollisionBox->GetClosestPointOnCollision(TargetLocation, ClosestPoint) >= 0.f)
-	{
-		return ClosestPoint;
-	}
-
-	// 대상이 이미 박스 안쪽이면 최근접점을 못 구한다. 그때는 대상 위치가 곧 접점에 가깝다.
-	return TargetLocation;
 }
