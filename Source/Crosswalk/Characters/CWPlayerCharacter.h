@@ -273,15 +273,38 @@ protected:
 	void HandleParrySucceeded(const FCWParrySyncData& ParrySyncData);
 
 	/**
+	 * 패링 입력이 나간 즉시 내 화면에서 먼저 휘두른다. 결과를 기다리지 않는다.
+	 *
+	 * 판정은 서버가 내리고 성공 통보는 왕복 지연만큼 늦게 온다. 그때까지 기다리면 헛친
+	 * 경우에는 통보 자체가 없어서 **아무 일도 일어나지 않는다.** 그러면 "차가 범위에 없었다"
+	 * 와 "입력이 안 먹었다" 가 화면에서 구분되지 않는다.
+	 *
+	 * 되돌릴 것이 없는 예측이다. 여기서 재생하는 것은 연출뿐이고 차량 상태는 건드리지 않는다.
+	 * 소품까지 이 시점에 정해져 있으므로(UCWParryComponent::RequestParry) 성공 통보가
+	 * 도착해도 손에 든 것이 바뀌지 않는다.
+	 *
+	 * 나이아가라와 성공음은 여기서 내지 않는다. 그 둘은 성공 경로(HandleParrySucceeded)
+	 * 전용이다 - 헛쳤는데 타격 이펙트가 터지면 성공 신호가 통째로 무의미해진다.
+	 *
+	 * 내 화면에서만 돈다. 남의 헛스윙은 보이지 않는다 - 성공만 멀티캐스트로 나가기 때문이다.
+	 *
+	 * @param PropIndex 이번 스윙에 쓸 소품. RequestParry 가 돌려준 값을 그대로 넘긴다.
+	 */
+	void PlayPredictedParrySwing(int32 PropIndex);
+
+	/**
 	 * 패링 스윙 몽타주를 재생한다.
 	 *
 	 * HandleParrySucceeded 가 모든 머신에서 돌기 때문에 이것도 모든 머신에서 돈다.
 	 * 그래서 내 화면에서도 남의 화면에서도 같은 캐릭터가 같은 시점에 휘두른다.
+	 *
+	 * 예측 스윙이 이미 돌고 있으면 다시 시작하지 않는다. (bPredictedParrySwingPending)
 	 */
 	void PlayParrySwingMontage();
 
 	// 정상 종료뿐 아니라 피격·몬타주 중단 때도 작업 도구를 다시 보이게 한다.
 	void HandleParryMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 	void RestoreParryVisuals();
 
 	/**
@@ -295,7 +318,7 @@ protected:
 	void PlayParrySwingEffect(const struct FCWParryProp* Prop, const FCWParrySyncData& ParrySyncData);
 
 	/**
-	 * 서버가 뽑아 보낸 인덱스로 손에 들 소품을 준비한다.
+	 * 인덱스로 손에 들 소품을 준비한다. 값은 패링을 누를 때 정해져 서버를 거쳐 모두에게 간다.
 	 *
 	 * 메시와 크기만 꽂아 두고 보이게 하지는 않는다. 표시는 몬타주에 얹은
 	 * AnimNotifyState(ANS_Showbat)가 구간 시작과 끝에서 담당한다.
@@ -931,6 +954,22 @@ protected:
 	/** BeginPlay 에서 태그로 찾아 캐시한다. 못 찾으면 소품 없이 스윙만 나간다. */
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMeshComponent> ParryPropMesh;
+
+	/**
+	 * 서버 판정을 기다리는 예측 스윙이 돌고 있는가. 내 화면에서만 의미가 있다.
+	 *
+	 * 성공 통보가 그 스윙을 처음부터 다시 재생하지 않게 막는 표시다. 재생 여부만으로
+	 * 판정하지 않는 이유는 PlayParrySwingMontage 의 주석에 적어 뒀다.
+	 */
+	bool bPredictedParrySwingPending = false;
+
+	/**
+	 * 스윙 몬타주를 마지막으로 시작한 프레임. 호스트에서 같은 입력에 스윙이 두 번 나가는 것만 막는다.
+	 *
+	 * 호스트는 서버 판정이 입력과 같은 프레임에 끝나서 성공 스윙이 먼저 나가고, 클라이언트는
+	 * 왕복 지연 뒤에 온다. 프레임으로 가르면 그 둘이 구분된다.
+	 */
+	uint64 LastParrySwingFrame = 0;
 
 	/**
 	 * 거리 감쇠 설정. 비워두면 아래 두 값으로 C++ 이 만든 기본 감쇠가 쓰인다.

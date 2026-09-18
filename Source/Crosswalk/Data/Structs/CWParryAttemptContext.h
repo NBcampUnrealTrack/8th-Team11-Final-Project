@@ -22,28 +22,33 @@ public:
 	FVector AttemptLocation = FVector::ZeroVector;
 
 	/**
-	 * 플레이어 기준 커서 방향. 대상 선별(부채꼴 각도)에 쓴다.
+	 * 플레이어 기준 커서 방향. **대상 선별(부채꼴 각도)과 차량이 날아갈 방향을 둘 다 이 값이 정한다.**
 	 *
-	 * 차량이 날아갈 방향은 이 값이 아니라 CursorWorldLocation 으로 차량이 직접 낸다.
-	 * 여기는 "플레이어가 어느 쪽을 가리켰나"이고, 그쪽은 "차가 어디로 가야 하나"라서 기준점이 다르다.
+	 * 하나가 둘을 겸하는 것은 의도다. 커서 방향 = 캐릭터가 보는 방향
+	 * (ACWPlayerCharacter::UpdateCursorFacing) = 차가 날아가는 방향, 셋이 같아야 화면과 맞는다.
+	 * 예전에는 발사만 CursorWorldLocation 을 차량 기준으로 다시 읽어서 셋이 갈렸다.
+	 * (ACWBaseVehicle::ResolveLaunchDirection 의 1순위 주석)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FVector AttemptDirection = FVector::ForwardVector;
 
 	/**
-	 * 플레이어가 찍은 커서의 월드 지점. 패링당한 차량이 이 지점을 향해 날아간다.
+	 * 플레이어가 찍은 커서의 월드 지점. **판정에는 쓰지 않는다 - 진단 로그 전용이다.**
 	 *
-	 * 방향이 아니라 지점을 넘기는 이유: 방향만 넘기면 차량은 커서 쪽이 아니라
-	 * "커서 방향과 평행하게" 날아간다. 차량과 플레이어의 위치가 다르기 때문이다.
+	 * 이 지점을 목적지로 삼던 것이 발사 방향이 어긋난 원인이었다. 커서 트레이스가 차체를
+	 * 못 막고 뒤쪽 노면을 찍는 탓에, 화면에서 차 위에 올린 커서가 실제로는 1~2m 밀린 자리에
+	 * 찍힌다. 그 어긋남을 재는 것이 지금 이 값의 용도이고(CWTrafficDiagnostics::LogParryAim),
+	 * 커서 좌표를 고치기로 하면 그때 다시 판정에 쓸지 정하면 된다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FVector CursorWorldLocation = FVector::ZeroVector;
 
 	/**
-	 * CursorWorldLocation 을 쓸 수 있는가.
+	 * CursorWorldLocation 이 실제로 찍힌 값인가. 이것도 진단 로그 전용이다.
 	 *
-	 * 커서 트레이스가 빗나가면 플레이어 위치가 그대로 돌아온다. 그 값을 목표로 삼으면
-	 * 차가 플레이어를 향해 날아오므로, 그 경우를 구분해 AttemptDirection 으로 되돌린다.
+	 * 커서 트레이스가 빗나가면 플레이어 위치가 그대로 돌아온다. 그때 AttemptDirection 에는
+	 * 캐릭터 정면이 들어가므로 판정은 갈리지 않지만, 로그에서 "가리킨 대로 갔다" 와
+	 * "트레이스가 빗나가 정면으로 갔다" 는 구분돼야 한다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	bool bHasCursorTarget = false;

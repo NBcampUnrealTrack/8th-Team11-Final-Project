@@ -29,9 +29,18 @@ class CROSSWALK_API UCWParryComponent : public UActorComponent
 public:
 	UCWParryComponent();
 
-	// 로컬 플레이어의 패링 입력을 받아 서버 판정 요청으로 넘김
+	/**
+	 * 로컬 플레이어의 패링 입력을 받아 서버 판정 요청으로 넘김. 요청이 실제로 나갔으면 true.
+	 *
+	 * 반환값은 "패링에 성공했는가" 가 아니다. 판정은 서버에서 나므로 여기서는 알 수 없다.
+	 * 로컬 쿨타임에 막혔는지만 답한다 - 부르는 쪽이 헛스윙 연출을 그 자리에서 재생할지
+	 * 정하는 데 쓴다. 성공 여부를 기다렸다 재생하면 스윙이 왕복 지연만큼 늦게 나간다.
+	 *
+	 * @param OutPropIndex 이번 스윙에 쓸 소품. 여기서 뽑아 돌려주고, 같은 값을 서버로 보낸다.
+	 *                     부르는 쪽은 결과를 기다리지 않고 그 소품으로 바로 휘두르면 된다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Parry")
-	void RequestParry(const FVector& CursorWorldLocation);
+	bool RequestParry(const FVector& CursorWorldLocation, int32& OutPropIndex);
 
 	// 패링 준비 비율을 반환
 	// 0은 방금 사용한 상태, 1은 다시 사용할 수 있는 상태
@@ -43,9 +52,15 @@ public:
 	UCWParryPropCatalog* GetPropCatalog() const { return PropCatalog; }
 
 protected:
-	// 클라이언트에서 서버로 패링 판정을 요청
+	/**
+	 * 클라이언트에서 서버로 패링 판정을 요청. 소품 인덱스를 같이 싣는다.
+	 *
+	 * 인덱스를 클라이언트가 정해 보내는 것은 의도다. 순수 연출값이라 조작해도 얻을 것이
+	 * 없고, 대신 누른 사람이 결과를 기다리지 않고 바로 그 소품으로 휘두를 수 있다.
+	 * 서버는 범위만 확인한다. (ResolvePropIndex)
+	 */
 	UFUNCTION(Server, Reliable)
-	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation);
+	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation, int32 PropIndex);
 
 	/**
 	 * 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달. 사람에 붙는 연출 전용이다.
@@ -72,13 +87,22 @@ protected:
 
 private:
 	// 서버에서 쿨타임을 확인하고 주변 위협 차량에 패링 판정을 시도
-	void HandleServerParryRequest(const FVector& CursorWorldLocation);
+	void HandleServerParryRequest(const FVector& CursorWorldLocation, int32 PropIndex);
+
+	/**
+	 * 클라이언트가 보낸 소품 인덱스를 검증한다. 서버에서만 부른다.
+	 *
+	 * 범위 밖이면 거절하지 않고 서버가 다시 뽑아 채운다. 연출값 하나 때문에 판정을
+	 * 무르면 그 사람만 패링이 안 되는데, 그건 어긋난 인덱스가 만든 결과치고 너무 크다.
+	 * 그 경우 누른 사람 화면의 소품만 한 번 바뀐다.
+	 */
+	int32 ResolvePropIndex(int32 RequestedPropIndex) const;
 
 	// 커서 입력을 트래픽 쪽이 판정할 수 있는 시도 정보로 만든다
 	FCWParryAttemptContext BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation) const;
 
 	// 서버 판정 결과를 연출 측이 쓸 동기화 데이터로 만든다
-	FCWParrySyncData BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle) const;
+	FCWParrySyncData BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle, int32 PropIndex) const;
 
 	// 로컬 입력 남발을 막기 위한 클라이언트 측 쿨타임 검사
 	bool CanUseLocalCooldown() const;
@@ -169,10 +193,10 @@ private:
 	/**
 	 * 스윙에 쓸 소품 목록. 비워두면 소품 없이 맨손 스윙이 나간다.
 	 *
-	 * 서버가 여기서 인덱스 하나를 뽑아 FCWParrySyncData 에 실어 보내고, 각 클라이언트가
-	 * 같은 인덱스로 같은 메시와 사운드를 꺼낸다. 실제로 손에 붙이고 소리를 내는 것은
-	 * ACWPlayerCharacter 쪽이다. 카탈로그를 여기 둔 이유는 인덱스를 뽑는 주체가 서버의
-	 * 이 컴포넌트이기 때문이고, 캐릭터는 GetPropCatalog() 로 같은 애셋을 본다.
+	 * 누르는 사람이 여기서 인덱스 하나를 뽑아 서버로 보내고, 서버가 그 값을
+	 * FCWParrySyncData 에 실어 뿌린다. 각 클라이언트는 같은 인덱스로 같은 메시와 사운드를
+	 * 꺼낸다. 실제로 손에 붙이고 소리를 내는 것은 ACWPlayerCharacter 쪽이고,
+	 * 캐릭터는 GetPropCatalog() 로 같은 애셋을 본다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
 	TObjectPtr<UCWParryPropCatalog> PropCatalog;

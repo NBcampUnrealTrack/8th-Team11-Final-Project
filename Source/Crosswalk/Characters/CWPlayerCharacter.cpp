@@ -1294,6 +1294,43 @@ const FCWParryProp* ACWPlayerCharacter::ApplyParryProp(int32 PropIndex)
 	return Prop;
 }
 
+void ACWPlayerCharacter::PlayPredictedParrySwing(int32 PropIndex)
+{
+	/**
+	 * 호스트는 서버 판정이 RequestParry 안에서 그 자리에 끝난다. 돌아왔을 때는 이번 입력의
+	 * 성공 스윙이 이미 나갔으므로 덮으면 안 된다 - 같은 입력에 스윙이 두 번 나간다.
+	 *
+	 * "재생 중인가" 가 아니라 **"이번 프레임에 나갔나"** 로 가른다. 재생 여부로 막으면 스윙이
+	 * 끝나기 전에 들어온 다음 입력이 통째로 조용해진다. 헛치면 쿨타임이 환불되므로
+	 * (UCWParryComponent::bRefundCooldownOnMiss) 실제로 0.2초 간격 연타가 들어온다.
+	 */
+	if (LastParrySwingFrame == GFrameCounter)
+	{
+		return;
+	}
+
+	const UAnimInstance* AnimInstance = GetMesh() != nullptr ? GetMesh()->GetAnimInstance() : nullptr;
+
+	/**
+	 * 헛스윙도 소품을 들고 휘두른다. 인덱스는 결과를 기다리지 않고 요청 때 이미 정해졌다.
+	 * (UCWParryComponent::RequestParry)
+	 *
+	 * 성공하면 같은 값이 통보에 실려 돌아오므로 스윙 도중에 손에 든 것이 바뀌지 않는다.
+	 * 맨손으로 두지 않는 이유는 모션이 야구 스윙이라 그렇다 - 빈손으로 휘두르면 무엇을
+	 * 하려는 동작인지 자체가 안 읽힌다.
+	 */
+	ApplyParryProp(PropIndex);
+
+	PlayParrySwingMontage();
+
+	/**
+	 * 실제로 재생된 경우에만 표시를 세운다. 몬타주가 비었거나 재생에 실패하면 회수할 스윙이
+	 * 없으므로, 뒤늦게 도착한 성공 통보는 그때 제 몫대로 스윙을 내야 한다.
+	 */
+	bPredictedParrySwingPending = (AnimInstance != nullptr && ParrySwingMontage != nullptr
+		&& AnimInstance->Montage_IsPlaying(ParrySwingMontage));
+}
+
 void ACWPlayerCharacter::PlayParrySwingMontage()
 {
 	if (ParrySwingMontage == nullptr)
@@ -1312,6 +1349,39 @@ void ACWPlayerCharacter::PlayParrySwingMontage()
 	{
 		return;
 	}
+
+	/**
+	 * 입력 때 미리 나간 스윙이 아직 돌고 있으면 다시 시작하지 않는다.
+	 *
+	 * 성공 통보는 왕복 지연만큼 늦게 오므로, 여기서 재생하면 같은 입력 하나에 스윙이 두 번
+	 * 나가 동작이 중간에 끊겼다 처음부터 다시 시작한다. 소품은 예측 스윙이 이미 같은
+	 * 인덱스로 꽂아 둔 것이라 다시 꽂아도 그대로다.
+	 *
+	 * 예측 스윙일 때만 건너뛴다. 조건 없이 "재생 중이면 건너뛴다" 로 두면 스윙이 쿨타임보다
+	 * 길어졌을 때 연속 패링의 두 번째 스윙이 통째로 사라진다.
+	 */
+	if (bPredictedParrySwingPending && AnimInstance->Montage_IsPlaying(ParrySwingMontage))
+	{
+		// 이 통보가 예측 스윙을 회수했다. 다음 스윙은 다시 처음부터 재생돼야 한다.
+		bPredictedParrySwingPending = false;
+
+		/**
+		 * 회수도 "이번 프레임에 스윙을 처리했다" 로 친다.
+		 *
+		 * 호스트에서 헛스윙이 아직 도는 중에 다음 입력이 성공하면(환불 때문에 쿨타임 안에
+		 * 다시 들어올 수 있다) 이 분기를 탄 직후 PlayPredictedParrySwing 이 이어서 돈다.
+		 * 표시를 안 남기면 그쪽이 이번 스윙을 처음부터 다시 재생한다.
+		 */
+		LastParrySwingFrame = GFrameCounter;
+		return;
+	}
+
+	// 여기서부터는 이 함수가 스윙을 새로 시작한다. 예측 표시는 부르는 쪽이 다시 세운다.
+	bPredictedParrySwingPending = false;
+
+	// 호스트에서 성공 스윙과 예측 스윙이 같은 프레임에 두 번 나가는 것을 막는 표시다.
+	// (PlayPredictedParrySwing 의 첫 분기)
+	LastParrySwingFrame = GFrameCounter;
 
 	const float Duration = AnimInstance->Montage_Play(
 		ParrySwingMontage,
@@ -2320,7 +2390,22 @@ void ACWPlayerCharacter::Parry()
 	UE_LOG(LogTemp, Verbose, TEXT("[%s] 패링 입력 수신. 커서=%s 캐릭터=%s"),
 		*GetName(), *CursorWorldLocation.ToCompactString(), *GetActorLocation().ToCompactString());
 
-	ParryComponent->RequestParry(CursorWorldLocation);
+	// 소품은 요청을 보내면서 그 자리에서 정해진다. 서버 판정을 기다릴 필요가 없다.
+	int32 PropIndex = INDEX_NONE;
+	if (!ParryComponent->RequestParry(CursorWorldLocation, PropIndex))
+	{
+		// 쿨타임에 막힌 입력이다. 여기서 휘두르면 쿨타임이 없는 것처럼 보인다.
+		return;
+	}
+
+	/**
+	 * 요청이 나갔으면 결과와 상관없이 그 자리에서 휘두른다. 헛쳐도 휘두른다.
+	 *
+	 * 예전에는 스윙이 성공 멀티캐스트에만 달려 있어서, 차가 판정 범위에 없으면 키를 눌러도
+	 * 화면에 아무 일도 일어나지 않았다. 그러면 "타이밍을 놓쳤다" 와 "입력이 안 먹었다" 가
+	 * 구분되지 않아서, 쿨타임이 도는 동안 사람은 자기가 뭘 했는지 모른다.
+	 */
+	PlayPredictedParrySwing(PropIndex);
 }
 
 void ACWPlayerCharacter::SwapHelmet()
