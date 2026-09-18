@@ -177,10 +177,14 @@ public:
 	// 맵 이동 이후 방 목록으로 복귀할지 조회함
 	bool ShouldReturnToRoomList() const { return bReturnToRoomList; }
 	void CompleteRoomListReturn() { bReturnToRoomList = false; }
+	const FText& GetPendingSessionNotice() const { return PendingSessionNotice; }
+	void ClearPendingSessionNotice() { PendingSessionNotice = FText::GetEmpty(); }
 
 protected:
 	// 방 종료 성공 후 페이지가 열린 시점에만 해제함
 	bool bReturnToRoomList = false;
+	// 월드 이동 후 표시할 연결 종료 안내를 보관함
+	FText PendingSessionNotice;
 	// 세션 생성 성공 시 리슨 서버로 이동할 맵 경로
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
 	FString ListenMapPath;

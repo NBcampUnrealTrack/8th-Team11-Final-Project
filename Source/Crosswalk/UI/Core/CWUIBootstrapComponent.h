@@ -21,6 +21,9 @@ class CROSSWALK_API UCWUIBootstrapComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
+public:
+	UCWUIBootstrapComponent();
+
 #pragma region ActorComponentLifecycle
 
 protected:
@@ -42,6 +45,10 @@ protected:
 	// 현재 World에 생성할 UI Root 클래스
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TSubclassOf<UCWUIRootWidget> UIRootClass;
+
+	// 세션 복귀 안내에 기존 공용 확인 팝업을 사용함
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
+	TSubclassOf<UUserWidget> SessionNoticeClass;
 
 	// 이 환경에서 열 수 있는 페이지 정책
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
