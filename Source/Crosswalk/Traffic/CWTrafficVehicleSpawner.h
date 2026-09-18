@@ -91,19 +91,6 @@ private:
 	ACWBaseVehicle* SpawnVehicleOfClass(TSubclassOf<ACWBaseVehicle> SpawnClass, float StartDistance);
 
 	/**
-	 * 방금 스폰한 차량이 각 커넥션에 관련 있는지, 그리고 얼마나 떨어져 있는지 찍는다.
-	 *
-	 * 재는 값은 하나다 - **스폰 지점과 각 클라이언트 시점 사이의 거리, 그리고 차량의 컬 거리.**
-	 * 차량은 컬 거리를 따로 정하지 않아 AActor 기본값(15000cm)을 쓰는데, 차선이 그보다 길면
-	 * 스폰 순간에는 아무에게도 관련이 없다가 각자 다가올 때 순차로 나타난다. 서 있는 자리가
-	 * 사람마다 다르니 이것만으로도 "돌아가면서 한 명만 안 보인다" 가 만들어진다.
-	 *
-	 * 서버에서만 부른다. 관련성 판정은 서버가 커넥션마다 따로 내리는 값이라,
-	 * 탈락한 클라이언트 쪽에는 판정했다는 흔적조차 남지 않는다.
-	 */
-	void LogSpawnRelevancy(const ACWBaseVehicle& Vehicle) const;
-
-	/**
 	 * 개체별 편차를 굴린다. 서버에서만 부른다.
 	 *
 	 * 속도는 여기서 굴리지 않는다. 차종 이름은 뽑힌 차체가 들고 있고 그 추첨은
