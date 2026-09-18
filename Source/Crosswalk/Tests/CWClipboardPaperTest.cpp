@@ -19,6 +19,8 @@
 #include "UI/Core/CWUISubsystem.h"
 #include "UnrealClient.h"
 #include "UObject/UnrealType.h"
+#include "UI/ViewModel/CWStageSelectViewModel.h"
+#include "Data/Assets/CWStageCatalog.h"
 
 namespace
 {
@@ -34,6 +36,44 @@ namespace
 		int32 BrightSamples = 0;
 		bool bCaptured = false;
 	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCWStageSelectionDisplayTest,
+	"Crosswalk.UI.StageSelectionDisplay",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCWStageSelectionDisplayTest::RunTest(const FString& Parameters)
+{
+	UCWStageSelectViewModel* ViewModel = NewObject<UCWStageSelectViewModel>();
+	const FTextProperty* Display = FindFProperty<FTextProperty>(
+		UCWStageSelectViewModel::StaticClass(), TEXT("SelectedDisplayName"));
+	UCWStageCatalog* Catalog = LoadObject<UCWStageCatalog>(nullptr,
+		TEXT("/Game/CrossWalk/Maps/Stages/DA_StageCatalog.DA_StageCatalog"));
+	if (!TestNotNull(TEXT("Display field exists"), Display) ||
+		!TestNotNull(TEXT("Stage catalog loads"), Catalog))
+	{
+		return false;
+	}
+	if (!TestTrue(TEXT("Stage catalog contains selection cases"), Catalog->GetStages().Num() > 0))
+	{
+		return false;
+	}
+	TestTrue(TEXT("Display is empty before initialization"),
+		Display->GetPropertyValue_InContainer(ViewModel).IsEmpty());
+	ViewModel->Initialize(Catalog);
+	for (int32 Index = 0; Index < Catalog->GetStages().Num(); ++Index)
+	{
+		TestTrue(TEXT("Stage can be selected"), ViewModel->RequestSelectByIndex(Index));
+		TestEqual(TEXT("Selected name follows selection"),
+			Display->GetPropertyValue_InContainer(ViewModel).ToString(),
+			Catalog->GetStages()[Index].DisplayName.ToString());
+	}
+	ViewModel->Initialize(nullptr);
+	TestTrue(TEXT("Clearing catalog clears the old display"),
+		Display->GetPropertyValue_InContainer(ViewModel).IsEmpty());
+	TestFalse(TEXT("Empty catalog has no selection"), ViewModel->HasSelection());
+	TestNull(TEXT("Empty selection remains null"), ViewModel->GetSelectedEntry());
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCWClipboardPaperTest,
@@ -148,9 +188,6 @@ bool FCWClipboardPaperRuntimeTest::RunTest(const FString& Parameters)
 	UI->OpenPage(ECWUIPage::Room);
 	UClass* WidgetClass = LoadClass<UUserWidget>(nullptr,
 		TEXT("/Game/CrossWalk/UI/Screens/StageSelect/WBP_StageSelect.WBP_StageSelect_C"));
-	// 기존 팝업의 초기 선택·포커스 경고는 렌더링 검사와 구분함
-	AddExpectedError(TEXT("CWStageSelectViewModel_GetSelectedEntry"), EAutomationExpectedErrorFlags::Contains, 0);
-	AddExpectedError(TEXT("Attempting to focus Non-Focusable widget"), EAutomationExpectedErrorFlags::Contains, 0);
 	UUserWidget* Popup = WidgetClass ? CreateWidget<UUserWidget>(Player, WidgetClass) : nullptr;
 	if (!TestTrue(TEXT("Stage popup opens"), Popup && UI->OpenPopup(Popup)))
 	{
