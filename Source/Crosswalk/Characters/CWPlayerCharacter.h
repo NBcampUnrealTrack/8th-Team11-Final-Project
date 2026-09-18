@@ -217,6 +217,12 @@ protected:
 	UFUNCTION()
 	void HandleFallLockChanged(UCWSinkholeFallComponent* FallComponent, bool bFallLocked);
 
+	// 복제된 낙하 상태로 로컬 이름표 표시를 갱신함
+	void RefreshFallNameplateVisibility(bool bFallLocked);
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI|Nameplate")
+	FName NameplateComponentName = TEXT("WidgetComp_NamePlate");
+
 	/**
 	 * 다운 시간이 끝나 일어날 차례가 됐을 때. 서버에서만 들어온다.
 	 * 래그돌을 풀고 기상 모션을 뿌린 뒤, 모션이 끝나는 시점에 컴포넌트로 완료를 통보한다.

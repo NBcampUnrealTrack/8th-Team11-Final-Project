@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/WidgetComponent.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
@@ -208,6 +209,7 @@ void ACWPlayerCharacter::BeginPlay()
 	// 잠금이 걸리고 풀릴 때 작업/도구를 정리해야 한다. 서버와 클라이언트 양쪽에서 들어온다.
 	HitReactionComponent->OnHitLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleHitLockChanged);
 	SinkholeFallComponent->OnFallLockChanged.AddDynamic(this, &ACWPlayerCharacter::HandleFallLockChanged);
+	RefreshFallNameplateVisibility(SinkholeFallComponent->IsFallLocked());
 
 	/**
 	 * 체온 오라. 서버 클라 양쪽다 각각 모든 캐릭터에 대해서 생성.
@@ -262,6 +264,7 @@ void ACWPlayerCharacter::BeginPlay()
 
 void ACWPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	SinkholeFallComponent->OnFallLockChanged.RemoveDynamic(this, &ACWPlayerCharacter::HandleFallLockChanged);
 	RestoreParryVisuals();
 
 	// 앉은 채 접속이 끊기거나 캐릭터가 파괴되면, 존이 빈 자리를 영영 붙잡는다.
@@ -935,6 +938,8 @@ FVector ACWPlayerCharacter::ResolveRecoverLocation() const
 
 void ACWPlayerCharacter::HandleFallLockChanged(UCWSinkholeFallComponent* /*FallComponent*/, bool bFallLocked)
 {
+	// 표시 처리는 서버와 클라이언트에서 각각 반영함
+	RefreshFallNameplateVisibility(bFallLocked);
 	// 작업 중단 상태는 복제되므로 서버에서만 바꾼다.
 	if (!HasAuthority())
 	{
@@ -951,6 +956,19 @@ void ACWPlayerCharacter::HandleFallLockChanged(UCWSinkholeFallComponent* /*FallC
 	if (bFallLocked)
 	{
 		SupplyCarrierComponent->BreakAllCans();
+	}
+}
+
+void ACWPlayerCharacter::RefreshFallNameplateVisibility(bool bFallLocked)
+{
+	TInlineComponentArray<UWidgetComponent*> Widgets(this);
+	for (UWidgetComponent* Widget : Widgets)
+	{
+		if (IsValid(Widget) && Widget->GetFName() == NameplateComponentName)
+		{
+			Widget->SetHiddenInGame(bFallLocked);
+			break;
+		}
 	}
 }
 

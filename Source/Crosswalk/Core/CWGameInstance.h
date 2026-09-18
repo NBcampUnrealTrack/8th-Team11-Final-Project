@@ -174,7 +174,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Session")
 	bool ShouldEnterRoomPage() const;
 
+	// 맵 이동 이후 방 목록으로 복귀할지 조회함
+	bool ShouldReturnToRoomList() const { return bReturnToRoomList; }
+	void CompleteRoomListReturn() { bReturnToRoomList = false; }
+
 protected:
+	// 방 종료 성공 후 페이지가 열린 시점에만 해제함
+	bool bReturnToRoomList = false;
 	// 세션 생성 성공 시 리슨 서버로 이동할 맵 경로
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
 	FString ListenMapPath;
