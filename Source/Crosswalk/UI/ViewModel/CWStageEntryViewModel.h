@@ -35,6 +35,8 @@ public:
 #pragma region DisplayState
 
 public:
+	const FText& GetDisplayName() const { return DisplayName; }
+
 	// 설명 유무 (위젯 설명 영역 표시 분기 — 비면 숨김)
 	UFUNCTION(BlueprintPure, FieldNotify, Category = "CW|UI|Stage")
 	bool HasDescription() const

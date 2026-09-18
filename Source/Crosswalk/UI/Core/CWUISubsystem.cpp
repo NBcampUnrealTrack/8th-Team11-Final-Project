@@ -18,9 +18,35 @@
 #include "CWUIRootWidget.h"
 #include "CWUIScreenWidget.h"
 #include "Widgets/SWidget.h"
+#include "Layout/Children.h"
+#include "MVVMSubsystem.h"
+#include "View/MVVMView.h"
+#include "UObject/UObjectIterator.h"
 
 namespace
 {
+	// 루트가 포커스를 받지 못하면 조작 가능한 자식으로 이동함
+	TSharedPtr<SWidget> FindFocusableWidget(const TSharedPtr<SWidget>& Widget)
+	{
+		if (!Widget.IsValid() || !Widget->GetVisibility().IsVisible() || !Widget->IsEnabled())
+		{
+			return nullptr;
+		}
+		if (Widget->SupportsKeyboardFocus())
+		{
+			return Widget;
+		}
+		FChildren* Children = Widget->GetChildren();
+		for (int32 Index = 0; Children && Index < Children->Num(); ++Index)
+		{
+			if (TSharedPtr<SWidget> Child = FindFocusableWidget(Children->GetChildAt(Index)))
+			{
+				return Child;
+			}
+		}
+		return nullptr;
+	}
+
 	// WBP_Toast의 페이드 애니메이션 전체 길이
 	constexpr float ToastDisplayDuration = 2.5f;
 }
@@ -181,6 +207,31 @@ void UCWUISubsystem::Initialize(
 
 void UCWUISubsystem::Deinitialize()
 {
+	// 전역 VM 제거 알림이 살아 있는 화면의 바인딩을 다시 초기화하지 않도록 함
+	const ULocalPlayer* OwningLocalPlayer = GetLocalPlayer();
+	const UGameInstance* OwningGameInstance = IsValid(OwningLocalPlayer)
+		? OwningLocalPlayer->GetGameInstance() : nullptr;
+	if (!IsValid(OwningGameInstance))
+	{
+		UE_LOG(LogCWUI, Warning, TEXT("UISubsystem: MVVM cleanup skipped because owning GameInstance is invalid."));
+	}
+	else
+	{
+		for (TObjectIterator<UUserWidget> It; It; ++It)
+		{
+			// 종료 시 PC의 Player가 먼저 해제돼 LocalPlayer 비교로 화면을 놓칠 수 있음
+			if (IsValid(*It) && !It->IsTemplate() && It->GetGameInstance() == OwningGameInstance)
+			{
+				if (UMVVMView* View = UMVVMSubsystem::GetViewFromUserWidget(*It); IsValid(View))
+				{
+					View->UninitializeEvents();
+					View->UninitializeBindings();
+					View->UninitializeSources();
+				}
+			}
+		}
+	}
+
 	// 종료 중 토스트와 대기 요청 및 타이머 정리
 	ResetToastState();
 
@@ -725,7 +776,7 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 		if (IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
-				FocusWidget->GetCachedWidget();
+				FindFocusableWidget(FocusWidget->GetCachedWidget());
 
 			if (CachedWidget.IsValid())
 			{
@@ -768,7 +819,7 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 		if (IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
-				FocusWidget->GetCachedWidget();
+				FindFocusableWidget(FocusWidget->GetCachedWidget());
 
 			if (CachedWidget.IsValid())
 			{

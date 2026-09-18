@@ -32,6 +32,8 @@ void UCWStageSelectViewModel::Initialize(UCWStageCatalog* Catalog)
 
 	// 항목이 있으면 첫 스테이지를 기본 선택, 없으면 선택 없음
 	SelectedIndex = NewEntries.Num() > 0 ? 0 : INDEX_NONE;
+	UE_MVVM_SET_PROPERTY_VALUE(SelectedDisplayName,
+		HasSelection() ? StageEntries[SelectedIndex]->GetDisplayName() : FText::GetEmpty());
 
 	// 목록이 통째로 바뀌었으므로 선택·파생 표시를 강제로 다시 통지
 	UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(SelectedIndex);
@@ -50,6 +52,7 @@ bool UCWStageSelectViewModel::RequestSelectByIndex(int32 Index)
 	// 선택이 실제로 바뀐 경우에만 파생값 통지
 	if (UE_MVVM_SET_PROPERTY_VALUE(SelectedIndex, Index))
 	{
+		UE_MVVM_SET_PROPERTY_VALUE(SelectedDisplayName, StageEntries[Index]->GetDisplayName());
 		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(HasSelection);
 		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(GetSelectedEntry);
 	}

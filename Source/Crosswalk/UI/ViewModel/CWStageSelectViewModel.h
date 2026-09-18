@@ -63,6 +63,10 @@ public:
 #pragma region State
 
 private:
+	// 선택 전에도 미리보기 바인딩이 빈 값으로 초기화되도록 함
+	UPROPERTY(BlueprintReadOnly, FieldNotify, Category = "CW|UI|Stage", meta = (AllowPrivateAccess = "true"))
+	FText SelectedDisplayName;
+
 	// TileView 아이템 (카탈로그 순서 그대로)
 	UPROPERTY(
 		BlueprintReadOnly,
