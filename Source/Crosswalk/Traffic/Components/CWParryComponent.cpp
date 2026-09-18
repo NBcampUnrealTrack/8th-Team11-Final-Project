@@ -37,12 +37,14 @@ UCWParryComponent::UCWParryComponent()
 	SetIsReplicatedByDefault(true);
 }
 
-void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
+bool UCWParryComponent::RequestParry(const FVector& CursorWorldLocation, int32& OutPropIndex)
 {
+	OutPropIndex = INDEX_NONE;
+
 	AActor* OwnerActor = GetOwner();
 	if (OwnerActor == nullptr)
 	{
-		return;
+		return false;
 	}
 
 	if (!CanUseLocalCooldown())
@@ -50,18 +52,32 @@ void UCWParryComponent::RequestParry(const FVector& CursorWorldLocation)
 		UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
 			*GetInstigatorTag(),
 			ParryCooldown - (GetWorld()->GetTimeSeconds() - LastLocalParryRequestTime));
-		return;
+		return false;
 	}
 
 	UpdateLocalCooldown();
 
+	/**
+	 * 이번 스윙에 쓸 소품을 여기서 뽑는다. 서버가 아니라 **누르는 사람**이 뽑는 것이 핵심이다.
+	 *
+	 * 서버가 뽑던 때는 그 값이 성공 통보에 실려 왕복 지연 뒤에 도착했다. 그래서 헛스윙은
+	 * 끝내 소품을 알 수가 없었다 - 실패하면 통보 자체가 나가지 않기 때문이다. 야구 스윙
+	 * 모션에 맨손으로 휘두르는 그림이 거기서 나왔다.
+	 *
+	 * 여기서 뽑으면 누른 순간 정해지고, 같은 값이 서버를 거쳐 모두에게 간다. 성공해도
+	 * 돌아오는 값이 같아서 스윙 도중에 손에 든 것이 바뀌지 않는다.
+	 */
+	OutPropIndex = (PropCatalog != nullptr) ? PropCatalog->PickRandomPropIndex() : INDEX_NONE;
+
 	if (OwnerActor->HasAuthority())
 	{
-		HandleServerParryRequest(CursorWorldLocation);
-		return;
+		HandleServerParryRequest(CursorWorldLocation, OutPropIndex);
+		return true;
 	}
 
-	Server_RequestParry(CursorWorldLocation);
+	Server_RequestParry(CursorWorldLocation, OutPropIndex);
+
+	return true;
 }
 
 float UCWParryComponent::GetCooldownReadyRatio() const
@@ -92,12 +108,12 @@ float UCWParryComponent::GetCooldownReadyRatio() const
 	);
 }
 
-void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize CursorWorldLocation)
+void UCWParryComponent::Server_RequestParry_Implementation(FVector_NetQuantize CursorWorldLocation, int32 PropIndex)
 {
-	HandleServerParryRequest(CursorWorldLocation);
+	HandleServerParryRequest(CursorWorldLocation, PropIndex);
 }
 
-void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocation)
+void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocation, int32 PropIndex)
 {
 	AActor* OwnerActor = GetOwner();
 	if (OwnerActor == nullptr || !OwnerActor->HasAuthority())
@@ -185,7 +201,32 @@ void UCWParryComponent::HandleServerParryRequest(const FVector& CursorWorldLocat
 
 	// 차량을 커서 방향으로 튕겨내고 2초 뒤 제거하는 것까지 ACWBaseVehicle::TryParry가 끝냈다.
 	// 여기서는 서버가 확정한 결과만 연출용으로 뿌린다. 실패는 보내지 않는다.
-	Multicast_ParrySucceeded(BuildParrySyncData(ParryAttemptContext, *ParriedVehicle));
+	Multicast_ParrySucceeded(BuildParrySyncData(ParryAttemptContext, *ParriedVehicle, PropIndex));
+}
+
+int32 UCWParryComponent::ResolvePropIndex(int32 RequestedPropIndex) const
+{
+	if (PropCatalog == nullptr)
+	{
+		return INDEX_NONE;
+	}
+
+	// 카탈로그에 있는 인덱스면 그대로 쓴다. 누른 사람 화면이 이미 그 소품으로 휘두르고 있다.
+	if (PropCatalog->GetProp(RequestedPropIndex) != nullptr)
+	{
+		return RequestedPropIndex;
+	}
+
+	/**
+	 * 범위 밖이다. 카탈로그를 고치는 중에 온 요청이거나, 조작된 값이다.
+	 *
+	 * 어느 쪽이든 서버가 다시 뽑아 채운다. 소품 하나 때문에 판정을 무르면 그 사람만
+	 * 패링이 안 되는데, 연출값이 만든 결과치고 대가가 너무 크다.
+	 */
+	UE_LOG(LogCWTraffic, Warning, TEXT("[Parry][%s] 소품 인덱스 %d 가 카탈로그 범위 밖입니다. 서버가 다시 뽑습니다."),
+		*GetInstigatorTag(), RequestedPropIndex);
+
+	return PropCatalog->PickRandomPropIndex();
 }
 
 FCWParryAttemptContext UCWParryComponent::BuildParryAttemptContext(AActor& Parrier, const FVector& CursorWorldLocation) const
@@ -226,22 +267,22 @@ void UCWParryComponent::Multicast_ParrySucceeded_Implementation(const FCWParrySy
 	OnParrySucceeded.Broadcast(ParrySyncData);
 }
 
-FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle) const
+FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle, int32 PropIndex) const
 {
 	FCWParrySyncData ParrySyncData;
 	ParrySyncData.TargetVehicle = &ParriedVehicle;
 	ParrySyncData.VehicleType = ParriedVehicle.GetVehicleType();
 
 	/**
-	 * 이번 스윙에 쓸 소품을 여기서 한 번만 뽑는다.
+	 * 소품은 누른 사람이 이미 뽑았다(RequestParry). 여기서는 범위만 확인해 그대로 싣는다.
 	 *
-	 * 이 함수는 서버에서만 불린다(HandleServerParryRequest 안). 뽑은 값이 아래 멀티캐스트에
-	 * 그대로 실려 나가므로 모든 머신이 같은 소품을 본다. 클라이언트가 각자 뽑으면 화면마다
-	 * 다른 소품이 나오고 사운드까지 어긋난다.
+	 * 이 함수는 서버에서만 불린다(HandleServerParryRequest 안). 실린 값이 아래 멀티캐스트로
+	 * 나가므로 모든 머신이 같은 소품을 본다. **받는 사람 중 하나가 이미 그 소품으로 휘두르고
+	 * 있다는 점이 중요하다** - 여기서 다시 뽑으면 그 사람 손에서만 소품이 바뀐다.
 	 *
 	 * 카탈로그가 비었으면 INDEX_NONE 이 들어가고, 받는 쪽은 소품 없이 스윙만 재생한다.
 	 */
-	ParrySyncData.PropIndex = (PropCatalog != nullptr) ? PropCatalog->PickRandomPropIndex() : INDEX_NONE;
+	ParrySyncData.PropIndex = ResolvePropIndex(PropIndex);
 
 	// 연출 기준점은 클라이언트가 보낸 커서가 아니라 서버가 확정한 차량 위치다.
 	ParrySyncData.ParryLocation = ParriedVehicle.GetActorLocation();
@@ -249,8 +290,9 @@ FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptCont
 	/**
 	 * 차량이 실제로 날아가는 방향. 회전이 이미 끝난 뒤라 차량의 정면이 곧 진행 방향이다.
 	 *
-	 * AttemptDirection(플레이어 → 커서)을 쓰면 안 된다. 차량은 자기 위치에서 커서 지점을
-	 * 향하므로 두 값이 다르다. 연출은 차가 실제로 가는 쪽을 따라가야 한다.
+	 * AttemptDirection 을 그대로 쓰지 않는다. 발사 기준이 그 값이 된 뒤로 대개는 같지만,
+	 * 시전자 보호 데드존(ACWBaseVehicle::ApplySelfLaunchDeadZone)이 방향을 밀어낸 경우에는
+	 * 갈린다. 연출은 차가 실제로 가는 쪽을 따라가야 하므로 확정된 결과를 읽는다.
 	 */
 	ParrySyncData.ParryDirection = ParriedVehicle.GetActorForwardVector().GetSafeNormal2D();
 

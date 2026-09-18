@@ -8,6 +8,7 @@ class AActor;
 class ACWBaseVehicle;
 class ACWTrafficLane;
 class UWorld;
+struct FCWParryAttemptContext;
 
 /**
  * 트래픽 파트의 네트워크 진단 로그. 게임플레이 판정은 여기 없다.
@@ -78,6 +79,35 @@ namespace CWTrafficDiagnostics
 	 * 차량을 차선 위로 옮겨 놓은 뒤에 불러야 한다. 스폰 직후 위치는 아직 차선 좌표가 아니다.
 	 */
 	void LogSpawnRelevancy(const ACWBaseVehicle& Vehicle);
+
+	/** 패링 조준 진단 로그를 찍을지. 콘솔 변수 `cw.Traffic.LogParryAim 0` 으로 끈다. */
+	bool IsParryAimLoggingEnabled();
+
+	/**
+	 * 패링 한 건의 조준 좌표와 각도를 남긴다. 서버에서만 돈다.
+	 *
+	 * 재는 것은 **커서를 찍은 자리와 차가 실제로 날아간 방향 사이의 어긋남**이다.
+	 * "가리킨 쪽으로 안 간다" 는 눈으로는 갈래가 셋이라 어느 것인지 짚을 수 없다.
+	 *
+	 *   커서가 엉뚱한 곳에 찍혔다   커서-차량 거리가 화면에서 본 것보다 크다.
+	 *                              커서 트레이스(ACWPlayerCharacter::ResolveCursorWorldLocation)가
+	 *                              차체를 못 막고 뒤쪽 노면을 찍으면 여기서 드러난다
+	 *   방향은 맞는데 밀렸다        "데드존이 N도 밀어냄" 이 0 이 아니다. 조준과 발사는
+	 *                              데드존이 걸리지 않는 한 같은 값이어야 한다
+	 *   기준을 잘못 골랐다          "옛 차량 기준이면 N도 차이" 가 크다. 2026-09-18 에
+	 *                              발사 기준을 플레이어 쪽으로 뒤집은 근거가 이 칸이다
+	 *
+	 * 꺾인 각을 같이 찍는 이유는, 셋 다 아닌 네 번째 갈래("차가 오던 길 그대로 간다")를
+	 * 숫자로 가르기 위해서다. 그 값이 커서와 무관하게 늘 같은 각·같은 쪽이면 발사 방향이
+	 * 커서가 아니라 차량 진행 방향에서 나오고 있다는 뜻이다.
+	 *
+	 * 성패를 같이 찍는다. 실패한 줄은 좌표가 아니라 윈도우 문제라 따로 읽어야 한다.
+	 *
+	 * @param IncomingDirection  방향을 틀기 전의 진행 방향. TryParry 가 차를 돌린 뒤에 읽으면
+	 *                           발사 방향과 같은 값이 되어 꺾인 각이 항상 0 으로 나온다.
+	 */
+	void LogParryAim(const ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext,
+		const FVector& IncomingDirection, const FVector& LaunchDirection, bool bAccepted);
 }
 
 /**

@@ -13,10 +13,12 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/WorldSettings.h"
+#include "Data/Structs/CWParryAttemptContext.h"
 #include "HAL/IConsoleManager.h"
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficLane.h"
 #include "Traffic/CWTrafficLog.h"
+#include "Traffic/CWTrafficMath.h"
 
 namespace
 {
@@ -55,6 +57,18 @@ namespace
 		true,
 		TEXT("스폰 순간의 커넥션별 관련성을 찍는다(서버 전용). 0 이면 끈다."),
 		ECVF_Default);
+
+	/**
+	 * 패링 조준 로그. 위의 셋과 같은 이유로 기본값이 켜짐이다.
+	 *
+	 * 쿨타임이 1초라 사람당 초당 한 줄이 상한이고, 그마저 패링을 시도할 때만 나간다.
+	 * 켜 두는 비용이 흐르지 않는다.
+	 */
+	TAutoConsoleVariable<bool> CVarTrafficLogParryAim(
+		TEXT("cw.Traffic.LogParryAim"),
+		true,
+		TEXT("패링 한 건의 커서·차량 좌표와 발사 각도를 찍는다(서버 전용). 0 이면 끈다."),
+		ECVF_Default);
 }
 
 bool CWTrafficDiagnostics::IsSyncLoggingEnabled()
@@ -70,6 +84,11 @@ bool CWTrafficDiagnostics::IsNetCensusLoggingEnabled()
 bool CWTrafficDiagnostics::IsNetRelevancyLoggingEnabled()
 {
 	return CVarTrafficLogNetRelevancy.GetValueOnAnyThread();
+}
+
+bool CWTrafficDiagnostics::IsParryAimLoggingEnabled()
+{
+	return CVarTrafficLogParryAim.GetValueOnGameThread();
 }
 
 const TCHAR* CWTrafficDiagnostics::GetNetRoleTag(const UObject* WorldContextObject)
@@ -161,6 +180,73 @@ void CWTrafficDiagnostics::LogSpawnRelevancy(const ACWBaseVehicle& Vehicle)
 		UE_LOG(LogCWTraffic, Log, TEXT("[TrafficNet] 스폰 %s / 컬거리 %.0fcm / %s 거리 %.0fcm / 관련 %s"),
 			*Vehicle.GetName(), CullDistance, *PlayerTag, Distance, bRelevant ? TEXT("O") : TEXT("X"));
 	}
+}
+
+void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext,
+	const FVector& IncomingDirection, const FVector& LaunchDirection, bool bAccepted)
+{
+	if (!IsParryAimLoggingEnabled())
+	{
+		return;
+	}
+
+	const FVector VehicleLocation = Vehicle.GetActorLocation();
+	const FVector CursorLocation = ParryAttemptContext.CursorWorldLocation;
+	const FVector AttemptLocation = ParryAttemptContext.AttemptLocation;
+
+	const FVector Incoming = IncomingDirection.GetSafeNormal2D();
+	const FVector Launch = LaunchDirection.GetSafeNormal2D();
+
+	/**
+	 * 조준 = 발사 기준이 되는 방향(ResolveLaunchDirection 의 1순위). 이 값과 Launch 의 차가
+	 * 곧 데드존이 밀어낸 양이다. 둘은 데드존이 걸리지 않는 한 같아야 한다.
+	 */
+	const FVector AimDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+
+	/**
+	 * 옛 발사 기준(차량 → 커서 지점). 판정에서는 빠졌지만 계속 찍는다.
+	 *
+	 * 조준과 이 값의 차가 **기준을 바꾸지 않았으면 어긋났을 양**이다. 09-18 에 뒤집은 근거가
+	 * 그 숫자였고(성공 6건에서 3~56도), 되돌리자는 말이 나오면 다시 이 칸을 보면 된다.
+	 */
+	const FVector ToCursorFromVehicle = (CursorLocation - VehicleLocation).GetSafeNormal2D();
+
+	/**
+	 * 꺾인 쪽. 언리얼은 X 앞·Y 오른쪽·Z 위라 외적의 Z 가 양수면 두 번째 벡터가 오른쪽에 있다.
+	 *
+	 * 각도만으로는 안 된다. 좌우가 뒤집혀도 각은 같은 값이 나오는데, 지금 쫓는 증상이
+	 * "오는 쪽에 따라 한쪽으로만 꺾인다" 라서 부호가 곧 판정이다.
+	 */
+	const float TurnDegrees = CWTrafficMath::AngleBetweenDegrees(Incoming, Launch);
+	const TCHAR* TurnSide = (FVector::CrossProduct(Incoming, Launch).Z >= 0.f) ? TEXT("오른쪽") : TEXT("왼쪽");
+
+	// 커서가 차체를 뚫고 뒤쪽 노면에 찍혔는지 보는 값이다. 화면에서 차 위에 올렸는데
+	// 이 거리가 차체 반길이보다 크게 나오면 트레이스가 차를 못 막은 것이다.
+	const float CursorToVehicle2D = FVector::Dist2D(CursorLocation, VehicleLocation);
+	const float CursorToVehicleZ = CursorLocation.Z - VehicleLocation.Z;
+
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s (%s): 커서=%s 차량=%s 플레이어=%s / 커서-차량 2D %.0fcm (Z차 %.0fcm) / 커서-플레이어 2D %.0fcm%s"),
+		*Vehicle.GetName(),
+		bAccepted ? TEXT("성공") : TEXT("실패"),
+		*CursorLocation.ToCompactString(),
+		*VehicleLocation.ToCompactString(),
+		*AttemptLocation.ToCompactString(),
+		CursorToVehicle2D,
+		CursorToVehicleZ,
+		FVector::Dist2D(CursorLocation, AttemptLocation),
+		ParryAttemptContext.bHasCursorTarget ? TEXT("") : TEXT(" / 커서 트레이스 빗나감(플레이어 위치로 대체)"));
+
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s: 진행 %.0f도 -> 발사 %.0f도 (%s으로 %.0f도 꺾임) / 조준 %.0f도, 데드존이 %.0f도 밀어냄 / 옛 차량 기준이면 %.0f도 (%.0f도 차이)"),
+		*Vehicle.GetName(),
+		Incoming.Rotation().Yaw,
+		Launch.Rotation().Yaw,
+		TurnSide,
+		TurnDegrees,
+		AimDirection.Rotation().Yaw,
+		AimDirection.IsNearlyZero() ? 0.f : CWTrafficMath::AngleBetweenDegrees(AimDirection, Launch),
+		ToCursorFromVehicle.Rotation().Yaw,
+		(AimDirection.IsNearlyZero() || ToCursorFromVehicle.IsNearlyZero())
+			? 0.f : CWTrafficMath::AngleBetweenDegrees(AimDirection, ToCursorFromVehicle));
 }
 
 void FCWTrafficDiagnostics::LogVehicleCensus(const UWorld* World, TConstArrayView<TWeakObjectPtr<ACWBaseVehicle>> Vehicles)
