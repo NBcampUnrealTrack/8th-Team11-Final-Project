@@ -701,12 +701,92 @@ FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Par
 		const FVector ToCursor = (ParryAttemptContext.CursorWorldLocation - GetActorLocation()).GetSafeNormal2D();
 		if (!ToCursor.IsNearlyZero())
 		{
-			return ToCursor;
+			return ApplySelfLaunchDeadZone(ToCursor, ParryAttemptContext);
 		}
 	}
 
 	// 커서가 차량 바로 위에 찍혔거나 트레이스가 빗나갔다. 플레이어 기준 방향으로 대체한다.
-	return ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	// 이 방향도 데드존을 거친다. 여기로 빠지는 경우가 드물다고 해서 자기 쪽으로 쏠 수 있게
+	// 두면, 판정 결과가 커서 트레이스의 성패에 따라 갈린다.
+	return ApplySelfLaunchDeadZone(ParryAttemptContext.AttemptDirection.GetSafeNormal2D(), ParryAttemptContext);
+}
+
+FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, const FCWParryAttemptContext& ParryAttemptContext) const
+{
+	if (SelfLaunchDeadZoneAngle <= 0.f)
+	{
+		return LaunchDirection;
+	}
+
+	const FVector Launch = LaunchDirection.GetSafeNormal2D();
+	if (Launch.IsNearlyZero())
+	{
+		// 방향이 비었다. TryParry 가 온 길로 되돌려 보내는 경로이고, 그 방향은 차량의 진행
+		// 반대쪽이라 시전자 쪽이 아니다. 여기서 손댈 것이 없다.
+		return LaunchDirection;
+	}
+
+	/**
+	 * 시도 시점의 위치로 잰다. 지금 위치가 아니다.
+	 *
+	 * 판정은 이미 이 좌표를 기준으로 끝났다(PassesAttemptFilter 의 각도·거리). 여기서만
+	 * 현재 위치를 쓰면, 시도한 뒤 움직인 만큼 금지 구역이 판정과 다른 곳에 생긴다.
+	 */
+	const FVector ToParrier = (ParryAttemptContext.AttemptLocation - GetActorLocation()).GetSafeNormal2D();
+	if (ToParrier.IsNearlyZero())
+	{
+		// 시전자가 차량과 같은 지점에 있다. 밀어낼 방향을 정할 근거가 없다.
+		return Launch;
+	}
+
+	const float HalfAngleDegrees = FMath::Clamp(SelfLaunchDeadZoneAngle, 0.f, 360.f) * 0.5f;
+	const float Dot = FVector::DotProduct(Launch, ToParrier);
+
+	// 각도 비교는 코사인으로 한다. acos 를 쓰면 통과하는 대다수의 호출까지 값을 치르게 된다.
+	if (Dot <= FMath::Cos(FMath::DegreesToRadians(HalfAngleDegrees)))
+	{
+		return Launch;
+	}
+
+	/**
+	 * 데드존 안이다. 가리킨 쪽에서 가장 가까운 경계로 밀어낸다.
+	 *
+	 * ToParrier 성분을 빼면 그 축에 수직인 성분만 남고, 그게 원래 가리킨 좌우 중 어느
+	 * 쪽인지를 그대로 들고 있다. 경계 방향은 그 둘을 반각의 cos·sin 으로 다시 섞은 것이다.
+	 */
+	FVector Perpendicular = (Launch - ToParrier * Dot).GetSafeNormal2D();
+	if (Perpendicular.IsNearlyZero())
+	{
+		/**
+		 * 정확히 시전자 정면을 가리켰다. 커서를 차량과 자기 사이에 둔 경우가 여기로 온다.
+		 *
+		 * 좌우 어느 쪽이 가까운지가 정해지지 않으므로 시전자 기준 한쪽으로 몰아준다.
+		 * 여기서 Launch 를 그대로 돌려주면 막으려던 그 입력이 통과한다.
+		 *
+		 * 밀려나는 좌우가 커서의 미세한 움직임으로 뒤집히는 구간이 이 근처에 남는다.
+		 * 데드존 방식의 성질이라 없앨 수 없고, 실제로 거슬리면 방향을 버리고 온 길로
+		 * 되돌려 보내는(-GetActorForwardVector) 쪽으로 바꿔야 한다.
+		 */
+		Perpendicular = FVector::CrossProduct(FVector::UpVector, ToParrier).GetSafeNormal2D();
+	}
+
+	const float HalfAngleRadians = FMath::DegreesToRadians(HalfAngleDegrees);
+	const FVector ClampedDirection =
+		(ToParrier * FMath::Cos(HalfAngleRadians) + Perpendicular * FMath::Sin(HalfAngleRadians)).GetSafeNormal2D();
+
+	if (ClampedDirection.IsNearlyZero())
+	{
+		return Launch;
+	}
+
+	// 확정된 패링 1건에 한 줄이라 로그가 쌓이지 않는다. 여기서는 acos 를 써도 된다.
+	UE_LOG(LogCWTraffic, Verbose, TEXT("[Parry]   %s: 시전자 쪽이라 발사 방향을 %.0f도에서 %.0f도로 밀어냅니다. (데드존 반각 %.0f도)"),
+		*GetName(),
+		FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f))),
+		FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(ClampedDirection, ToParrier), -1.f, 1.f))),
+		HalfAngleDegrees);
+
+	return ClampedDirection;
 }
 
 float ACWBaseVehicle::ResolveEffectiveRewindSeconds(float ViewRewindSeconds) const
