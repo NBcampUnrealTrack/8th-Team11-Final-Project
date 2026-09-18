@@ -119,12 +119,16 @@ TSubclassOf<ACWBaseVehicle> ACWTrafficVehicleSpawner::PickVehicleClass() const
 	}
 
 	float Roll = FMath::FRandRange(0.f, TotalWeight);
+	TSubclassOf<ACWBaseVehicle> LastCandidate = nullptr;
+
 	for (const FCWTrafficVehicleEntry& Entry : VehicleMix)
 	{
 		if (!Entry.VehicleClass || Entry.Weight <= 0.f)
 		{
 			continue;
 		}
+
+		LastCandidate = Entry.VehicleClass;
 
 		Roll -= Entry.Weight;
 		if (Roll <= 0.f)
@@ -133,8 +137,9 @@ TSubclassOf<ACWBaseVehicle> ACWTrafficVehicleSpawner::PickVehicleClass() const
 		}
 	}
 
-	// 부동소수점 누적 오차로 끝까지 도달한 경우.
-	return VehicleMix.Last().VehicleClass;
+	// 부동소수점 누적 오차로 끝까지 도달한 경우. 마지막 **후보**로 떨어진다 -
+	// 목록의 마지막 칸은 클래스가 비어 있거나 가중치 0 일 수 있어서 그대로 쓰면 널이 나온다.
+	return LastCandidate;
 }
 
 void ACWTrafficVehicleSpawner::WarnOnSharedTargetLane() const

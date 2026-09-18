@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "CWParrySyncData.generated.h"
 
-class AActor;
+class ACWBaseVehicle;
 
 USTRUCT(BlueprintType)
 struct FCWParrySyncData
@@ -21,9 +21,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FVector ParryDirection = FVector::ForwardVector;
 
-	// 패링 대상 차량
+	// 패링 대상 차량. 언제나 차량이라 AActor 로 넓혀 두지 않는다 - 받는 쪽이 캐스트할 이유가 없다
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
-	TObjectPtr<AActor> TargetVehicle = nullptr;
+	TObjectPtr<ACWBaseVehicle> TargetVehicle = nullptr;
 
 	// 차종별 연출 분기를 위한 ID
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")

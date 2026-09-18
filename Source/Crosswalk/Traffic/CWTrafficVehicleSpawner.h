@@ -50,8 +50,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
 	ACWTrafficLane* GetTargetLane() const { return TargetLane; }
 
-	/** VehicleMix에서 가중치 추첨으로 차종을 고른다. 목록이 비면 VehicleClass로 떨어진다. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
+	/**
+	 * VehicleMix에서 가중치 추첨으로 차종을 고른다. 목록이 비면 VehicleClass로 떨어진다.
+	 *
+	 * BlueprintPure 가 아니다. 난수를 굴리는 함수를 Pure 로 두면 BP 에서 핀을 당길 때마다
+	 * 다시 실행돼서, 같은 노드의 결과를 두 번 읽으면 서로 다른 차종이 나온다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	TSubclassOf<ACWBaseVehicle> PickVehicleClass() const;
 
 	/**

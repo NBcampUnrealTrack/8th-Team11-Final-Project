@@ -217,9 +217,8 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> EngineAudio;
 
-	/** 재생 중인 경적. 도플러를 엔진음과 같이 먹이려고 붙잡아 둔다. */
-	UPROPERTY(Transient)
-	TObjectPtr<UAudioComponent> HornAudio;
+	// 경적 컴포넌트는 붙잡아 두지 않는다. 피치는 시작 시점에 한 번 정하고 끝까지 고정이라
+	// (SpawnHorn) 재생 중에 다시 만질 일이 없고, 원샷이라 끝나면 알아서 사라진다.
 
 	/** 마지막으로 경적을 울린 월드 시각(초). 한 번도 안 울렸으면 음수로 남는다. */
 	float LastHornTime = -UE_BIG_NUMBER;

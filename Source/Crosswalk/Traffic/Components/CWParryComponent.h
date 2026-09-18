@@ -21,7 +21,7 @@ class UCWParryPropCatalog;
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnParrySucceededSignature, const FCWParrySyncData&, ParrySyncData);
 
-UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Crosswalk), meta = (BlueprintSpawnableComponent))
 class CROSSWALK_API UCWParryComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -180,9 +180,15 @@ private:
 	// 랙 보정의 되돌림 양과 상한은 여기 없다. 피격 판정과 같은 값이어야 해서
 	// UCWTrafficSubsystem::ResolveViewRewindSeconds 하나가 두 판정에 답한다.
 
-	float LastLocalParryRequestTime = -999.f;
+	/**
+	 * "아직 한 번도 안 썼다" 를 뜻하는 시각. 월드 시간은 항상 이보다 커서 곧바로 사용 가능으로 읽힌다.
+	 * 환불(ResetLocalCooldown)도 이 값으로 되돌린다.
+	 */
+	static constexpr float CooldownNeverUsedTime = -999.f;
 
-	float LastServerParryRequestTime = -999.f;
+	float LastLocalParryRequestTime = CooldownNeverUsedTime;
+
+	float LastServerParryRequestTime = CooldownNeverUsedTime;
 
 	// 델리게이트는 최하단에 배치
 public:

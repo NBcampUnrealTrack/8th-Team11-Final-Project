@@ -94,7 +94,7 @@ void UCWVehicleAudioComponent::SpawnHorn()
 		ComputeDopplerPitch(HornPitch);
 	}
 
-	HornAudio = UGameplayStatics::SpawnSoundAttached(
+	UGameplayStatics::SpawnSoundAttached(
 		HornSound,
 		GetOwner()->GetRootComponent(),
 		NAME_None,
@@ -190,7 +190,6 @@ void UCWVehicleAudioComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	EngineAudio = nullptr;
-	HornAudio = nullptr;
 
 	Super::EndPlay(EndPlayReason);
 }
