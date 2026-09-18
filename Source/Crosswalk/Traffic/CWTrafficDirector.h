@@ -172,7 +172,7 @@ private:
 	void EvaluateRules();
 
 	/**
-	 * FiredRules 와 RuleTimerHandles 의 길이를 Rules 에 맞춘다. 두 배열에 쓰기 직전에 부른다.
+	 * RuleStates 의 길이를 Rules 에 맞춘다. 규칙 상태에 쓰기 직전에 부른다.
 	 *
 	 * Rules 는 BlueprintReadWrite 라 런타임에 길이가 바뀔 수 있고, TriggerRule 은 다른
 	 * 액터의 BeginPlay 에서 이 액터의 BeginPlay 보다 먼저 들어올 수 있다. 그 두 경우에
@@ -286,11 +286,24 @@ private:
 	/** 지금 단계. 서버 기록용이라 복제하지 않는다. 클라이언트는 색만 알면 된다. */
 	int32 CurrentStepIndex = INDEX_NONE;
 
-	/** 이미 발동한 규칙. 같은 규칙이 두 번 걸리지 않게 한다. */
-	TArray<bool> FiredRules;
+	/**
+	 * 규칙 하나의 런타임 상태. Rules 와 같은 인덱스로 짝을 이룬다.
+	 *
+	 * 발동 여부와 지연 타이머를 한 구조체에 둔다. 배열 둘로 나눠 들면 길이를 각각
+	 * 맞춰야 하고, 한쪽만 맞춘 채 인덱스로 쓰는 실수가 생긴다.
+	 */
+	struct FRuleRuntimeState
+	{
+		/** 이미 발동했는가. 같은 규칙이 두 번 걸리지 않게 한다. */
+		bool bFired = false;
+
+		/** Delay 가 있는 규칙의 예약 타이머. */
+		FTimerHandle TimerHandle;
+	};
+
+	TArray<FRuleRuntimeState> RuleStates;
 
 	FTimerHandle StepTimerHandle;
-	TArray<FTimerHandle> RuleTimerHandles;
 
 	TWeakObjectPtr<ACWGameState> BoundGameState;
 

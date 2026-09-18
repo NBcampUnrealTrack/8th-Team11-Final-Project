@@ -96,11 +96,6 @@ ACWBaseVehicle* ACWTrafficVehicleSpawner::RequestSpawn()
 	return SpawnVehicleOfClass(SpawnClass, 0.f);
 }
 
-ACWBaseVehicle* ACWTrafficVehicleSpawner::SpawnVehicle(float StartDistance)
-{
-	return SpawnVehicleOfClass(PickVehicleClass(), StartDistance);
-}
-
 TSubclassOf<ACWBaseVehicle> ACWTrafficVehicleSpawner::PickVehicleClass() const
 {
 	float TotalWeight = 0.f;
@@ -360,7 +355,8 @@ void ACWTrafficVehicleSpawner::PrewarmLane()
 		const float SlotCenter = SlotSize * Index;
 		const float Distance = SlotCenter + FMath::FRandRange(-MaxJitter, MaxJitter);
 
-		SpawnVehicle(FMath::Clamp(Distance, 0.f, LaneLength));
+		// 프리웜은 입구 점유를 보지 않는다. 슬롯 간격이 이미 겹침을 막는다.
+		SpawnVehicleOfClass(PickVehicleClass(), FMath::Clamp(Distance, 0.f, LaneLength));
 	}
 }
 

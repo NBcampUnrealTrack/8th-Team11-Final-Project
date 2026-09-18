@@ -180,12 +180,12 @@ void ACWTrafficDirector::TriggerRule(FName RuleName)
 
 	for (int32 Index = 0; Index < Rules.Num(); ++Index)
 	{
-		if (Rules[Index].RuleName != RuleName || FiredRules[Index])
+		if (Rules[Index].RuleName != RuleName || RuleStates[Index].bFired)
 		{
 			continue;
 		}
 
-		FiredRules[Index] = true;
+		RuleStates[Index].bFired = true;
 		ScheduleRule(Index);
 
 		return;
@@ -319,9 +319,9 @@ void ACWTrafficDirector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(StepTimerHandle);
-		for (FTimerHandle& Handle : RuleTimerHandles)
+		for (FRuleRuntimeState& RuleState : RuleStates)
 		{
-			World->GetTimerManager().ClearTimer(Handle);
+			World->GetTimerManager().ClearTimer(RuleState.TimerHandle);
 		}
 	}
 
@@ -486,10 +486,10 @@ void ACWTrafficDirector::ScheduleRule(int32 RuleIndex)
 		return;
 	}
 
-	if (Rules[RuleIndex].Delay > 0.f && RuleTimerHandles.IsValidIndex(RuleIndex))
+	if (Rules[RuleIndex].Delay > 0.f && RuleStates.IsValidIndex(RuleIndex))
 	{
 		FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &ACWTrafficDirector::ExecuteRule, RuleIndex);
-		GetWorldTimerManager().SetTimer(RuleTimerHandles[RuleIndex], Delegate, Rules[RuleIndex].Delay, false);
+		GetWorldTimerManager().SetTimer(RuleStates[RuleIndex].TimerHandle, Delegate, Rules[RuleIndex].Delay, false);
 		return;
 	}
 
@@ -527,7 +527,7 @@ void ACWTrafficDirector::EvaluateRules()
 
 	for (int32 Index = 0; Index < Rules.Num(); ++Index)
 	{
-		if (FiredRules[Index])
+		if (RuleStates[Index].bFired)
 		{
 			continue;
 		}
@@ -555,22 +555,17 @@ void ACWTrafficDirector::EvaluateRules()
 			continue;
 		}
 
-		FiredRules[Index] = true;
+		RuleStates[Index].bFired = true;
 		ScheduleRule(Index);
 	}
 }
 
 void ACWTrafficDirector::EnsureRuleStateSized()
 {
-	// SetNum 은 늘어난 칸을 0(false / 빈 핸들)으로 채우고 기존 칸은 건드리지 않는다.
-	if (FiredRules.Num() != Rules.Num())
+	// SetNum 은 늘어난 칸을 기본값(미발동 / 빈 핸들)으로 채우고 기존 칸은 건드리지 않는다.
+	if (RuleStates.Num() != Rules.Num())
 	{
-		FiredRules.SetNum(Rules.Num());
-	}
-
-	if (RuleTimerHandles.Num() != Rules.Num())
-	{
-		RuleTimerHandles.SetNum(Rules.Num());
+		RuleStates.SetNum(Rules.Num());
 	}
 }
 
