@@ -10,6 +10,8 @@
 #include "Engine/NetDriver.h"
 #include "Engine/World.h"
 #include "GameFramework/GameModeBase.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Base64.h"
@@ -25,6 +27,11 @@ namespace CrosswalkSession
 {
 	// 목록 조회는 짧게 기다리고, 생성·참가·복구 제한 시간은 별도로 유지
 	static constexpr float RoomSearchTimeout = 5.f;
+
+	// 광고가 실패했을 때 다시 올리기까지의 간격과 시도 한도
+	// 인원이 다시 바뀌면 예산은 새로 채워짐
+	static constexpr float RoomPlayerCountAdvertiseRetryDelay = 2.f;
+	static constexpr int32 RoomPlayerCountAdvertiseRetryLimit = 3;
 
 	static const FName RoomCodeKey(TEXT("CW_ROOM_CODE"));
 	static const FName GameSessionName(TEXT("GameSession"));
@@ -123,6 +130,7 @@ UCWGameInstance::UCWGameInstance()
 	, RoomCodeLength(6)
 	, MaxRoomCodeGenerateAttempts(20)
 	, SessionOperationTimeout(30.f)
+	, RoomPlayerCountAdvertiseDelay(0.5f)
 	, CurrentFindPurpose(ECWSessionFindPurpose::None)
 	, CurrentSessionOperation(ECWSessionOperation::None)
 	, RoomCodeGenerateAttemptCount(0)
@@ -132,6 +140,7 @@ UCWGameInstance::UCWGameInstance()
 	, FindSessionsCompleteDelegate(FOnFindSessionsCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnFindSessionsComplete))
 	, JoinSessionCompleteDelegate(FOnJoinSessionCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnJoinSessionComplete))
 	, DestroySessionCompleteDelegate(FOnDestroySessionCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnDestroySessionComplete))
+	, UpdateSessionCompleteDelegate(FOnUpdateSessionCompleteDelegate::CreateUObject(this, &UCWGameInstance::OnUpdateSessionComplete))
 {
 }
 
@@ -183,6 +192,24 @@ void UCWGameInstance::Init()
 			&UCWGameInstance::HandleNetworkFailure
 		);
 	}
+
+	// 방 인원 광고 갱신에 쓸 입장·퇴장 통보
+	// 프론트엔드와 인게임 GameMode 가 따로라 한쪽에만 붙이면 스테이지 이동 뒤 변동을 놓침
+	if (!GameModePostLoginHandle.IsValid())
+	{
+		GameModePostLoginHandle = FGameModeEvents::OnGameModePostLoginEvent().AddUObject(
+			this,
+			&UCWGameInstance::HandleGameModePostLogin
+		);
+	}
+
+	if (!GameModeLogoutHandle.IsValid())
+	{
+		GameModeLogoutHandle = FGameModeEvents::OnGameModeLogoutEvent().AddUObject(
+			this,
+			&UCWGameInstance::HandleGameModeLogout
+		);
+	}
 }
 
 void UCWGameInstance::Shutdown()
@@ -201,6 +228,22 @@ void UCWGameInstance::Shutdown()
 	}
 
 	WorldCleanupHandle.Reset();
+
+	if (GameModePostLoginHandle.IsValid())
+	{
+		FGameModeEvents::OnGameModePostLoginEvent().Remove(GameModePostLoginHandle);
+	}
+
+	GameModePostLoginHandle.Reset();
+
+	if (GameModeLogoutHandle.IsValid())
+	{
+		FGameModeEvents::OnGameModeLogoutEvent().Remove(GameModeLogoutHandle);
+	}
+
+	GameModeLogoutHandle.Reset();
+
+	ResetRoomPlayerCountAdvertise();
 
 	ClearSessionOperationTimeout();
 	ClearNetworkFailureRecoveryTimeout();
@@ -569,6 +612,9 @@ void UCWGameInstance::DestroyRoom()
 		return;
 	}
 
+	// 방을 접기로 한 뒤엔 인원 광고를 더 올리지 않음
+	ResetRoomPlayerCountAdvertise();
+
 	BindDestroySessionCompleteDelegate();
 
 	SetStatus(TEXT("DestroyRoom requested"));
@@ -908,6 +954,18 @@ FCWRoomSummary UCWGameInstance::BuildRoomSummary(const FOnlineSessionSearchResul
 	Summary.MaxPlayers = SearchResult.Session.SessionSettings.NumPublicConnections;
 	Summary.CurrentPlayers = FMath::Max(0, Summary.MaxPlayers - SearchResult.Session.NumOpenPublicConnections);
 
+	// 목록 인원이 틀릴 때 광고값과 화면값 중 어디가 어긋났는지 가르는 기준
+	// 호스트 쪽 [SessionDiag] UpdateSession 줄과 짝지어 봄
+	UE_LOG(
+		LogCWSession,
+		Log,
+		TEXT("[RoomListDiag] Code=%s Max=%d Open=%d Current=%d"),
+		*Summary.RoomCode,
+		Summary.MaxPlayers,
+		SearchResult.Session.NumOpenPublicConnections,
+		Summary.CurrentPlayers
+	);
+
 	return Summary;
 }
 
@@ -930,6 +988,229 @@ void UCWGameInstance::RefreshCachedRoomList()
 
 		CachedRoomList.Add(BuildRoomSummary(SearchResult));
 	}
+}
+
+void UCWGameInstance::HandleGameModePostLogin(AGameModeBase* GameMode, APlayerController* NewPlayer)
+{
+	// 전역 이벤트라 한 프로세스에 뜬 다른 PIE 월드의 GameMode 도 들어옴
+	if (!IsValid(GameMode) || GameMode->GetWorld() == nullptr ||
+		GameMode->GetWorld()->GetGameInstance() != this)
+	{
+		return;
+	}
+
+	RequestRoomPlayerCountAdvertise();
+}
+
+void UCWGameInstance::HandleGameModeLogout(AGameModeBase* GameMode, AController* Exiting)
+{
+	if (!IsValid(GameMode) || GameMode->GetWorld() == nullptr ||
+		GameMode->GetWorld()->GetGameInstance() != this)
+	{
+		return;
+	}
+
+	RequestRoomPlayerCountAdvertise();
+}
+
+bool UCWGameInstance::IsHostingCurrentRoom() const
+{
+	const UWorld* World = GetWorld();
+
+	// 광고된 로비 데이터는 로비 소유자만 고칠 수 있어 참가자가 부르면 조용히 실패함
+	return World != nullptr && World->GetNetMode() == NM_ListenServer;
+}
+
+int32 UCWGameInstance::GetHostedPlayerCount() const
+{
+	const UWorld* World = GetWorld();
+
+	if (World == nullptr)
+	{
+		return 0;
+	}
+
+	const AGameStateBase* GameState = World->GetGameState();
+
+	if (!IsValid(GameState))
+	{
+		return 0;
+	}
+
+	int32 PlayerCount = 0;
+
+	for (const APlayerState* PlayerState : GameState->PlayerArray)
+	{
+		// 관전자는 방 자리를 차지하지 않으므로 뺌
+		if (IsValid(PlayerState) && !PlayerState->IsOnlyASpectator())
+		{
+			++PlayerCount;
+		}
+	}
+
+	return PlayerCount;
+}
+
+void UCWGameInstance::RequestRoomPlayerCountAdvertise()
+{
+	if (!SessionInterface.IsValid() || !IsHostingCurrentRoom())
+	{
+		return;
+	}
+
+	if (SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName) == nullptr)
+	{
+		return;
+	}
+
+	// 방을 접는 중이면 새 갱신을 시작하지 않음
+	if (bRollingBackFailedCreate || bRecoveringFromNetworkFailure ||
+		(IsSessionOperationInFlight() && CurrentSessionOperation == ECWSessionOperation::DestroyRoom))
+	{
+		return;
+	}
+
+	// 갱신 중에 또 바뀌면 지금 것을 끝내고 최신값으로 한 번 더 올림
+	if (bRoomPlayerCountAdvertiseInFlight)
+	{
+		bRoomPlayerCountAdvertiseDirty = true;
+		return;
+	}
+
+	// 실제로 인원이 움직였으므로 재시도 예산을 새로 채우고 대기 중이던 재시도는 버림
+	GetTimerManager().ClearTimer(RoomPlayerCountAdvertiseRetryHandle);
+	RoomPlayerCountAdvertiseRetryCount = 0;
+
+	// 이미 예약돼 있으면 그 한 번이 최신 인원을 읽음
+	if (GetTimerManager().IsTimerActive(RoomPlayerCountAdvertiseHandle))
+	{
+		return;
+	}
+
+	GetTimerManager().SetTimer(
+		RoomPlayerCountAdvertiseHandle,
+		this,
+		&UCWGameInstance::FlushRoomPlayerCountAdvertise,
+		FMath::Max(RoomPlayerCountAdvertiseDelay, KINDA_SMALL_NUMBER),
+		false
+	);
+}
+
+void UCWGameInstance::FlushRoomPlayerCountAdvertise()
+{
+	bRoomPlayerCountAdvertiseDirty = false;
+
+	if (!SessionInterface.IsValid() || !IsHostingCurrentRoom())
+	{
+		return;
+	}
+
+	// 대기하는 사이 방이 사라졌을 수 있음
+	FNamedOnlineSession* NamedSession = SessionInterface->GetNamedSession(CrosswalkSession::GameSessionName);
+
+	if (NamedSession == nullptr)
+	{
+		return;
+	}
+
+	if (bRollingBackFailedCreate || bRecoveringFromNetworkFailure ||
+		(IsSessionOperationInFlight() && CurrentSessionOperation == ECWSessionOperation::DestroyRoom))
+	{
+		return;
+	}
+
+	const int32 MaxPlayers = NamedSession->SessionSettings.NumPublicConnections;
+	const int32 CurrentPlayers = FMath::Clamp(GetHostedPlayerCount(), 0, MaxPlayers);
+	const int32 OpenConnections = MaxPlayers - CurrentPlayers;
+
+	// 직렬 큐를 쓰는 온라인 작업이라 값이 그대로면 올리지 않음
+	if (LastAdvertisedOpenConnections == OpenConnections)
+	{
+		return;
+	}
+
+	// 목록에 보이는 인원은 이 필드 하나로 정해짐
+	// UpdateLobby 가 SessionSettings 가 아니라 세션 객체의 이 필드를 광고에 올림
+	// Steam 이 로비 멤버 수로 채우는 값은 참가 직후 아직 반영 전일 수 있어 직접 덮어씀
+	NamedSession->NumOpenPublicConnections = OpenConnections;
+
+	// 현재 설정을 복사해서 넘김
+	// UpdateLobby 가 SessionSettings 를 통째로 덮고 이전 키를 빈 값으로 지운 뒤 새 키를 올림
+	// 새 구조체를 넘기면 방 코드·방 제목·비밀방 표시가 같이 지워짐
+	FOnlineSessionSettings UpdatedSettings = NamedSession->SessionSettings;
+
+	// 로비도 LAN 도 아닌 세션은 UpdateSession 이 true 를 주고도 큐에 아무것도 안 넣어
+	// 완료 콜백이 영영 오지 않음. 우리가 만든 방은 항상 둘 중 하나라 여기 걸리면 배선 문제임
+	if (!UpdatedSettings.bIsLANMatch && !UpdatedSettings.bUseLobbiesIfAvailable)
+	{
+		LastAdvertisedOpenConnections = INDEX_NONE;
+		SetStatus(TEXT("UpdateSession skipped: session is neither LAN nor lobby"));
+		return;
+	}
+
+	BindUpdateSessionCompleteDelegate();
+
+	bRoomPlayerCountAdvertiseInFlight = true;
+	LastAdvertisedOpenConnections = OpenConnections;
+
+	SetStatus(FString::Printf(TEXT("UpdateSession requested. Players: %d/%d"), CurrentPlayers, MaxPlayers));
+
+	// 즉시 false 면 완료 델리게이트가 오지 않아 진행 상태가 잠김
+	if (!SessionInterface->UpdateSession(CrosswalkSession::GameSessionName, UpdatedSettings, true))
+	{
+		ClearUpdateSessionCompleteDelegate();
+
+		bRoomPlayerCountAdvertiseInFlight = false;
+		LastAdvertisedOpenConnections = INDEX_NONE;
+
+		SetStatus(TEXT("UpdateSession failed to start"));
+
+		ScheduleRoomPlayerCountAdvertiseRetry();
+	}
+}
+
+void UCWGameInstance::ResetRoomPlayerCountAdvertise()
+{
+	GetTimerManager().ClearTimer(RoomPlayerCountAdvertiseHandle);
+	GetTimerManager().ClearTimer(RoomPlayerCountAdvertiseRetryHandle);
+
+	RoomPlayerCountAdvertiseRetryCount = 0;
+
+	// 세션 이름이 방마다 같아 콜백만으로는 이전 방 응답을 가려낼 수 없음
+	// 구독을 끊어 늦게 온 응답이 새 방 상태를 건드리지 못하게 함
+	ClearUpdateSessionCompleteDelegate();
+
+	bRoomPlayerCountAdvertiseInFlight = false;
+	bRoomPlayerCountAdvertiseDirty = false;
+	LastAdvertisedOpenConnections = INDEX_NONE;
+}
+
+void UCWGameInstance::ScheduleRoomPlayerCountAdvertiseRetry()
+{
+	// 인원 변동이 더 없으면 실패한 값이 그대로 남으므로 스스로 다시 올림
+	if (RoomPlayerCountAdvertiseRetryCount >= CrosswalkSession::RoomPlayerCountAdvertiseRetryLimit)
+	{
+		SetStatus(TEXT("UpdateSession retry limit reached"));
+		return;
+	}
+
+	// 방을 접는 중이면 재시도하지 않음
+	if (bRollingBackFailedCreate || bRecoveringFromNetworkFailure ||
+		(IsSessionOperationInFlight() && CurrentSessionOperation == ECWSessionOperation::DestroyRoom))
+	{
+		return;
+	}
+
+	++RoomPlayerCountAdvertiseRetryCount;
+
+	// Request 를 거치면 예산이 초기화돼 무한 재시도가 되므로 Flush 를 직접 예약함
+	GetTimerManager().SetTimer(
+		RoomPlayerCountAdvertiseRetryHandle,
+		this,
+		&UCWGameInstance::FlushRoomPlayerCountAdvertise,
+		CrosswalkSession::RoomPlayerCountAdvertiseRetryDelay,
+		false
+	);
 }
 
 bool UCWGameInstance::BeginSessionOperation(ECWSessionOperation Operation)
@@ -1199,6 +1480,25 @@ void UCWGameInstance::ClearDestroySessionCompleteDelegate()
 	}
 }
 
+void UCWGameInstance::BindUpdateSessionCompleteDelegate()
+{
+	ClearUpdateSessionCompleteDelegate();
+
+	if (SessionInterface.IsValid())
+	{
+		UpdateSessionCompleteDelegateHandle = SessionInterface->AddOnUpdateSessionCompleteDelegate_Handle(UpdateSessionCompleteDelegate);
+	}
+}
+
+void UCWGameInstance::ClearUpdateSessionCompleteDelegate()
+{
+	if (SessionInterface.IsValid() && UpdateSessionCompleteDelegateHandle.IsValid())
+	{
+		SessionInterface->ClearOnUpdateSessionCompleteDelegate_Handle(UpdateSessionCompleteDelegateHandle);
+		UpdateSessionCompleteDelegateHandle.Reset();
+	}
+}
+
 void UCWGameInstance::OnLoginComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error)
 {
 	ClearLoginCompleteDelegate();
@@ -1345,6 +1645,13 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 		}
 	}
 
+	// 앞선 방에서 남은 광고 갱신 상태를 새 방으로 끌고 가지 않음
+	ResetRoomPlayerCountAdvertise();
+
+	// 호스트는 맵 로드 때 이미 입장을 끝내 생성 직후 입장 통보가 오지 않음
+	// 엔진이 넣어 둔 초기값은 서브시스템마다 달라(Null 은 전체, Steam 은 전체-1) 직접 맞춤
+	RequestRoomPlayerCountAdvertise();
+
 	// 리슨이 실제로 열린 뒤에 알려야 UI 가 방 화면을 여는 시점과 어긋나지 않음
 	SetStatus(FString::Printf(TEXT("CreateSession success. RoomCode: %s"), *CurrentRoomCode));
 	CompleteSessionOperation(ECWSessionOperation::CreateRoom, true, ECWSessionFailure::None);
@@ -1353,6 +1660,8 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 void UCWGameInstance::RollbackCreatedSession(const FString& Reason)
 {
 	SetStatus(FString::Printf(TEXT("CreateRoom failed: %s"), *Reason));
+
+	ResetRoomPlayerCountAdvertise();
 
 	// 여기서 CreateRoom 을 끝내지 않는다.
 	// 실패를 먼저 방송하면 UI 는 생성이 끝난 줄 알고 방 만들기 버튼을 다시 연다.
@@ -1412,6 +1721,8 @@ void UCWGameInstance::RecoverToMenuAfterNetworkFailure()
 	}
 
 	bRecoveringFromNetworkFailure = true;
+
+	ResetRoomPlayerCountAdvertise();
 
 	// 연결이 끊긴 월드를 기억해 둔다.
 	// 통합 후에는 방 화면도 Title 맵 위에 뜨므로 맵 이름으로는 구분되지 않는다.
@@ -1794,6 +2105,43 @@ void UCWGameInstance::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCom
 		}
 	}
 	PlayerController->ClientTravel(FinalConnectString, TRAVEL_Absolute);
+}
+
+void UCWGameInstance::OnUpdateSessionComplete(FName SessionName, bool bWasSuccessful)
+{
+	if (SessionName != CrosswalkSession::GameSessionName)
+	{
+		return;
+	}
+
+	ClearUpdateSessionCompleteDelegate();
+
+	bRoomPlayerCountAdvertiseInFlight = false;
+
+	if (bWasSuccessful)
+	{
+		RoomPlayerCountAdvertiseRetryCount = 0;
+	}
+	else
+	{
+		// 광고에 올라가지 않았으므로 다음 요청이 같은 값이어도 다시 시도하게 둠
+		LastAdvertisedOpenConnections = INDEX_NONE;
+		SetStatus(TEXT("UpdateSession failed"));
+	}
+
+	// 갱신을 기다리는 사이 인원이 또 바뀌었으면 최신 상태로 한 번 더 올림
+	// 이쪽이 실패 재시도보다 우선임 - 어차피 최신 인원으로 다시 올리게 됨
+	if (bRoomPlayerCountAdvertiseDirty)
+	{
+		bRoomPlayerCountAdvertiseDirty = false;
+		RequestRoomPlayerCountAdvertise();
+		return;
+	}
+
+	if (!bWasSuccessful)
+	{
+		ScheduleRoomPlayerCountAdvertiseRetry();
+	}
 }
 
 void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSuccessful)
