@@ -15,6 +15,7 @@
 #include "Types/MVVMViewModelCollection.h"
 #include "Types/MVVMViewModelContext.h"
 #include "UI/ViewModel/CWSessionViewModel.h"
+#include "UI/Widget/CWPauseMenuWidget.h"
 #include "CWUIRootWidget.h"
 #include "CWUIScreenWidget.h"
 #include "Widgets/SWidget.h"
@@ -242,6 +243,8 @@ void UCWUISubsystem::Deinitialize()
 	}
 
 	CurrentPopup.Reset();
+	PauseMenu.Reset();
+	bPauseMenuBlocked = false;
 	CurrentInputMode = ECWUIInputMode::UIOnly;
 	PopupReturnInputMode = ECWUIInputMode::UIOnly;
 
@@ -671,6 +674,8 @@ bool UCWUISubsystem::EnsureUIRoot()
 	// 이전 World의 UI 상태를 폐기
 	UIRoot.Reset();
 	CurrentScreen.Reset();
+	PauseMenu.Reset();
+	bPauseMenuBlocked = false;
 	CurrentPage = ECWUIPage::None;
 
 	// 참가 시 숨겼던 이전 Root의 상태가 새 월드의 HUD 복원값으로 남지 않도록 함
@@ -724,6 +729,93 @@ void UCWUISubsystem::EndTransition()
 
 #pragma region Input
 
+void UCWUISubsystem::SetPauseMenu(UCWPauseMenuWidget* InMenu)
+{
+	PauseMenu = InMenu;
+}
+
+void UCWUISubsystem::ClearPauseMenu(UCWPauseMenuWidget* InMenu)
+{
+	if (PauseMenu.Get() == InMenu)
+	{
+		PauseMenu.Reset();
+	}
+}
+
+UCWSessionViewModel* UCWUISubsystem::GetSessionViewModel() const
+{
+	return SessionViewModel.Get();
+}
+
+UUserWidget* UCWUISubsystem::GetFocusTargetWidget() const
+{
+	if (UUserWidget* Popup = CurrentPopup.Get(); IsValid(Popup))
+	{
+		return Popup;
+	}
+
+	if (UCWUIScreenWidget* Screen = CurrentScreen.Get(); IsValid(Screen))
+	{
+		return Screen;
+	}
+
+	// 페이지가 없는 인게임에서는 열려 있는 일시정지 메뉴가 포커스 주인
+	// 확인창을 취소했을 때 메뉴로 포커스를 돌려주는 경로이기도 함
+	if (UCWPauseMenuWidget* Menu = PauseMenu.Get(); IsValid(Menu) && Menu->IsMenuOpen())
+	{
+		return Menu;
+	}
+
+	return nullptr;
+}
+
+void UCWUISubsystem::SetPauseMenuBlocked(bool bBlocked)
+{
+	bPauseMenuBlocked = bBlocked;
+}
+
+bool UCWUISubsystem::OpenPauseMenu()
+{
+	// 어느 조건에서 걸렸는지 남김. 거절도 결과이므로 항상 기록함
+	UE_LOG(
+		LogCWUI,
+		Log,
+		TEXT("[PauseMenu] open requested. Page=%d Blocked=%d MenuValid=%d"),
+		static_cast<int32>(CurrentPage),
+		bPauseMenuBlocked ? 1 : 0,
+		PauseMenu.IsValid() ? 1 : 0
+	);
+
+	// 페이지가 열려 있으면 그 위에 겹쳐 열지 않음
+	if (CurrentPage != ECWUIPage::None || bPauseMenuBlocked)
+	{
+		return false;
+	}
+
+	UCWPauseMenuWidget* Menu = PauseMenu.Get();
+
+	if (!IsValid(Menu))
+	{
+		return false;
+	}
+
+	// 이번 요청으로 실제 열렸는지를 그대로 돌려줌
+	// IsMenuOpen 은 이미 열려 있던 경우에도 true 라 요청 성공 여부와 다름
+	return Menu->OpenMenu();
+}
+
+bool UCWUISubsystem::RestorePauseMenuFocus()
+{
+	UCWPauseMenuWidget* Menu = PauseMenu.Get();
+	if (CurrentPage != ECWUIPage::None || !IsValid(Menu) || Menu->GetWorld() != GetWorld() || !Menu->IsMenuOpen())
+	{
+		return false;
+	}
+	ApplyInputMode(ECWUIInputMode::UIOnly);
+	Menu->RestoreFocus();
+	return true;
+}
+
 void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 {
 	// 입력 모드를 적용할 LocalPlayer 확인
@@ -772,14 +864,7 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 			EMouseCursor::Default;
 
 		// 팝업이 열려 있으면 팝업을 우선 포커스 대상으로 사용
-		UUserWidget* FocusWidget = CurrentPopup.Get();
-
-		if (!IsValid(FocusWidget))
-		{
-			FocusWidget = CurrentScreen.Get();
-		}
-
-		if (IsValid(FocusWidget))
+		if (UUserWidget* FocusWidget = GetFocusTargetWidget(); IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
 				FindFocusableWidget(FocusWidget->GetCachedWidget());
@@ -815,14 +900,9 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 		);
 
 		// 팝업이 열려 있으면 팝업을 우선 포커스 대상으로 사용
-		UUserWidget* FocusWidget = CurrentPopup.Get();
+		bool bFocusAssigned = false;
 
-		if (!IsValid(FocusWidget))
-		{
-			FocusWidget = CurrentScreen.Get();
-		}
-
-		if (IsValid(FocusWidget))
+		if (UUserWidget* FocusWidget = GetFocusTargetWidget(); IsValid(FocusWidget))
 		{
 			const TSharedPtr<SWidget> CachedWidget =
 				FindFocusableWidget(FocusWidget->GetCachedWidget());
@@ -830,6 +910,23 @@ void UCWUISubsystem::ApplyInputMode(ECWUIInputMode InInputMode)
 			if (CachedWidget.IsValid())
 			{
 				InputMode.SetWidgetToFocus(CachedWidget);
+				bFocusAssigned = true;
+			}
+		}
+
+		// 포커스 주인이 없으면 뷰포트로 돌려놓음
+		// SetFocusAndLocking 은 위젯을 안 주면 포커스를 그대로 두므로(PlayerController.cpp:6313),
+		// 방금 닫힌 위젯이 포커스를 쥔 채 키를 삼켜 다시 열 수 없게 됨
+		if (!bFocusAssigned)
+		{
+			if (const UGameViewportClient* ViewportClient = GetWorld() != nullptr ? GetWorld()->GetGameViewport() : nullptr)
+			{
+				const TSharedPtr<SViewport> ViewportWidget = ViewportClient->GetGameViewportWidget();
+
+				if (ViewportWidget.IsValid())
+				{
+					InputMode.SetWidgetToFocus(ViewportWidget);
+				}
 			}
 		}
 

@@ -27,7 +27,7 @@ public:
 	ECWUIInputMode InputMode = ECWUIInputMode::UIOnly;
 
 	// 화면이 열릴 때 HUD 레이어를 숨길지 여부
-	// 같은 페이지라도 진입 환경에 따라 다르다 (인게임 Settings 만 숨김)
+	// 같은 페이지라도 진입 환경에 따라 다름 (인게임 Result 만 숨김)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "CW|UI|Page")
 	bool bHideHUD = false;
 

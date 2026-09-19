@@ -890,8 +890,15 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 	SessionSettings.Set(SETTING_MAPNAME, ListenMapPath, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::RoomCodeKey, RoomCode, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 	SessionSettings.Set(CrosswalkSession::GameIdKey, CrosswalkSession::GameIdValue, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
-	SessionSettings.Set(CrosswalkSession::RoomNameKey, PendingRoomName, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
-	SessionSettings.Set(CrosswalkSession::EncodedRoomNameKey, CrosswalkSession::EncodeRoomName(PendingRoomName), EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	// 제목이 비면 키를 아예 넣지 않음
+	// 엔진이 빈 문자열 설정을 광고에서 빼면서 매번 경고를 남기고(GetLobbyKeyValuePairsFromSessionSettings),
+	// 인원 변동마다 도는 UpdateSession 이 같은 경로를 다시 타 경고가 쌓임
+	// 읽는 쪽은 키가 없으면 빈 제목으로 폴백하므로 표시 동작은 그대로임
+	if (!PendingRoomName.IsEmpty())
+	{
+		SessionSettings.Set(CrosswalkSession::RoomNameKey, PendingRoomName, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+		SessionSettings.Set(CrosswalkSession::EncodedRoomNameKey, CrosswalkSession::EncodeRoomName(PendingRoomName), EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
+	}
 	SessionSettings.Set(CrosswalkSession::IsPrivateKey, bPendingIsPrivate ? 1 : 0, EOnlineDataAdvertisementType::ViaOnlineServiceAndPing);
 
 	BindCreateSessionCompleteDelegate();
@@ -1650,7 +1657,11 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 
 	// 호스트는 맵 로드 때 이미 입장을 끝내 생성 직후 입장 통보가 오지 않음
 	// 엔진이 넣어 둔 초기값은 서브시스템마다 달라(Null 은 전체, Steam 은 전체-1) 직접 맞춤
-	RequestRoomPlayerCountAdvertise();
+	//
+	// 합치기 타이머를 거치지 않고 바로 내보냄
+	// 방이 만들어진 순간부터 검색 응답이 나가므로 0.5초를 기다리면 그 사이에 들어온 검색이
+	// 엔진 초기값을 받아감. 합치기가 필요한 이유(퇴장 시 PlayerState 잔존)는 이 경로엔 없음
+	FlushRoomPlayerCountAdvertise();
 
 	// 리슨이 실제로 열린 뒤에 알려야 UI 가 방 화면을 여는 시점과 어긋나지 않음
 	SetStatus(FString::Printf(TEXT("CreateSession success. RoomCode: %s"), *CurrentRoomCode));
