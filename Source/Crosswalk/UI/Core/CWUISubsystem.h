@@ -14,6 +14,7 @@ class UCWSessionViewModel;
 class UCWToastWidget;
 class UUserWidget;
 class UWorld;
+class UCWPauseMenuWidget;
 
 UCLASS()
 class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
@@ -92,6 +93,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Input")
 	void ApplyInputMode(ECWUIInputMode InInputMode);
 
+	void SetPauseMenu(UCWPauseMenuWidget* InMenu);
+	void ClearPauseMenu(UCWPauseMenuWidget* InMenu);
+	UCWSessionViewModel* GetSessionViewModel() const;
+
+	// HUD 버튼과 같은 입구를 키 입력에도 열어 줌
+	// 다른 페이지가 열려 있거나 차단 중이면 열지 않음
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
+	bool OpenPauseMenu();
+
+	// 클리어 연출처럼 메뉴가 끼어들면 안 되는 구간을 HUD 가 알려 줌
+	// 입력 모드에만 기대면 다른 호출 경로가 생겼을 때 그대로 우회됨
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
+	void SetPauseMenuBlocked(bool bBlocked);
+
+	// 설정 화면을 닫은 뒤 기존 메뉴로 키보드 포커스를 돌려줌
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
+	bool RestorePauseMenuFocus();
+
 #pragma endregion
 
 #pragma region HUD
@@ -162,6 +181,9 @@ private:
 #pragma region UIConfiguration
 
 private:
+	// 지금 키보드 포커스를 가져야 할 위젯. 없으면 nullptr
+	UUserWidget* GetFocusTargetWidget() const;
+
 	// 현재 사용할 Root Widget 클래스
 	UPROPERTY()
 	TSubclassOf<UCWUIRootWidget> UIRootClass;
@@ -175,6 +197,12 @@ private:
 #pragma region RuntimeState
 
 private:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCWPauseMenuWidget> PauseMenu;
+
+	// 클리어 연출 등으로 일시정지를 막아 둔 상태인지
+	bool bPauseMenuBlocked = false;
+
 	// 현재 World에 표시 중인 Root
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UCWUIRootWidget> UIRoot;
