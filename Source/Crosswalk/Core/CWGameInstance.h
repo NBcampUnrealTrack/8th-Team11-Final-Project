@@ -11,6 +11,7 @@
 #include "Data/Structs/CWRoomSummary.h"
 #include "CWGameInstance.generated.h"
 
+class AGameModeBase;
 class UNetDriver;
 
 // 완료 이벤트와 별개로 작업 시작·복구 상태를 ViewModel에 전달
@@ -131,6 +132,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Session")
 	void DestroyRoom();
 
+	// 방 인원이 바뀌었으니 목록용 광고값을 다시 올리라고 요청함
+	// Steam 은 EOS 와 달리 입장·퇴장에 빈 자리 수를 스스로 줄이지 않아 생성 시점 값에 멈춰 있음
+	// 연타는 한 번으로 합쳐지고, 호스트가 아니거나 방을 접는 중이면 무시함
+	void RequestRoomPlayerCountAdvertise();
+
 	// UI에 표시할 마지막 온라인 처리 상태 메시지를 반환
 	UFUNCTION(BlueprintPure, Category = "Crosswalk|Online")
 	FString GetLastStatus() const;
@@ -212,6 +218,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
 	float SessionOperationTimeout;
 
+	// 인원 변동이 연달아 올 때 광고 갱신을 한 번으로 합칠 대기 시간(초)
+	// 퇴장 통보 시점엔 PlayerState 가 아직 PlayerArray 에 남아 있어 즉시 세면 하나 더 잡힘
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crosswalk|Session")
+	float RoomPlayerCountAdvertiseDelay;
+
 private:
 	// 기본 OnlineSubsystem(Steam) 인스턴스의 Identity/Session 인터페이스를 가져옴
 	void CacheOnlineInterfaces();
@@ -258,6 +269,26 @@ private:
 
 	// 현재 세션 검색 결과를 UI 표시용 방 목록 캐시에 반영
 	void RefreshCachedRoomList();
+
+	// 지금 이 인스턴스가 방의 호스트인지 확인
+	// FNamedOnlineSession::bHosting 은 Steam OSS 가 채우지 않아 항상 false 라 못 씀
+	bool IsHostingCurrentRoom() const;
+
+	// 지금 리슨 서버에 붙어 있는 플레이어 수를 셈
+	int32 GetHostedPlayerCount() const;
+
+	// 모아둔 인원 변동을 UpdateSession 한 번으로 내보냄
+	void FlushRoomPlayerCountAdvertise();
+
+	// 예약된 광고 갱신과 진행 상태를 모두 버림
+	void ResetRoomPlayerCountAdvertise();
+
+	// 실패한 광고를 제한된 횟수만 다시 시도하도록 예약함
+	void ScheduleRoomPlayerCountAdvertiseRetry();
+
+	// 전역 GameMode 이벤트로 들어오는 입장·퇴장을 받음
+	void HandleGameModePostLogin(AGameModeBase* GameMode, APlayerController* NewPlayer);
+	void HandleGameModeLogout(AGameModeBase* GameMode, AController* Exiting);
 
 	/**
 	 * 세션 작업을 시작한다. 이미 다른 작업이 진행 중이면 거절한다.
@@ -322,6 +353,12 @@ private:
 	// 세션 제거 완료 콜백을 해제
 	void ClearDestroySessionCompleteDelegate();
 
+	// 세션 설정 갱신 완료 콜백을 등록
+	void BindUpdateSessionCompleteDelegate();
+
+	// 세션 설정 갱신 완료 콜백을 해제
+	void ClearUpdateSessionCompleteDelegate();
+
 	// 온라인 로그인 요청이 끝났을 때 호출
 	void OnLoginComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error);
 
@@ -342,6 +379,9 @@ private:
 
 	// 세션 제거 요청이 끝났을 때 호출
 	void OnDestroySessionComplete(FName SessionName, bool bWasSuccessful);
+
+	// 세션 설정 갱신 요청이 끝났을 때 호출
+	void OnUpdateSessionComplete(FName SessionName, bool bWasSuccessful);
 
 	// 맵을 떠날 때 BGM 을 끊음
 	void HandleWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
@@ -467,6 +507,13 @@ private:
 	// 세션 제거 완료 델리게이트 해제를 위한 핸들
 	FDelegateHandle DestroySessionCompleteDelegateHandle;
 
+	// 세션 설정 갱신 완료 델리게이트 해제를 위한 핸들
+	FDelegateHandle UpdateSessionCompleteDelegateHandle;
+
+	// GameMode 입장·퇴장 전역 이벤트 해제에 사용하는 핸들
+	FDelegateHandle GameModePostLoginHandle;
+	FDelegateHandle GameModeLogoutHandle;
+
 	// 네트워크 실패 델리게이트 해제에 사용하는 핸들
 	FDelegateHandle NetworkFailureHandle;
 
@@ -488,6 +535,9 @@ private:
 	// 세션 제거 완료 콜백 객체
 	FOnDestroySessionCompleteDelegate DestroySessionCompleteDelegate;
 
+	// 세션 설정 갱신 완료 콜백 객체
+	FOnUpdateSessionCompleteDelegate UpdateSessionCompleteDelegate;
+
 	// 세션 생성 후 실패해서 되돌리는 중인지 구분
 	// 사용자용 DestroyRoom 과 구분해야 CreateRoom 의 in-flight 를 유지할 수 있음
 	bool bRollingBackFailedCreate = false;
@@ -505,6 +555,28 @@ private:
 	// 네트워크 실패 복구의 마감 타이머
 	// 이 경로는 BeginSessionOperation 을 타지 않아 세션 작업 타이머가 돌지 않음
 	FTimerHandle NetworkFailureRecoveryTimeoutHandle;
+
+	// 인원 변동을 모아 두는 타이머
+	FTimerHandle RoomPlayerCountAdvertiseHandle;
+
+	// 실패한 광고를 다시 올리는 타이머
+	FTimerHandle RoomPlayerCountAdvertiseRetryHandle;
+
+	// 같은 인원값으로 연속 실패한 횟수
+	int32 RoomPlayerCountAdvertiseRetryCount = 0;
+
+	// UpdateSession 응답을 기다리는 중인지 구분
+	// 완료 델리게이트로만 내린다 - 로컬 타이머로 내리면 이전 요청의 응답이 다음 요청을
+	// 끝낸 것으로 오인됨. 엔진이 요청별이 아니라 SessionName 으로만 완료를 방송하기 때문
+	bool bRoomPlayerCountAdvertiseInFlight = false;
+
+	// 갱신 중에 인원이 또 바뀌어 한 번 더 올려야 하는지 구분
+	bool bRoomPlayerCountAdvertiseDirty = false;
+
+	// 마지막으로 광고에 올린 빈 자리 수 - 아직 없으면 INDEX_NONE
+	// 세션 객체의 NumOpenPublicConnections 로 대신하면 안 됨 - Steam 이 로비 멤버 변경마다
+	// 그 필드만 덮어써서(FillMembersFromLobbyData) 광고된 값과 어긋난 채로 같아 보임
+	int32 LastAdvertisedOpenConnections = INDEX_NONE;
 
 public:
 	// 로그인 상태가 바뀌었을 때 UI에 결과를 전달
