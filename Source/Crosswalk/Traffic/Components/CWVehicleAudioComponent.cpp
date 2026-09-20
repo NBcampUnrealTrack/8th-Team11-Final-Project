@@ -91,7 +91,7 @@ void UCWVehicleAudioComponent::SpawnHorn()
 	float HornPitch = 1.f;
 	if (bEnableDoppler)
 	{
-		ComputeDopplerPitch(HornPitch);
+		ComputeDopplerPitch(DopplerIntensity, HornPitch);
 	}
 
 	UGameplayStatics::SpawnSoundAttached(
@@ -178,7 +178,7 @@ void UCWVehicleAudioComponent::BeginPlay()
 		return;
 	}
 
-	StartEngineLoop();
+	StartLoopSounds();
 }
 
 void UCWVehicleAudioComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -189,7 +189,14 @@ void UCWVehicleAudioComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		EngineAudio->Stop();
 	}
 
+	// 사이렌은 루프라 여기서 세우지 않으면 끝날 계기가 없다.
+	if (IsValid(SirenAudio))
+	{
+		SirenAudio->Stop();
+	}
+
 	EngineAudio = nullptr;
+	SirenAudio = nullptr;
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -216,15 +223,34 @@ void UCWVehicleAudioComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	}
 }
 
-void UCWVehicleAudioComponent::StartEngineLoop()
+void UCWVehicleAudioComponent::StartLoopSounds()
 {
-	if (!EngineLoopSound)
+	EngineAudio = SpawnAttachedLoop(EngineLoopSound);
+	SirenAudio = SpawnAttachedLoop(SirenSound);
+}
+
+UAudioComponent* UCWVehicleAudioComponent::SpawnAttachedLoop(USoundBase* Sound) const
+{
+	if (!Sound)
 	{
-		return;
+		return nullptr;
 	}
 
-	EngineAudio = UGameplayStatics::SpawnSoundAttached(
-		EngineLoopSound,
+	/**
+	 * 페이드는 걸지 않는다. 루프 사운드의 뚝 소리는 코드가 아니라 애셋 설정 문제였다
+	 * (2026-09-20 실기):
+	 *
+	 *   - 루프 한 바퀴마다 나는 소리 → SoundWave 의 압축을 PCM 으로. Bink 의 프라이밍
+	 *     샘플이 샘플 단위로 맞춰 둔 루프 지점을 어긋나게 하고 있었다
+	 *   - 멀어질 때 끊기는 소리 → 감쇠의 최대 어테뉴에이션이 -45dB 이라 그 음량에서
+	 *     그냥 잘리고 있었다. -60 으로 내리면 잘려도 안 들린다
+	 *
+	 * UAudioComponent::FadeIn 은 여기서 쓰면 안 된다. PlayInternal 을 불러 재생을 처음부터
+	 * 다시 시작하는데, SpawnSoundAttached 가 이미 틀어 놓은 뒤라 없던 뚝 소리를 만든다.
+	 * 램프가 정말 필요해지면 AdjustVolume 을 쓴다.
+	 */
+	return UGameplayStatics::SpawnSoundAttached(
+		Sound,
 		GetOwner()->GetRootComponent(),
 		NAME_None,
 		FVector::ZeroVector,
@@ -249,7 +275,7 @@ void UCWVehicleAudioComponent::UpdateEngineParameters()
 	EngineAudio->SetFloatParameter(EngineSpeedParameterName, Speed01);
 }
 
-bool UCWVehicleAudioComponent::ComputeDopplerPitch(float& OutPitch) const
+bool UCWVehicleAudioComponent::ComputeDopplerPitch(float Intensity, float& OutPitch) const
 {
 	FVector ListenerLocation = FVector::ZeroVector;
 	FVector ListenerVelocity = FVector::ZeroVector;
@@ -280,7 +306,7 @@ bool UCWVehicleAudioComponent::ComputeDopplerPitch(float& OutPitch) const
 
 	// 세기는 "1 로부터 얼마나 떨어졌나"에 곱한다. 그래야 정지 중인 차의 피치가 1 로 남는다.
 	OutPitch = FMath::Clamp(
-		((RawPitch - 1.f) * DopplerIntensity) + 1.f,
+		((RawPitch - 1.f) * Intensity) + 1.f,
 		DopplerPitchMin,
 		DopplerPitchMax
 	);
@@ -291,20 +317,26 @@ bool UCWVehicleAudioComponent::ComputeDopplerPitch(float& OutPitch) const
 void UCWVehicleAudioComponent::UpdateDoppler(float DeltaTime)
 {
 	// 경적은 여기서 제외한다. 시작 피치를 SpawnHorn 이 정하고 끝까지 그대로 간다.
-	if (!IsValid(EngineAudio))
+	ApplyLoopDoppler(EngineAudio, DopplerIntensity, CurrentDopplerPitch, DeltaTime);
+	ApplyLoopDoppler(SirenAudio, SirenDopplerIntensity, CurrentSirenDopplerPitch, DeltaTime);
+}
+
+void UCWVehicleAudioComponent::ApplyLoopDoppler(UAudioComponent* LoopAudio, float Intensity, float& InOutPitch, float DeltaTime)
+{
+	if (!IsValid(LoopAudio))
 	{
 		return;
 	}
 
-	float TargetPitch = CurrentDopplerPitch;
-	if (!ComputeDopplerPitch(TargetPitch))
+	float TargetPitch = InOutPitch;
+	if (!ComputeDopplerPitch(Intensity, TargetPitch))
 	{
 		return;
 	}
 
-	CurrentDopplerPitch = FMath::FInterpTo(CurrentDopplerPitch, TargetPitch, DeltaTime, DopplerSmoothingSpeed);
+	InOutPitch = FMath::FInterpTo(InOutPitch, TargetPitch, DeltaTime, DopplerSmoothingSpeed);
 
-	EngineAudio->SetPitchMultiplier(CurrentDopplerPitch);
+	LoopAudio->SetPitchMultiplier(InOutPitch);
 }
 
 bool UCWVehicleAudioComponent::ResolveListener(FVector& OutLocation, FVector& OutVelocity) const
