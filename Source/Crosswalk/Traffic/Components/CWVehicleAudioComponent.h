@@ -64,8 +64,15 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	/** 엔진 루프를 붙여 재생한다. 애셋이 없으면 아무 일도 하지 않는다. */
-	void StartEngineLoop();
+	/** 지속음(엔진 루프·사이렌)을 붙여 재생한다. 애셋이 없는 쪽은 건너뛴다. */
+	void StartLoopSounds();
+
+	/**
+	 * 소리 하나를 차량 루트에 붙여 재생하고 그 컴포넌트를 돌려준다. 애셋이 없으면 nullptr.
+	 *
+	 * 반복 재생 여부는 애셋이 정한다. 여기서는 붙이기만 한다.
+	 */
+	UAudioComponent* SpawnAttachedLoop(USoundBase* Sound) const;
 
 	/** 속도를 0~1 로 정규화해 엔진음 애셋에 넘긴다. 애셋이 파라미터를 안 쓰면 무시된다. */
 	void UpdateEngineParameters();
@@ -77,12 +84,24 @@ private:
 	 * 음속 33000cm/s 에 기본 주행 속도 750cm/s 면 피치 변화가 2.3% 뿐이라
 	 * (반음이 5.9%) 세기를 1 로 두면 사실상 안 들린다. DopplerIntensity 가 그 몫이다.
 	 *
+	 * 세기를 인자로 받는 이유는 지속음마다 알맞은 값이 다르기 때문이다. 엔진 루프는
+	 * 들리게 만들려고 부풀린 값을 쓰지만, 사이렌은 기본파가 이미 왕복하는 소리라
+	 * 같은 값을 걸면 그 왕복 패턴까지 늘었다 줄었다 한다.
+	 *
 	 * @return 리스너를 못 찾았거나 분모가 0 이면 false. 이때 OutPitch 는 건드리지 않는다.
 	 */
-	bool ComputeDopplerPitch(float& OutPitch) const;
+	bool ComputeDopplerPitch(float Intensity, float& OutPitch) const;
 
 	/**
-	 * 피치 배수를 보간해 **엔진 루프에만** 적용한다.
+	 * 지속음 하나에 도플러 피치를 보간해 적용한다.
+	 *
+	 * 피치 상태를 인자로 받는 이유는 지속음마다 세기가 달라 보간 상태도 따로여야 하기
+	 * 때문이다. 하나를 공유하면 세기가 큰 쪽이 작은 쪽을 끌고 다닌다.
+	 */
+	void ApplyLoopDoppler(UAudioComponent* LoopAudio, float Intensity, float& InOutPitch, float DeltaTime);
+
+	/**
+	 * 피치 배수를 보간해 **지속음에만** 적용한다. 지금은 엔진 루프와 사이렌 둘이다.
 	 *
 	 * 경적에는 걸지 않는다. 경적은 1.6 초짜리 원샷이라 재생 도중 피치가 움직이면
 	 * 도플러가 아니라 테이프 늘어지는 소리로 들린다. 실측(2026-09-16)으로 재생 내내
@@ -133,10 +152,32 @@ private:
 	TObjectPtr<USoundBase> HornSound;
 
 	/**
-	 * 두 소리에 함께 쓰는 감쇠. 비워 두면 애셋 자신의 설정을 따른다.
+	 * 사이렌. 비워 두면 아무 일도 일어나지 않는다 - 구급차만 채우면 된다.
+	 *
+	 * 엔진 루프와 따로 둔 이유는 둘이 동시에 존재할 수 있기 때문이다. 엔진음이 들어오면
+	 * 구급차는 엔진과 사이렌을 같이 내야 한다. 한 칸을 돌려쓰면 그때 하나를 포기해야 한다.
+	 *
+	 * 여기 꽂는 애셋은 **반복 재생이 켜져 있어야 한다.** 원샷을 꽂으면 한 번 울고 만다.
+	 * 그리고 경적과 같은 동시성 애셋을 물리면 안 된다 - 루프는 끝나지 않아서 경적 자리를
+	 * 영구히 점유한다. 사이렌 전용 동시성을 따로 만들어 Cue 에 물린다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USoundBase> SirenSound;
+
+	/**
+	 * 세 소리(엔진 루프·경적·사이렌)에 함께 쓰는 감쇠. 비워 두면 애셋 자신의 설정을 따른다.
 	 *
 	 * 차가 3D 로 들리려면 감쇠가 반드시 있어야 한다. 없으면 맵 반대편 차도 같은 크기로
 	 * 들려서, 경적을 아무리 아껴 울려도 시끄럽다는 인상이 그대로 남는다.
+	 *
+	 * **최대 어테뉴에이션(dB)은 -60 이하로 둘 것.** -45 였을 때 사이렌이 감쇠 경계를
+	 * 넘는 순간 그 음량에서 그냥 잘려 뚝 소리가 났다(2026-09-20 실기). 경적은 원샷이라
+	 * 재생 중에 경계를 넘을 일이 드물어 드러나지 않았을 뿐, 같은 구멍이었다.
+	 *
+	 * 사이렌까지 같은 곡선을 쓰는 것은 아직 검증 안 됐다. 사이렌은 경적보다 멀리서부터
+	 * 들려야 자연스러운 소리라, 지금 곡선이 짧게 느껴지면 사이렌용 감쇠를 따로 두는 것이
+	 * 다음 수순이다. 다만 그 곡선은 접근 경고가 들리는 거리(2.5초 앞 = 구급차 기준 36.9m)를
+	 * 같이 정하므로, 경적과 나눠야 건드릴 수 있다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USoundAttenuation> SharedAttenuation;
@@ -192,6 +233,19 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Doppler", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float DopplerIntensity = 4.f;
 
+	/**
+	 * 사이렌에 쓰는 도플러 세기. 엔진 루프와 따로 둔다.
+	 *
+	 * 기본 1 은 물리적으로 정확한 값이다. 엔진 루프에서 4 를 쓰는 근거("1 로 두면 안 들린다")가
+	 * 사이렌에는 적용되지 않는데, 사이렌은 기본파가 800~1500Hz 를 0.31 초 주기로 왕복하는
+	 * 소리라 피치를 부풀리면 그 왕복 패턴 자체가 늘었다 줄었다 하기 때문이다. 도플러가
+	 * 아니라 테이프가 헐거운 소리로 들린다. 2026-09-16 에 경적에서 같은 실패를 한 적이 있다.
+	 *
+	 * 올리고 싶으면 귀로 확인하며 조금씩 올린다. (애셋 실측, 인게임 청취는 미검증)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Doppler", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float SirenDopplerIntensity = 1.f;
+
 	/** 피치 하한. 패링으로 튕겨 나간 차처럼 속도가 튀어도 소리가 무너지지 않게 한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Doppler", meta = (AllowPrivateAccess = "true", ClampMin = "0.1"))
 	float DopplerPitchMin = 0.7f;
@@ -217,6 +271,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> EngineAudio;
 
+	/** 재생 중인 사이렌. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> SirenAudio;
+
 	// 경적 컴포넌트는 붙잡아 두지 않는다. 피치는 시작 시점에 한 번 정하고 끝까지 고정이라
 	// (SpawnHorn) 재생 중에 다시 만질 일이 없고, 원샷이라 끝나면 알아서 사라진다.
 
@@ -226,6 +284,9 @@ private:
 	/** 이 차가 로컬 플레이어에게 이미 경고했는지. 한 번 서면 다시 내려가지 않는다. */
 	bool bWarnedLocalPlayer = false;
 
-	/** 현재 적용 중인 피치 배수. 보간의 시작점이다. */
+	/** 엔진 루프에 현재 적용 중인 피치 배수. 보간의 시작점이다. */
 	float CurrentDopplerPitch = 1.f;
+
+	/** 사이렌에 현재 적용 중인 피치 배수. 세기가 달라 엔진 루프와 따로 보간한다. */
+	float CurrentSirenDopplerPitch = 1.f;
 };
