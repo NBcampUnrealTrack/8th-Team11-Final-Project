@@ -198,18 +198,19 @@ void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWP
 	const FVector Launch = LaunchDirection.GetSafeNormal2D();
 
 	/**
-	 * 조준 = 발사 기준이 되는 방향(ResolveLaunchDirection 의 1순위). 이 값과 Launch 의 차가
-	 * 곧 데드존이 밀어낸 양이다. 둘은 데드존이 걸리지 않는 한 같아야 한다.
+	 * 조준 = 발사 기준이 되는 방향(ResolveLaunchDirection 의 1순위, 차량 → 커서 지점).
+	 * 이 값과 Launch 의 차가 곧 데드존이 밀어낸 양이다. 둘은 데드존이 걸리지 않는 한 같아야 한다.
 	 */
-	const FVector AimDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	const FVector AimDirection = (CursorLocation - VehicleLocation).GetSafeNormal2D();
 
 	/**
-	 * 옛 발사 기준(차량 → 커서 지점). 판정에서는 빠졌지만 계속 찍는다.
+	 * 2순위 기준(플레이어 → 커서 방향). 1순위가 살아 있는 판에서도 계속 찍는다.
 	 *
-	 * 조준과 이 값의 차가 **기준을 바꾸지 않았으면 어긋났을 양**이다. 09-18 에 뒤집은 근거가
-	 * 그 숫자였고(성공 6건에서 3~56도), 되돌리자는 말이 나오면 다시 이 칸을 보면 된다.
+	 * 조준과 이 값의 차가 **기준이 달랐으면 어긋났을 양**이다. 09-18 에 방향 기준으로
+	 * 뒤집은 근거가 그 숫자였고(성공 6건에서 3~56도), 09-21 에 목적지 기준으로 되돌리면서
+	 * 두 칸의 역할만 서로 바뀌었다.
 	 */
-	const FVector ToCursorFromVehicle = (CursorLocation - VehicleLocation).GetSafeNormal2D();
+	const FVector ToCursorFromVehicle = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 
 	/**
 	 * 꺾인 쪽. 언리얼은 X 앞·Y 오른쪽·Z 위라 외적의 Z 가 양수면 두 번째 벡터가 오른쪽에 있다.
@@ -236,7 +237,7 @@ void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWP
 		FVector::Dist2D(CursorLocation, AttemptLocation),
 		ParryAttemptContext.bHasCursorTarget ? TEXT("") : TEXT(" / 커서 트레이스 빗나감(플레이어 위치로 대체)"));
 
-	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s: 진행 %.0f도 -> 발사 %.0f도 (%s으로 %.0f도 꺾임) / 조준 %.0f도, 데드존이 %.0f도 밀어냄 / 옛 차량 기준이면 %.0f도 (%.0f도 차이)"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s: 진행 %.0f도 -> 발사 %.0f도 (%s으로 %.0f도 꺾임) / 조준 %.0f도, 데드존이 %.0f도 밀어냄 / 플레이어 기준이면 %.0f도 (%.0f도 차이)"),
 		*Vehicle.GetName(),
 		Incoming.Rotation().Yaw,
 		Launch.Rotation().Yaw,
