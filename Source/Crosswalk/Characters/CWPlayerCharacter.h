@@ -832,6 +832,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hit|GetUp", meta = (ClampMin = "0.0"))
 	float GetUpUnlockLeadTime = 0.25f;
 
+	/** 조작이 돌아온 뒤 차량에 다시 치이지 않는 시간(초). 0이면 기상 후 무적을 사용하지 않는다. */
+	UPROPERTY(EditAnywhere, Category = "Hit|GetUp", meta = (ClampMin = "0.0", Units = "s"))
+	float GetUpInvincibleDuration = 0.5f;
+
 	/**
 	 * 기상 몬타주 재생 속도. 1 보다 크면 빨리 일어난다. 앞뒤 애니의 길이와 템포가 달라
 	 * 각각 따로 둔다. 재생할 몬타주를 고를 때 짝지은 값이 함께 선택된다.
@@ -1120,6 +1124,9 @@ private:
 	float LastPelvisSyncWorldTime = -1.f;
 
 	FTimerHandle GetUpTimerHandle;
+
+	// 서버의 월드 시각 기준 무적 종료 시점. 이동 잠금과 분리하여 무적 중에도 조작할 수 있다.
+	double GetUpInvincibleUntil = 0.0;
 
 	FTimerHandle RagdollPoseBlendTimerHandle;
 
