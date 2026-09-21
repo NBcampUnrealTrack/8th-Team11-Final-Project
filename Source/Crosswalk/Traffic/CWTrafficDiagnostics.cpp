@@ -183,7 +183,7 @@ void CWTrafficDiagnostics::LogSpawnRelevancy(const ACWBaseVehicle& Vehicle)
 }
 
 void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext,
-	const FVector& IncomingDirection, const FVector& LaunchDirection, bool bAccepted)
+	const FVector& IncomingDirection, const FVector& BaseDirection, const FVector& LaunchDirection, bool bAccepted)
 {
 	if (!IsParryAimLoggingEnabled())
 	{
@@ -198,19 +198,35 @@ void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWP
 	const FVector Launch = LaunchDirection.GetSafeNormal2D();
 
 	/**
-	 * 조준 = 발사 기준이 되는 방향(ResolveLaunchDirection 의 1순위, 차량 → 커서 지점).
-	 * 이 값과 Launch 의 차가 곧 데드존이 밀어낸 양이다. 둘은 데드존이 걸리지 않는 한 같아야 한다.
+	 * 실제로 쓰인 기준. ResolveLaunchDirection 이 폴백 사슬을 거친 뒤, 데드존에 넣기 전 값이다.
+	 * 이 값과 Launch 의 차가 곧 데드존이 밀어낸 양이고, 둘은 데드존이 걸리지 않는 한 같다.
+	 *
+	 * 넘겨받는다. 여기서 1순위를 다시 계산하면 순위가 갈린 판에서 "쓰이지도 않은 기준" 과
+	 * Launch 를 비교하게 되고, 그 차이가 데드존이 민 양으로 찍혀 나온다.
 	 */
-	const FVector AimDirection = (CursorLocation - VehicleLocation).GetSafeNormal2D();
+	const FVector Base = BaseDirection.GetSafeNormal2D();
+
+	// 두 후보를 나란히 찍는다. 어느 쪽이 Base 와 일치하는지가 곧 "어느 순위가 먹었나" 다.
+	const FVector CursorBasis = (CursorLocation - VehicleLocation).GetSafeNormal2D();
+	const FVector PlayerBasis = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
 
 	/**
-	 * 2순위 기준(플레이어 → 커서 방향). 1순위가 살아 있는 판에서도 계속 찍는다.
+	 * 둘 중 Base 에 더 가까운 쪽 이름. 폴백 순위를 로그에 이름으로 남기려는 것이다.
 	 *
-	 * 조준과 이 값의 차가 **기준이 달랐으면 어긋났을 양**이다. 09-18 에 방향 기준으로
-	 * 뒤집은 근거가 그 숫자였고(성공 6건에서 3~56도), 09-21 에 목적지 기준으로 되돌리면서
-	 * 두 칸의 역할만 서로 바뀌었다.
+	 * 실제로 쓰인 값과 비교하므로, 나중에 순위가 하나 더 늘어도 "둘 다 아님" 으로 드러난다.
+	 * 3순위(온 길 되돌림)로 간 판이 그렇게 찍힌다.
 	 */
-	const FVector ToCursorFromVehicle = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	const float CursorGapDegrees = CWTrafficMath::AngleBetweenDegrees(Base, CursorBasis);
+	const float PlayerGapDegrees = CWTrafficMath::AngleBetweenDegrees(Base, PlayerBasis);
+	const TCHAR* BasisName = TEXT("되돌림");
+	if (CursorGapDegrees <= 1.f)
+	{
+		BasisName = TEXT("커서");
+	}
+	else if (PlayerGapDegrees <= 1.f)
+	{
+		BasisName = TEXT("플레이어");
+	}
 
 	/**
 	 * 꺾인 쪽. 언리얼은 X 앞·Y 오른쪽·Z 위라 외적의 Z 가 양수면 두 번째 벡터가 오른쪽에 있다.
@@ -237,17 +253,19 @@ void CWTrafficDiagnostics::LogParryAim(const ACWBaseVehicle& Vehicle, const FCWP
 		FVector::Dist2D(CursorLocation, AttemptLocation),
 		ParryAttemptContext.bHasCursorTarget ? TEXT("") : TEXT(" / 커서 트레이스 빗나감(플레이어 위치로 대체)"));
 
-	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s: 진행 %.0f도 -> 발사 %.0f도 (%s으로 %.0f도 꺾임) / 조준 %.0f도, 데드존이 %.0f도 밀어냄 / 플레이어 기준이면 %.0f도 (%.0f도 차이)"),
+	UE_LOG(LogCWTraffic, Log, TEXT("[Parry][조준] %s: 진행 %.0f도 -> 발사 %.0f도 (%s으로 %.0f도 꺾임) / 기준 %s %.0f도, 데드존이 %.0f도 밀어냄 / 후보 커서 %.0f도 플레이어 %.0f도 (%.0f도 차이)"),
 		*Vehicle.GetName(),
 		Incoming.Rotation().Yaw,
 		Launch.Rotation().Yaw,
 		TurnSide,
 		TurnDegrees,
-		AimDirection.Rotation().Yaw,
-		AimDirection.IsNearlyZero() ? 0.f : CWTrafficMath::AngleBetweenDegrees(AimDirection, Launch),
-		ToCursorFromVehicle.Rotation().Yaw,
-		(AimDirection.IsNearlyZero() || ToCursorFromVehicle.IsNearlyZero())
-			? 0.f : CWTrafficMath::AngleBetweenDegrees(AimDirection, ToCursorFromVehicle));
+		BasisName,
+		Base.Rotation().Yaw,
+		Base.IsNearlyZero() ? 0.f : CWTrafficMath::AngleBetweenDegrees(Base, Launch),
+		CursorBasis.Rotation().Yaw,
+		PlayerBasis.Rotation().Yaw,
+		(CursorBasis.IsNearlyZero() || PlayerBasis.IsNearlyZero())
+			? 0.f : CWTrafficMath::AngleBetweenDegrees(CursorBasis, PlayerBasis));
 }
 
 void FCWTrafficDiagnostics::LogVehicleCensus(const UWorld* World, TConstArrayView<TWeakObjectPtr<ACWBaseVehicle>> Vehicles)

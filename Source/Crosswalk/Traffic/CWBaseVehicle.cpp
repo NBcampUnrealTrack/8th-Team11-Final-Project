@@ -446,7 +446,9 @@ bool ACWBaseVehicle::ReceiveParryAttempt(const FCWParryAttemptContext& ParryAtte
 {
 	// 권한 검사는 TryParry 가 한다. 상태를 실제로 바꾸는 곳이 거기라 검사도 거기 한 번이면 된다.
 	// 튕겨나갈 방향은 차량에서 커서 지점을 향하는 방향이다.
-	const FVector LaunchDirection = ResolveLaunchDirection(ParryAttemptContext);
+	// 데드존 전 방향도 받아 둔다. 진단 로그가 "순위가 갈린 것" 과 "데드존이 민 것" 을 가르는 데 쓴다.
+	FVector BaseDirection = FVector::ZeroVector;
+	const FVector LaunchDirection = ResolveLaunchDirection(ParryAttemptContext, BaseDirection);
 
 	// 진단 로그가 볼 진행 방향은 여기서 잡아 둔다. TryParry 가 차를 돌린 뒤에 읽으면
 	// 발사 방향과 같은 값이 되어 "얼마나 꺾였나" 가 항상 0 으로 나온다.
@@ -457,12 +459,12 @@ bool ACWBaseVehicle::ReceiveParryAttempt(const FCWParryAttemptContext& ParryAtte
 		ParryAttemptContext.ViewRewindSeconds);
 
 	// 판정 뒤에 찍는다. 성패를 같이 남겨야 "좌표가 틀린 줄" 과 "윈도우에서 떨어진 줄" 이 갈린다.
-	CWTrafficDiagnostics::LogParryAim(*this, ParryAttemptContext, IncomingDirection, LaunchDirection, bAccepted);
+	CWTrafficDiagnostics::LogParryAim(*this, ParryAttemptContext, IncomingDirection, BaseDirection, LaunchDirection, bAccepted);
 
 	return bAccepted;
 }
 
-FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
+FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext, FVector& OutBaseDirection) const
 {
 	/**
 	 * 1순위: 커서 지점을 **목적지**로 삼는다. 차량이 거기를 향해 날아간다.
@@ -507,6 +509,9 @@ FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& Par
 	{
 		BaseDirection = -GetActorForwardVector().GetSafeNormal2D();
 	}
+
+	// 어느 순위가 뽑혔는지는 여기서만 알 수 있다. 진단 로그가 읽을 수 있게 내보낸다.
+	OutBaseDirection = BaseDirection;
 
 	// 어느 순위에서 나왔든 데드존은 한 번만 거친다. 폴백 경로라고 자기 쪽으로 쏠 수 있게
 	// 두면 판정 결과가 커서 트레이스의 성패에 따라 갈린다.

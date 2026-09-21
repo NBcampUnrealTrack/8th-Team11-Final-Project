@@ -422,8 +422,12 @@ private:
 	 * 어느 것이 뽑히든 마지막에 ApplySelfLaunchDeadZone 을 한 번 거쳐 시전자 쪽이 걸러진다.
 	 * TryParry 는 이 결과를 그대로 믿는다 - 폴백이 두 파일에 나뉘어 있으면 어느 쪽이 실제로
 	 * 방향을 정했는지 로그만 보고는 알 수 없다.
+	 *
+	 * @param OutBaseDirection 데드존을 거치기 전, 폴백 사슬이 고른 방향. 진단 로그 전용이다.
+	 *                         반환값에서는 역산할 수 없다 - 데드존이 민 결과와 애초에 다른
+	 *                         순위가 뽑힌 결과가 똑같이 "기준과 다른 발사각" 으로 보인다.
 	 */
-	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const;
+	FVector ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext, FVector& OutBaseDirection) const;
 
 	/**
 	 * 이 커서 좌표를 발사 목적지로 믿어도 되는지. (MinCursorLaunchDistance)
