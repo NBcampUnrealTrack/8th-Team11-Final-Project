@@ -73,6 +73,10 @@ private:
 	void RefreshGroups(const TArray<FCWInteractionPrompt>& Prompts);
 	FVector GetTargetAnchor(AActor* Target) const;
 
+	// 대상이 내 손에 들려 있는지
+	// 팀원이 든 도구는 충전(R)의 정당한 대상이라 내 폰에 붙은 것만 봄
+	bool IsHeldByOwner(const AActor* Target) const;
+
 	UPROPERTY(Transient)
 	TArray<FCWInteractionPromptGroup> Groups;
 

@@ -206,6 +206,12 @@ FVector UCWInteractionPromptWidget::GetTargetAnchor(AActor* Target) const
 	return Anchor;
 }
 
+bool UCWInteractionPromptWidget::IsHeldByOwner(const AActor* Target) const
+{
+	const AActor* PromptOwner = PromptSource.IsValid() ? PromptSource->GetOwner() : nullptr;
+	return Target != nullptr && PromptOwner != nullptr && Target->IsAttachedTo(PromptOwner);
+}
+
 void UCWInteractionPromptWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
@@ -232,7 +238,10 @@ void UCWInteractionPromptWidget::NativeTick(const FGeometry& MyGeometry, float I
 
 		AActor* Target = Group.Target.Get();
 		FVector2D Position = FVector2D::ZeroVector;
-		bool bVisible = bCanDisplay && IsValid(Target) && !Target->IsHidden();
+		// 집는 순간 도구가 손에 붙지만 프롬프트 갱신은 0.05초 주기이고
+		// 클라이언트는 서버 왕복까지 기다려 그 사이 낡은 안내판이 손으로 끌려감
+		// 문구 갱신을 기다리지 않도록 매 프레임 붙음 여부로 끊음
+		bool bVisible = bCanDisplay && IsValid(Target) && !Target->IsHidden() && !IsHeldByOwner(Target);
 		if (bVisible)
 		{
 			bVisible = UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, GetTargetAnchor(Target), Position, true);
