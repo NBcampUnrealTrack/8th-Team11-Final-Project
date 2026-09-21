@@ -61,7 +61,8 @@ namespace
 	/**
 	 * 패링 조준 로그. 위의 셋과 같은 이유로 기본값이 켜짐이다.
 	 *
-	 * 쿨타임이 1초라 사람당 초당 한 줄이 상한이고, 그마저 패링을 시도할 때만 나간다.
+	 * 쿨타임이 0.5초라 사람당 초당 두 줄이 상한이고, 그마저 패링을 시도할 때만 나간다.
+	 * 헛친 것도 쿨타임을 먹으므로(bRefundCooldownOnMiss 를 껐다) 실패 줄이 몰려 찍히지 않는다.
 	 * 켜 두는 비용이 흐르지 않는다.
 	 */
 	TAutoConsoleVariable<bool> CVarTrafficLogParryAim(
