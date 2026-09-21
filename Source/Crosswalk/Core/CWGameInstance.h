@@ -48,6 +48,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 	Failure
 );
 
+// 방 코드·제목·호스트 이름을 함께 비운 순간
+// 비울 때만 발행함 - 생성·참가 성공은 기존 세션 작업 완료가 맡음
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWOnRoomIdentityClearedSignature);
+
 // 수동 검색으로 갱신된 방 목록을 UI에 전달
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCWOnRoomListUpdatedSignature,
@@ -403,6 +407,10 @@ private:
 	// 네트워크 실패에서 메뉴로 복구. 사용자용 DestroyRoom 을 타지 않음
 	void RecoverToMenuAfterNetworkFailure();
 
+	// 방 코드·제목·호스트 이름을 함께 비우고 구독자에게 알림
+	// 완료 통지가 없거나 실패로 끝나는 경로에서도 화면이 낡은 방 정보를 쓰지 않게 함
+	void ClearRoomIdentity();
+
 	// 복구를 시작하기 전에 진행 중이던 사용자 세션 작업을 조용히 끊음
 	void CancelCurrentSessionOperationForRecovery();
 
@@ -586,6 +594,10 @@ public:
 	// 방 생성, 검색, 참가, 파기 작업이 끝났을 때 UI에 결과를 전달
 	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Session")
 	FCWOnSessionOperationCompletedSignature OnSessionOperationCompleted;
+
+	// 방 정보를 비웠을 때 UI에 알림
+	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Session")
+	FCWOnRoomIdentityClearedSignature OnRoomIdentityCleared;
 
 	// 수동 방 목록 검색이 끝났을 때 UI에 최신 방 목록을 전달
 	UPROPERTY(BlueprintAssignable, Category = "Crosswalk|Session")

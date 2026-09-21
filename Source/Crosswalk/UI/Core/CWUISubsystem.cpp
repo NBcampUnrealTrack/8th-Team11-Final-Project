@@ -420,6 +420,10 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 		? InputModeBeforeCurrentPage
 		: CurrentInputMode;
 
+	// 닫을 때 돌아갈 페이지도 같은 이유로 여기서 잡음
+	// CloseCurrentPage 가 CurrentPage 를 None 으로 만들어 뒤에서 읽으면 항상 비어 있음
+	const ECWUIPage PreviousPage = CurrentPage;
+
 	// 새 화면 생성 성공 후 기존 화면 정리
 	CloseCurrentPage();
 
@@ -455,6 +459,11 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 
 	// 현재 화면과 페이지 상태 갱신
 	CurrentScreen = NewScreen;
+
+	// 이 페이지를 닫을 때 돌아갈 곳
+	// 세션 정보로 화면을 고르면 그 값이 어긋나는 순간 갈 곳을 잃음
+	PageBeforeCurrentPage = PreviousPage;
+
 	CurrentPage = TargetPage;
 
 	// 이 페이지를 닫을 때 복원할 기준 상태 저장
@@ -677,6 +686,9 @@ bool UCWUISubsystem::EnsureUIRoot()
 	PauseMenu.Reset();
 	bPauseMenuBlocked = false;
 	CurrentPage = ECWUIPage::None;
+
+	// 이전 월드의 복귀 지점이 새 월드에서 조회되지 않게 함
+	PageBeforeCurrentPage = ECWUIPage::None;
 
 	// 참가 시 숨겼던 이전 Root의 상태가 새 월드의 HUD 복원값으로 남지 않도록 함
 	bIsHUDVisible = true;
@@ -989,6 +1001,14 @@ void UCWUISubsystem::ClearHUDWidgets()
 	{
 		RootWidget->ClearHUDWidgets();
 	}
+}
+
+bool UCWUISubsystem::CanShowInteractionPrompts() const
+{
+	const UCWPauseMenuWidget* Menu = PauseMenu.Get();
+	return bIsHUDVisible && !bIsTransitioning && !bPauseMenuBlocked && !CurrentPopup.IsValid()
+		&& CurrentPage == ECWUIPage::None && CurrentInputMode != ECWUIInputMode::UIOnly
+		&& !(IsValid(Menu) && Menu->IsMenuOpen());
 }
 
 void UCWUISubsystem::SetHUDVisible(bool bVisible)

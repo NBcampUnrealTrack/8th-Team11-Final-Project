@@ -1324,9 +1324,7 @@ void UCWGameInstance::HandleSessionOperationTimeout()
 	{
 		bRollingBackFailedCreate = false;
 
-		CurrentRoomCode.Empty();
-		CurrentRoomName.Empty();
-		CurrentHostName.Empty();
+		ClearRoomIdentity();
 		PendingRoomCode.Empty();
 	}
 
@@ -1589,9 +1587,7 @@ void UCWGameInstance::OnCreateSessionComplete(FName SessionName, bool bWasSucces
 
 	if (!bWasSuccessful)
 	{
-		CurrentRoomCode.Empty();
-		CurrentRoomName.Empty();
-		CurrentHostName.Empty();
+		ClearRoomIdentity();
 		SetStatus(TEXT("CreateSession failed"));
 		CompleteSessionOperation(ECWSessionOperation::CreateRoom, false, ECWSessionFailure::Unknown);
 		return;
@@ -1709,9 +1705,7 @@ void UCWGameInstance::FinishRollbackAsCreateFailure()
 
 	bRollingBackFailedCreate = false;
 
-	CurrentRoomCode.Empty();
-	CurrentRoomName.Empty();
-	CurrentHostName.Empty();
+	ClearRoomIdentity();
 	PendingRoomCode.Empty();
 
 	// DestroyRoom 완료가 아니라 CreateRoom 실패로 끝낸다 - 사용자가 요청한 작업은 생성이었음
@@ -1786,6 +1780,17 @@ void UCWGameInstance::CancelCurrentSessionOperationForRecovery()
 	OnSessionBusyChanged.Broadcast(IsSessionOperationInFlight());
 }
 
+void UCWGameInstance::ClearRoomIdentity()
+{
+	CurrentRoomCode.Empty();
+	CurrentRoomName.Empty();
+	CurrentHostName.Empty();
+
+	// 세션 완료를 못 쏘거나 실패로 끝나는 경로가 있어 여기서 따로 알림
+	// ViewModel 은 성공한 생성·참가·파기에서만 방 정보를 다시 읽음
+	OnRoomIdentityCleared.Broadcast();
+}
+
 void UCWGameInstance::FinishNetworkFailureRecovery()
 {
 	// 동기 콜백과 실패 반환이 겹치면 두 번 불릴 수 있음
@@ -1802,9 +1807,7 @@ void UCWGameInstance::FinishNetworkFailureRecovery()
 	bRecoveringFromNetworkFailure = false;
 	bReturnToRoomList = bReturnToRoomList || !CurrentRoomCode.IsEmpty();
 
-	CurrentRoomCode.Empty();
-	CurrentRoomName.Empty();
-	CurrentHostName.Empty();
+	ClearRoomIdentity();
 	PendingRoomCode.Empty();
 	PendingJoinRoomCode.Empty();
 	CachedRoomList.Reset();
@@ -2182,9 +2185,7 @@ void UCWGameInstance::OnDestroySessionComplete(FName SessionName, bool bWasSucce
 
 	// 유령 세션 정리와 실제 방 나가기를 구분함
 	bReturnToRoomList = bReturnToRoomList || !CurrentRoomCode.IsEmpty();
-	CurrentRoomCode.Empty();
-	CurrentRoomName.Empty();
-	CurrentHostName.Empty();
+	ClearRoomIdentity();
 	PendingRoomCode.Empty();
 	PendingJoinRoomCode.Empty();
 	CachedRoomList.Reset();
