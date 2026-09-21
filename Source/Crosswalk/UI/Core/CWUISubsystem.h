@@ -56,6 +56,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "CW|UI")
 	ECWUIPage GetCurrentPage() const;
 
+	// 현재 페이지를 열기 직전에 떠 있던 페이지를 반환
+	// 겹쳐 연 화면을 닫을 때 어디로 돌아갈지 고르는 값임
+	UFUNCTION(BlueprintPure, Category = "CW|UI")
+	ECWUIPage GetPageBeforeCurrent() const { return PageBeforeCurrentPage; }
+
+	// 돌아갈 페이지가 있는지 여부
+	// 인게임은 페이지 없이 시작해 None 이 곧 게임 화면으로의 복귀를 뜻함
+	UFUNCTION(BlueprintPure, Category = "CW|UI")
+	bool HasPageToReturn() const { return PageBeforeCurrentPage != ECWUIPage::None; }
+
 private:
 	// 현재 페이지를 닫고 참조를 정리
 	UFUNCTION(BlueprintCallable, Category = "CW|UI")
@@ -234,6 +244,10 @@ private:
 
 	// 현재 페이지를 열기 전 사용하던 입력 모드
 	ECWUIInputMode InputModeBeforeCurrentPage = ECWUIInputMode::UIOnly;
+
+	// 현재 페이지를 열기 직전에 떠 있던 페이지
+	// 닫은 뒤에도 값을 남겨 둠 - 복귀 지점을 고르는 쪽이 ClosePage 뒤에 읽기 때문임
+	ECWUIPage PageBeforeCurrentPage = ECWUIPage::None;
 
 	// 팝업을 닫은 뒤 복원할 입력 모드
 	ECWUIInputMode PopupReturnInputMode = ECWUIInputMode::UIOnly;

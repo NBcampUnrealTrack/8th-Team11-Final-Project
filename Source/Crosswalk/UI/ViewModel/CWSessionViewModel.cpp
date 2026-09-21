@@ -33,6 +33,13 @@ void UCWSessionViewModel::Initialize(UCWGameInstance* InGameInstance)
 		&UCWSessionViewModel::HandleSessionOperationCompleted
 	);
 
+	// 방 정보 초기화 이벤트 구독
+	// 완료가 실패로 끝나거나 아예 방송되지 않는 경로에서도 방 코드를 맞춤
+	InGameInstance->OnRoomIdentityCleared.AddDynamic(
+		this,
+		&UCWSessionViewModel::HandleRoomIdentityCleared
+	);
+
 	// 공개 방 목록 변경 이벤트 구독
 	InGameInstance->OnRoomListUpdated.AddDynamic(
 		this,
@@ -69,6 +76,11 @@ void UCWSessionViewModel::Uninitialize()
 		GameInstance->OnSessionOperationCompleted.RemoveDynamic(
 			this,
 			&UCWSessionViewModel::HandleSessionOperationCompleted
+		);
+
+		GameInstance->OnRoomIdentityCleared.RemoveDynamic(
+			this,
+			&UCWSessionViewModel::HandleRoomIdentityCleared
 		);
 
 		GameInstance->OnRoomListUpdated.RemoveDynamic(
@@ -464,6 +476,21 @@ void UCWSessionViewModel::HandleSessionOperationCompleted(
 		Operation,
 		bSuccess
 	);
+}
+
+void UCWSessionViewModel::HandleRoomIdentityCleared()
+{
+	UCWGameInstance* GameInstance = BoundGameInstance.Get();
+
+	if (!IsValid(GameInstance))
+	{
+		return;
+	}
+
+	// 세 값은 항상 같이 움직이므로 한 번에 맞춤
+	SetCurrentRoomCode(GameInstance->GetCurrentRoomCode());
+	SetCurrentRoomName(GameInstance->GetCurrentRoomName());
+	SetCurrentHostName(GameInstance->GetCurrentHostName());
 }
 
 void UCWSessionViewModel::HandleRoomListUpdated(

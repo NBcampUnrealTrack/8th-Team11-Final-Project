@@ -217,6 +217,10 @@ private:
 		ECWSessionFailure Failure
 	);
 
+	// 완료 통지 없이 방 정보가 비워진 경우를 받아 다시 읽음
+	UFUNCTION()
+	void HandleRoomIdentityCleared();
+
 	// 공개 방 검색이 끝나면 방 목록을 갱신
 	UFUNCTION()
 	void HandleRoomListUpdated(
