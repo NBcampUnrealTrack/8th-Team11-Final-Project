@@ -92,10 +92,10 @@ namespace CWTrafficDiagnostics
 	 *   커서가 엉뚱한 곳에 찍혔다   커서-차량 거리가 화면에서 본 것보다 크다.
 	 *                              커서 트레이스(ACWPlayerCharacter::ResolveCursorWorldLocation)가
 	 *                              차체를 못 막고 뒤쪽 노면을 찍으면 여기서 드러난다
-	 *   방향은 맞는데 밀렸다        "데드존이 N도 밀어냄" 이 0 이 아니다. 조준과 발사는
+	 *   방향은 맞는데 밀렸다        "데드존이 N도 밀어냄" 이 0 이 아니다. 기준과 발사는
 	 *                              데드존이 걸리지 않는 한 같은 값이어야 한다
-	 *   기준을 잘못 골랐다          "옛 차량 기준이면 N도 차이" 가 크다. 2026-09-18 에
-	 *                              발사 기준을 플레이어 쪽으로 뒤집은 근거가 이 칸이다
+	 *   기준이 갈렸다              "기준" 칸이 커서가 아니라 플레이어로 찍힌다. 커서가 차체에
+	 *                              가까워 1순위가 빠진 판이다 (MinCursorLaunchDistance)
 	 *
 	 * 꺾인 각을 같이 찍는 이유는, 셋 다 아닌 네 번째 갈래("차가 오던 길 그대로 간다")를
 	 * 숫자로 가르기 위해서다. 그 값이 커서와 무관하게 늘 같은 각·같은 쪽이면 발사 방향이
@@ -105,9 +105,13 @@ namespace CWTrafficDiagnostics
 	 *
 	 * @param IncomingDirection  방향을 틀기 전의 진행 방향. TryParry 가 차를 돌린 뒤에 읽으면
 	 *                           발사 방향과 같은 값이 되어 꺾인 각이 항상 0 으로 나온다.
+	 * @param BaseDirection      데드존을 거치기 **전**의 방향. 이 값이 없으면 "순위가 갈려서 생긴
+	 *                           차이" 와 "데드존이 민 양" 을 로그만 보고 가를 수 없다.
+	 *                           2026-09-21 에 실제로 둘을 헷갈렸다 - 순위가 갈린 4건이
+	 *                           "데드존이 38~171도 밀어냄" 으로 찍혀 나왔는데 데드존은 0도였다.
 	 */
 	void LogParryAim(const ACWBaseVehicle& Vehicle, const FCWParryAttemptContext& ParryAttemptContext,
-		const FVector& IncomingDirection, const FVector& LaunchDirection, bool bAccepted);
+		const FVector& IncomingDirection, const FVector& BaseDirection, const FVector& LaunchDirection, bool bAccepted);
 }
 
 /**

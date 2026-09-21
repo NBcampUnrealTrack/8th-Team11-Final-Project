@@ -445,8 +445,10 @@ float ACWBaseVehicle::GetDistanceToPoint(const FVector& Point) const
 bool ACWBaseVehicle::ReceiveParryAttempt(const FCWParryAttemptContext& ParryAttemptContext)
 {
 	// 권한 검사는 TryParry 가 한다. 상태를 실제로 바꾸는 곳이 거기라 검사도 거기 한 번이면 된다.
-	// 튕겨나갈 방향은 플레이어가 가리킨 방향이다.
-	const FVector LaunchDirection = ResolveLaunchDirection(ParryAttemptContext);
+	// 튕겨나갈 방향은 차량에서 커서 지점을 향하는 방향이다.
+	// 데드존 전 방향도 받아 둔다. 진단 로그가 "순위가 갈린 것" 과 "데드존이 민 것" 을 가르는 데 쓴다.
+	FVector BaseDirection = FVector::ZeroVector;
+	const FVector LaunchDirection = ResolveLaunchDirection(ParryAttemptContext, BaseDirection);
 
 	// 진단 로그가 볼 진행 방향은 여기서 잡아 둔다. TryParry 가 차를 돌린 뒤에 읽으면
 	// 발사 방향과 같은 값이 되어 "얼마나 꺾였나" 가 항상 0 으로 나온다.
@@ -457,46 +459,83 @@ bool ACWBaseVehicle::ReceiveParryAttempt(const FCWParryAttemptContext& ParryAtte
 		ParryAttemptContext.ViewRewindSeconds);
 
 	// 판정 뒤에 찍는다. 성패를 같이 남겨야 "좌표가 틀린 줄" 과 "윈도우에서 떨어진 줄" 이 갈린다.
-	CWTrafficDiagnostics::LogParryAim(*this, ParryAttemptContext, IncomingDirection, LaunchDirection, bAccepted);
+	CWTrafficDiagnostics::LogParryAim(*this, ParryAttemptContext, IncomingDirection, BaseDirection, LaunchDirection, bAccepted);
 
 	return bAccepted;
 }
 
-FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext) const
+FVector ACWBaseVehicle::ResolveLaunchDirection(const FCWParryAttemptContext& ParryAttemptContext, FVector& OutBaseDirection) const
 {
 	/**
-	 * 1순위: 플레이어가 가리킨 **방향**을 그대로 쓴다. 커서 지점을 목적지로 삼지 않는다.
+	 * 1순위: 커서 지점을 **목적지**로 삼는다. 차량이 거기를 향해 날아간다.
 	 *
-	 * 2026-09-18 실측으로 뒤집었다. 그 전에는 (커서 지점 - 차량 위치)를 썼는데, 커서를
-	 * 차 위에 올리면 그 값이 사실상 (플레이어 - 차량)이 되어 **차가 오던 길 그대로 다시 왔다.**
-	 * 로그로 잡은 한 건이 이렇다 - 플레이어가 -70도를 가리켰는데 차는 +53도로 날아갔고
-	 * (123도 차이), 진행 90도에서 37도만 꺾여 시전자 쪽으로 계속 왔다.
+	 * 기준이 플레이어가 아니라 차량이라 "찍은 자리로 간다" 가 그대로 성립한다. 플레이어
+	 * 기준 방향으로 날리면 차량은 커서와 평행하게만 가고, 플레이어-차량 거리(윈도우 0.3초
+	 * 기준 최대 2m)만큼 옆으로 빗나간 곳에 떨어진다. 그 어긋남을 없애려고 되돌린 것이다.
 	 *
-	 * 원인은 커서 좌표 자체에 있다. 차량 CollisionBox 가 블로킹이 아니라 커서 트레이스
-	 * (ACWPlayerCharacter::ResolveCursorWorldLocation)가 차체를 뚫고 뒤쪽 노면을 찍는다.
-	 * 밀려나는 방향은 카메라가 정하므로 월드에서 고정이고(실측 두 건 모두 52도), 차량의
-	 * 진행 벡터에 그 고정 오프셋이 더해지는 꼴이라 **오는 방향이 반대인 두 차가 자기 기준
-	 * 좌우 반대로 꺾인다.** 커서를 차에서 4m 이상 떨어뜨린 3건은 정상이었다.
-	 *
-	 * 대가는 "커서 지점에 정확히 안 간다" 다. 차량은 커서 쪽이 아니라 커서 방향과
-	 * 평행하게 날아가므로 플레이어-차량 거리(윈도우 0.3초 기준 최대 2m)만큼 어긋난다.
-	 * 커서를 목적지로 읽을 때만 문제인 어긋남이라 방향 기준에서는 대가로 치지 않는다.
-	 *
-	 * 이 값은 캐릭터가 바라보는 방향이기도 하다(ACWPlayerCharacter::UpdateCursorFacing).
-	 * 그래서 커서 방향 = 캐릭터가 보는 방향 = 차가 날아가는 방향 셋이 같아진다.
-	 * 커서 트레이스가 빗나간 경우에는 캐릭터 정면이 들어 있다(BuildParryAttemptContext).
+	 * 대신 커서 좌표를 못 믿는 구간이 있어서 MinCursorLaunchDistance 로 잘라낸다. 아래 참고.
 	 */
-	FVector BaseDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	FVector BaseDirection = FVector::ZeroVector;
+	if (ParryAttemptContext.bHasCursorTarget && IsCursorUsableAsLaunchTarget(ParryAttemptContext.CursorWorldLocation))
+	{
+		BaseDirection = (ParryAttemptContext.CursorWorldLocation - GetActorLocation()).GetSafeNormal2D();
+	}
 
-	// 2순위: 방향이 비어서 왔다. 온 길로 되돌려 보낸다. 시전자 쪽이 아니라 데드존에 걸릴 일도 없다.
+	/**
+	 * 2순위: 플레이어가 가리킨 **방향**. 커서가 차체에 너무 붙어 목적지로 못 쓸 때 여기로 온다.
+	 *
+	 * 이 경로가 있는 이유는 커서 좌표 자체가 틀리기 때문이다. 차량 CollisionBox 가 블로킹이
+	 * 아니라 커서 트레이스(ACWPlayerCharacter::ResolveCursorWorldLocation)가 차체를 뚫고
+	 * 뒤쪽 노면을 찍는다. 밀려나는 방향은 카메라가 정하므로 월드에서 고정이고(2026-09-18
+	 * 실측 두 건 모두 52도), 차량의 진행 벡터에 그 고정 오프셋이 더해지는 꼴이라 **오는
+	 * 방향이 반대인 두 차가 자기 기준 좌우 반대로 꺾인다.**
+	 *
+	 * 그대로 두면 커서가 차에 가까울수록 (커서 - 차량)이 짧아져 방향이 폭발적으로 튄다.
+	 * 실측 한 건이 커서-차량 86cm 에서 플레이어가 -70도를 가리켰는데 차는 +53도로 날아갔다
+	 * (123도 차이). 진행 90도에서 37도만 꺾여 시전자 쪽으로 계속 왔다.
+	 *
+	 * 그 구간에서는 커서를 목적지가 아니라 방향으로만 읽는다. 같은 오프셋이어도 플레이어-커서
+	 * 거리로 나뉘므로 각도 오차가 훨씬 작다. 차를 조준한 사람의 뜻은 "저기로 보내겠다" 가
+	 * 아니라 "이 차를 친다" 에 가까우므로, 그때 캐릭터가 보는 쪽으로 나가는 편이 화면과 맞는다.
+	 * 이 값은 캐릭터가 바라보는 방향이기도 하다(ACWPlayerCharacter::UpdateCursorFacing).
+	 */
+	if (BaseDirection.IsNearlyZero())
+	{
+		BaseDirection = ParryAttemptContext.AttemptDirection.GetSafeNormal2D();
+	}
+
+	// 3순위: 방향까지 비어서 왔다. 온 길로 되돌려 보낸다. 시전자 쪽이 아니라 데드존에 걸릴 일도 없다.
 	if (BaseDirection.IsNearlyZero())
 	{
 		BaseDirection = -GetActorForwardVector().GetSafeNormal2D();
 	}
 
+	// 어느 순위가 뽑혔는지는 여기서만 알 수 있다. 진단 로그가 읽을 수 있게 내보낸다.
+	OutBaseDirection = BaseDirection;
+
 	// 어느 순위에서 나왔든 데드존은 한 번만 거친다. 폴백 경로라고 자기 쪽으로 쏠 수 있게
 	// 두면 판정 결과가 커서 트레이스의 성패에 따라 갈린다.
 	return ApplySelfLaunchDeadZone(BaseDirection, ParryAttemptContext);
+}
+
+bool ACWBaseVehicle::IsCursorUsableAsLaunchTarget(const FVector& CursorWorldLocation) const
+{
+	if (MinCursorLaunchDistance <= 0.f)
+	{
+		return true;
+	}
+
+	/**
+	 * 차체 표면 기준으로 잰다. 원점 기준이면 차 길이가 그대로 거리에 섞여서, 같은 자리에
+	 * 찍은 커서가 버스에서는 통과하고 승용차에서는 걸린다. 재는 것은 "커서가 차 위에
+	 * 올라가 있나" 이므로 차체 크기는 빠져야 한다. (GetDistanceToPoint)
+	 *
+	 * 수평으로만 잰다. 커서는 노면에 찍히고 차량 원점은 차체 중심이라 Z 차가 항상 남는데,
+	 * 그 값이 섞이면 차가 클수록 판정이 후해진다.
+	 */
+	const FVector FlattenedCursor(CursorWorldLocation.X, CursorWorldLocation.Y, GetActorLocation().Z);
+
+	return GetDistanceToPoint(FlattenedCursor) >= MinCursorLaunchDistance;
 }
 
 FVector ACWBaseVehicle::ApplySelfLaunchDeadZone(const FVector& LaunchDirection, const FCWParryAttemptContext& ParryAttemptContext) const
@@ -642,7 +681,7 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 		return false;
 	}
 
-	// 패링당한 차량은 멈추는 게 아니라 커서 방향으로 튕겨나간다.
+	// 패링당한 차량은 멈추는 게 아니라 커서 지점 쪽으로 튕겨나간다.
 	// 빈 방향은 여기까지 오지 않는다. 폴백은 전부 ResolveLaunchDirection 이 끝냈다.
 	const FVector LaunchForward = LaunchDirection.GetSafeNormal2D();
 	if (!ensureMsgf(!LaunchForward.IsNearlyZero(), TEXT("[Parry] %s: 발사 방향이 비어 있다. ResolveLaunchDirection 을 거치지 않은 호출이다."), *GetName()))

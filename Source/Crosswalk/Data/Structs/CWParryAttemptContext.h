@@ -22,33 +22,35 @@ public:
 	FVector AttemptLocation = FVector::ZeroVector;
 
 	/**
-	 * 플레이어 기준 커서 방향. **대상 선별(부채꼴 각도)과 차량이 날아갈 방향을 둘 다 이 값이 정한다.**
+	 * 플레이어 기준 커서 방향. **대상 선별(부채꼴 각도)이 이 값을 쓴다.**
 	 *
-	 * 하나가 둘을 겸하는 것은 의도다. 커서 방향 = 캐릭터가 보는 방향
-	 * (ACWPlayerCharacter::UpdateCursorFacing) = 차가 날아가는 방향, 셋이 같아야 화면과 맞는다.
-	 * 예전에는 발사만 CursorWorldLocation 을 차량 기준으로 다시 읽어서 셋이 갈렸다.
-	 * (ACWBaseVehicle::ResolveLaunchDirection 의 1순위 주석)
+	 * 발사 방향의 기준은 CursorWorldLocation 쪽이고, 이 값은 그것을 못 쓸 때의 2순위로만
+	 * 들어간다(ACWBaseVehicle::ResolveLaunchDirection). 선별과 발사가 다른 값을 보는 것은
+	 * 의도다 - 선별은 "플레이어가 그쪽을 보고 있나" 를 묻고 발사는 "차를 어디로 보내나" 를
+	 * 묻는데, 후자의 기준점은 플레이어가 아니라 차량이어야 찍은 자리에 떨어진다.
+	 *
+	 * 이 값은 캐릭터가 바라보는 방향이기도 하다(ACWPlayerCharacter::UpdateCursorFacing).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FVector AttemptDirection = FVector::ForwardVector;
 
 	/**
-	 * 플레이어가 찍은 커서의 월드 지점. **판정에는 쓰지 않는다 - 진단 로그 전용이다.**
+	 * 플레이어가 찍은 커서의 월드 지점. **차량이 날아갈 목적지다.**
 	 *
-	 * 이 지점을 목적지로 삼던 것이 발사 방향이 어긋난 원인이었다. 커서 트레이스가 차체를
-	 * 못 막고 뒤쪽 노면을 찍는 탓에, 화면에서 차 위에 올린 커서가 실제로는 1~2m 밀린 자리에
-	 * 찍힌다. 그 어긋남을 재는 것이 지금 이 값의 용도이고(CWTrafficDiagnostics::LogParryAim),
-	 * 커서 좌표를 고치기로 하면 그때 다시 판정에 쓸지 정하면 된다.
+	 * 차량이 (이 지점 - 차량 위치) 방향으로 날아가므로 찍은 자리에 그대로 떨어진다.
+	 * 단 커서 트레이스가 차체를 못 막고 뒤쪽 노면을 찍는 탓에, 화면에서 차 위에 올린 커서는
+	 * 실제로 1~2m 밀린 자리에 찍힌다. 그 구간은 차량 쪽에서 거리로 잘라내고 방향 기준으로
+	 * 넘긴다(ACWBaseVehicle::MinCursorLaunchDistance).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	FVector CursorWorldLocation = FVector::ZeroVector;
 
 	/**
-	 * CursorWorldLocation 이 실제로 찍힌 값인가. 이것도 진단 로그 전용이다.
+	 * CursorWorldLocation 이 실제로 찍힌 값인가.
 	 *
-	 * 커서 트레이스가 빗나가면 플레이어 위치가 그대로 돌아온다. 그때 AttemptDirection 에는
-	 * 캐릭터 정면이 들어가므로 판정은 갈리지 않지만, 로그에서 "가리킨 대로 갔다" 와
-	 * "트레이스가 빗나가 정면으로 갔다" 는 구분돼야 한다.
+	 * 커서 트레이스가 빗나가면 플레이어 위치가 그대로 돌아온다. 그 좌표를 목적지로 쓰면
+	 * 차가 플레이어를 향해 날아오므로, 발사 쪽에서 이 깃발을 보고 건너뛴다.
+	 * 그때 AttemptDirection 에는 캐릭터 정면이 들어가 있어 선별은 갈리지 않는다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	bool bHasCursorTarget = false;
