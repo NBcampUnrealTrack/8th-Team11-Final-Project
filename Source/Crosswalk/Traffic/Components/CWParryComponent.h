@@ -140,26 +140,41 @@ private:
 	FString GetInstigatorTag() const;
 
 private:
+	/**
+	 * 패링 입력 간격(초).
+	 *
+	 * **0.5 는 임시값이다.** 2026-09-21 기획자와 정했고, 환불을 끄는 것과 한 묶음이다 -
+	 * 헛친 것도 대가를 치르게 되므로 1초를 그대로 두면 실패 한 번의 벌이 너무 무거워진다.
+	 * 둘 중 하나만 보고 조절하면 안 된다.
+	 *
+	 * ⚠️ **BP_PlayerCharacter 의 ParryComponent 가 이 값을 덮고 있다.** 여기를 고쳐도
+	 * 그 BP 로 스폰되는 캐릭터에는 반영되지 않는다. 실제로 게임에 적용하려면 BP 쪽을
+	 * 같이 바꿔야 하고, 이 기본값은 새로 붙는 BP 가 다른 값을 갖지 않게 맞춰 두는 용도다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
-	float ParryCooldown = 1.f;
+	float ParryCooldown = 0.5f;
 
 	/**
 	 * 조건을 통과한 차량이 없어 판정이 실패했을 때 쿨타임을 되돌려줄지.
 	 *
-	 * 켜면 헛친 것은 공짜가 되고, 끄면 헛치는 것 자체가 1초의 대가를 치른다.
-	 * 어느 쪽이 맞는지는 게임 감각의 문제라 플레이로 정하면 된다.
+	 * 켜면 헛친 것은 공짜가 되고, 끄면 헛치는 것 자체가 ParryCooldown 만큼의 대가를 치른다.
 	 *
-	 * 기본값은 켬이다. 랙 보정을 넣었어도 상한(UCWTrafficSubsystem::ResolveViewRewindSeconds)을
-	 * 넘게 늦으면 여전히 실패하는데, 그건 그 사람의 실수가 아니라 회선 때문이라 대가를 물리기 어렵다.
+	 * **2026-09-21 기획자와 끄기로 정했다.** 환불이 켜져 있으면 쿨타임이 실패에는 사실상
+	 * 걸리지 않아서 연타로 긁는 것이 최적해가 된다. 09-21 로그에서 1.4초가 아니라
+	 * 5초 동안 0.2초 간격으로 22번이 찍혔다 - 쿨타임 1초가 무력화된 상태였다.
 	 *
-	 * 끄면 패링 키를 연타하는 것을 막는 효과가 있다. 켠 상태에서 그 문제가 보이면
-	 * 이 값을 끄기 전에 윈도우나 쿨타임 쪽을 먼저 보는 게 낫다.
+	 * 대가는 알고 받는다. 랙 보정을 넣었어도 상한
+	 * (UCWTrafficSubsystem::ResolveViewRewindSeconds)을 넘게 늦으면 여전히 실패하는데,
+	 * 그건 그 사람의 실수가 아니라 회선 때문이다. 회선이 나쁜 사람이 더 자주 벌을 받는
+	 * 구조라, 그게 실제로 보이면 이 값이 아니라 보정 상한을 먼저 봐야 한다.
 	 *
 	 * 서버 쿨타임에 걸린 요청은 이 값과 무관하게 절대 환불하지 않는다.
 	 * 되돌려주면 곧바로 다시 보내고 다시 걸리기를 반복한다.
+	 *
+	 * ⚠️ ParryCooldown 과 같이 BP_PlayerCharacter 가 덮고 있다. 위 주석 참고.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
-	bool bRefundCooldownOnMiss = true;
+	bool bRefundCooldownOnMiss = false;
 
 	/**
 	 * 패링이 닿는 거리(cm). 차체 표면 기준으로 잰다. 0 이면 거리 제한 없음.
