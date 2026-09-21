@@ -293,8 +293,8 @@ void ACWPlayerCharacter::ReceiveVehicleHit_Implementation(const FCWVehicleHitCon
 		return;
 	}
 
-	// 이미 쓰러져 있으면 컴포넌트가 알아서 무시한다. 넉백을 두 번 먹이지 않도록 여기서도 막는다.
-	if (HitReactionComponent->IsHitLocked())
+	// 쓰러져 있거나 기상 직후 무적이면 통 파손과 넉백까지 모두 건너뛴다.
+	if (HitReactionComponent->IsHitLocked() || GetWorld()->GetTimeSeconds() < GetUpInvincibleUntil)
 	{
 		return;
 	}
@@ -989,6 +989,13 @@ void ACWPlayerCharacter::HandleHitLockChanged(UCWVehicleHitReactionComponent* /*
 	if (!HasAuthority())
 	{
 		return;
+	}
+
+	// 정상 기상과 기상 대기 타임아웃 모두 잠금이 풀리는 순간부터 보호한다.
+	// 다른 처리에서 다시 피격 판정이 들어와도 먼저 무적이 적용되어 있어야 한다.
+	if (!bHitLocked)
+	{
+		GetUpInvincibleUntil = GetWorld()->GetTimeSeconds() + FMath::Max(GetUpInvincibleDuration, 0.f);
 	}
 
 	WorkerComponent->SetWorkBlocked(bHitLocked);
