@@ -132,6 +132,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
 	void SetHUDVisible(bool bVisible);
 
+	// 입력이 막힌 메뉴나 클리어 화면에서 실행 가능한 안내처럼 보이지 않도록 함
+	bool CanShowInteractionPrompts() const;
+
 #pragma endregion
 
 #pragma region Feedback

@@ -19,6 +19,7 @@
 #include "UObject/UObjectGlobals.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/TextBlock.h"
+#include "UI/Widget/CWInteractionPromptWidget.h"
 
 UCWUIBootstrapComponent::UCWUIBootstrapComponent()
 {
@@ -191,6 +192,24 @@ void UCWUIBootstrapComponent::BeginPlay()
 				Error,
 				TEXT("UIBootstrap: failed to add HUD Widget.")
 			);
+		}
+	}
+
+	// 프런트엔드에는 생성하지 않고 HUD 전용 월드의 로컬 플레이어에게만 붙임
+	if (InitialPage == ECWUIPage::None)
+	{
+		if (!InteractionPromptClass)
+		{
+			// 애셋을 옮기거나 바꿀 때 C++ 을 다시 빌드하지 않도록 BP 에서 지정함
+			UE_LOG(LogCWUI, Warning, TEXT("UIBootstrap: InteractionPromptClass is not set."));
+		}
+		else
+		{
+			UCWInteractionPromptWidget* Prompts = CreateWidget<UCWInteractionPromptWidget>(OwnerPC, InteractionPromptClass);
+			if (!IsValid(Prompts) || !UISubsystem->AddHUDWidget(Prompts))
+			{
+				UE_LOG(LogCWUI, Error, TEXT("UIBootstrap: failed to add interaction prompts."));
+			}
 		}
 	}
 

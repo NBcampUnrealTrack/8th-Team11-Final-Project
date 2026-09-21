@@ -11,6 +11,7 @@ class UCWUIRootWidget;
 class UCWUIScreenWidget;
 class UCWUIPageConfigDataAsset;
 class UUserWidget;
+class UCWInteractionPromptWidget;
 
 UCLASS(
 	ClassGroup = (CW),
@@ -65,6 +66,10 @@ protected:
 	// 현재 World에서 시작할 HUD 클래스 목록
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TArray<TSubclassOf<UUserWidget>> InitialHUDClasses;
+
+	// 기본 구현을 즉시 사용하고 문구나 배치는 UI 전용 파생 클래스에서 조절함
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
+	TSubclassOf<UCWInteractionPromptWidget> InteractionPromptClass;
 
 #pragma endregion
 };

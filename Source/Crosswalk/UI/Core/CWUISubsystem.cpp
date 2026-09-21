@@ -991,6 +991,14 @@ void UCWUISubsystem::ClearHUDWidgets()
 	}
 }
 
+bool UCWUISubsystem::CanShowInteractionPrompts() const
+{
+	const UCWPauseMenuWidget* Menu = PauseMenu.Get();
+	return bIsHUDVisible && !bIsTransitioning && !bPauseMenuBlocked && !CurrentPopup.IsValid()
+		&& CurrentPage == ECWUIPage::None && CurrentInputMode != ECWUIInputMode::UIOnly
+		&& !(IsValid(Menu) && Menu->IsMenuOpen());
+}
+
 void UCWUISubsystem::SetHUDVisible(bool bVisible)
 {
 	// 실제 HUD 레이어와 내부 추적 상태를 함께 변경
