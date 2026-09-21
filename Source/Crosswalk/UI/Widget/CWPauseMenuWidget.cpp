@@ -79,6 +79,11 @@ void UCWPauseMenuWidget::ConfirmLeaveRoom()
 		return;
 	}
 
+	// 확인창은 방송이 끝나면 스스로 닫으므로 세션 완료 경로에서 다시 닫지 않음
+	// 요청 앞에 두는 이유는 동기 완료 때문임
+	// 뒤에 두면 그 경로에서 DismissForClear 가 먼저 닫고 확인창이 또 닫아 중복이 됨
+	LeaveConfirmation.Reset();
+
 	// 동기 완료도 놓치지 않도록 요청 전에 구독하고 잠금을 설정함
 	SessionViewModel = ViewModel;
 	ViewModel->OnSessionOperationCompleted.AddUniqueDynamic(this, &UCWPauseMenuWidget::HandleSessionCompleted);
@@ -120,7 +125,9 @@ void UCWPauseMenuWidget::DismissForClear()
 	if (UCWUISubsystem* UI = GetUISubsystem(); IsValid(UI))
 	{
 		// 메뉴 위 확인창도 함께 닫아 클리어 화면을 가리지 않도록 함
-		if (LeaveConfirmation.IsValid())
+		// 취소로 닫힌 창은 오브젝트가 남아 WeakPtr 이 계속 유효함
+		// 아직 레이어에 붙어 있는지까지 봐야 이미 닫힌 창을 또 닫지 않음
+		if (LeaveConfirmation.IsValid() && LeaveConfirmation->GetParent() != nullptr)
 		{
 			UI->ClosePopup(LeaveConfirmation.Get());
 		}
