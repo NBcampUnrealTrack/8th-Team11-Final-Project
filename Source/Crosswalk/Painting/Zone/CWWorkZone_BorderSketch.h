@@ -6,6 +6,7 @@
 
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UStaticMeshComponent;
 class UNiagaraSystem;
 class USoundBase;
 
@@ -163,12 +164,6 @@ private:
 	/** 변 하나를 칸으로 쪼개 배열에 붙인다. 시작점과 끝점은 존 로컬 좌표다. */
 	void AppendSideCells(const FVector& Start, const FVector& End, bool bAlongX);
 
-	/** 이 지점에서 가장 가까운 칸. 칸이 없으면 INDEX_NONE. */
-	int32 FindNearestCell(const FVector& WorldLocation) const;
-
-	/** 고리를 한 바퀴 도는 인덱스. 음수와 칸 수를 넘는 값을 모두 받아준다. */
-	int32 WrapCellIndex(int32 CellIndex) const;
-
 	/** 칸 하나를 칠한다. 서버에서만 유효하다. @return 실제로 새로 칠했으면 true */
 	bool PaintCell(int32 CellIndex);
 
@@ -206,7 +201,7 @@ private:
 	void RefreshProgressFromCells();
 
 	/**
-	 * 칠해진 칸 위에 덮는 불투명 인스턴스를 현재 상태에 맞게 다시 만든다.
+	 * 칸마다 "칠해졌는가" 를 custom data [0] 에 넣는다.
 	 *
 	 * 기준은 PaintedCellFlags 가 아니라 RevealedCellFlags 다. 둘을 나눈 이유는
 	 * 순차 점등 때문이다. 게임플레이는 릴리즈한 프레임에 이미 끝나 있고, 화면만 뒤따라간다.
@@ -236,10 +231,25 @@ private:
 	/** 차징하는 본인에게만 들리는 소리. 남의 기계에서는 아무것도 하지 않는다. */
 	void PlayLocalChargeSound(USoundBase* Sound, const UCWWorkerComponent* Worker) const;
 
-	/** 칸 하나를 그릴 인스턴스 트랜스폼. ZOffset 만큼 띄운다. */
-	FTransform MakeCellTransform(const FCWBorderCell& Cell, float ZOffset) const;
+	/** 칸 하나를 그릴 인스턴스 트랜스폼. */
+	FTransform MakeCellTransform(const FCWBorderCell& Cell) const;
 
-	/** 가이드/도색 머티리얼 인스턴스를 만들고 색을 넣는다. */
+	/** 결과 띠 한 조각을 그릴 인스턴스 트랜스폼. 칸보다 넓고 조금 더 높다. */
+	FTransform MakeBandTransform(const FCWBorderCell& Cell) const;
+
+	/** 결과 띠를 이번에 칠해질 칸 목록에 맞춘다. 목록이 그대로면 아무것도 하지 않는다. */
+	void UpdatePreviewBand(const TArray<int32>& AffordableCells);
+
+	/**
+	 * 범위 사각형의 머티리얼 인스턴스를 만든다.
+	 *
+	 * 색과 불투명도는 여기서 넣지 않는다. 그건 머티리얼 인스턴스가 가진다.
+	 * C++ 이 색까지 덮어쓰면 아티스트가 MI 에서 바꾼 값이 런타임에 조용히 무시되어,
+	 * "머티리얼을 고쳤는데 게임에서는 안 변한다" 가 된다.
+	 *
+	 * C++ 은 상태(PreviewState)만 넘기고 그 상태를 무슨 색으로 그릴지는 머티리얼이 정한다.
+	 * 칸 쪽이 per-instance custom data 로 하는 것과 같은 분담이다.
+	 */
 	void SetupMaterials();
 
 	/** 차징 진행과 릴리즈 판정. Tick 에서 프리뷰보다 먼저 돈다. */
@@ -251,7 +261,7 @@ private:
 	 * 리플리케이트하지 않는다. 남의 조준을 보여주려면 그 값을 상시 올려보내야 하는데,
 	 * 얻는 것(칸 겹침 방지)보다 비용이 크다. (차징 붓 기획서 결정 D)
 	 */
-	void UpdatePreview(float DeltaSeconds);
+	void UpdatePreview();
 
 	/** 지금 이 기계의 플레이어에게 프리뷰를 보여줄 상황인가. */
 	bool ShouldShowPreview(const UCWWorkerComponent* Worker) const;
@@ -259,23 +269,42 @@ private:
 	/** 이 기계에서 조종 중인 플레이어의 작업 컴포넌트. 데디케이티드 서버에서는 nullptr 이다. */
 	UCWWorkerComponent* FindLocalWorker();
 
-	/** 프리뷰 인스턴스를 새 목록에 맞춘다. 목록이 그대로면 아무것도 하지 않는다. */
-	void ApplyPreviewCells(const TArray<int32>& ReadyCells, const TArray<int32>& BlockedCells);
-
-	void UpdatePreviewPulse(float DeltaSeconds);
-
-	/** 앵커부터 한 방향으로 Count 칸을 모은다. 고리를 넘어가도 같은 칸이 두 번 들어오지 않는다. */
-	void CollectCellRun(int32 AnchorCell, bool bForward, int32 Count, TArray<int32>& OutCells) const;
+	/**
+	 * 범위 사각형을 지금 상태에 맞게 그리거나 숨긴다.
+	 *
+	 * @param AffordableCount 이번에 실제로 칠해질 칸 수. 0 이면 빨강이다.
+	 * @param bPaintShort     페인트가 모자라 끊겼는가. 이때만 주황이다.
+	 * @param Level           차징 단계. 음수면 띄울 상황이 아니다.
+	 */
+	void UpdatePreviewBox(int32 AffordableCount, bool bPaintShort,
+		const FVector& Origin, const FVector& Forward, int32 Level);
 
 	/**
-	 * 이 작업자가 지금 어느 쪽으로 칠하게 되는가. 칸 인덱스가 늘어나는 쪽이면 true.
-	 *
-	 * 차징 시작과 상시 프리뷰가 같은 함수를 쓴다. 판정이 두 벌이면 "보이던 칸과 다른 칸이
-	 * 칠해지는" 일이 생기는데, 그게 바로 프리뷰가 없애려는 문제다.
+	 * 이 단계에서 붓이 덮는 범위의 크기. X = 앞으로 뻗는 길이, Y = 좌우 폭.
+	 * 단계가 0 이면(최소 홀드 전) 1단계 크기를 돌려준다. 어디를 겨누는지는 보여줘야 한다.
 	 */
-	bool ComputeChargeForward(const UCWWorkerComponent* Worker, int32 AnchorCell) const;
+	FVector2D GetChargeAreaSize(int32 Level) const;
 
-	void BeginCharge(UCWWorkerComponent* Worker, const FVector& WorldLocation);
+	/**
+	 * 범위 안에 중심이 들어온 칸을 모은다. 캐릭터에서 가까운 순으로 정렬된다.
+	 *
+	 * 정렬이 중요하다. 페인트가 모자라면 앞에서부터 끊기는데, 순서가 뒤죽박죽이면
+	 * 범위 한가운데가 비고 끝만 칠해지는 그림이 나온다.
+	 */
+	void CollectCellsInArea(const FVector& Origin, const FVector& Forward, const FVector2D& AreaSize,
+		TArray<int32>& OutCells) const;
+
+	/**
+	 * 지금 그릴 범위의 기준점과 방향. 차징 중이면 얼려둔 값, 아니면 지금 위치에서 계산한 값.
+	 *
+	 * 차징을 시작하며 얼릴 값을 정하는 자리에서는 쓰면 안 된다. ComputeWorkerFrame 을 쓴다.
+	 */
+	void GetChargeFrame(const UCWWorkerComponent* Worker, FVector& OutOrigin, FVector& OutForward) const;
+
+	/** 작업자의 지금 위치와 정면으로 범위의 기준을 계산한다. 얼려둔 값을 보지 않는다. */
+	void ComputeWorkerFrame(const UCWWorkerComponent* Worker, FVector& OutOrigin, FVector& OutForward) const;
+
+	void BeginCharge(UCWWorkerComponent* Worker);
 
 	/** 확정된 단계만큼 칸을 칠하고 차징을 끝낸다. */
 	void ReleaseCharge();
@@ -287,12 +316,6 @@ private:
 
 	/** 차징하던 사람이 아직 조건을 만족하는가. 하나라도 어긋나면 차징을 버린다. */
 	bool IsChargingWorkerEligible() const;
-
-	/** 차징을 시작할 칸. 이미 칠해진 칸이면 진행 방향으로 조금 훑어 빈 칸을 찾는다. */
-	int32 FindSnappedAnchor(int32 AnchorCell, bool bForward) const;
-
-	/** 칸이 인덱스가 늘어나는 쪽으로 향하는 방향(존 로컬). 진행 방향을 정하는 데 쓴다. */
-	FVector GetCellTangent(int32 CellIndex) const;
 
 	/** 칸 하나를 칠하는 데 드는 페인트. */
 	float GetCellPaintCost() const;
@@ -306,41 +329,55 @@ private:
 	void OnRep_PaintedCells();
 
 public:
-	// 바닥에 보이는 테두리. 둘레를 쪼갠 칸을 인스턴스로 배치해 만든다.
-	// 테두리 모양 메시 애셋이 따로 필요 없고, Area 크기를 바꾸면 자동으로 따라온다.
-	// 판정은 부모의 Area 박스가 한다.
+	/**
+	 * 바닥에 보이는 테두리. 둘레를 쪼갠 칸을 인스턴스로 배치해 만든다.
+	 *
+	 * 테두리 모양 메시 애셋이 따로 필요 없고, Area 크기를 바꾸면 자동으로 따라온다.
+	 * 판정은 부모의 Area 박스가 한다.
+	 *
+	 * 칸 하나가 인스턴스 하나이고, 인스턴스 인덱스가 곧 칸 인덱스다. 한 번 만든 뒤로는
+	 * 인스턴스를 더하거나 빼지 않고 **per-instance custom data 만 바꾼다.**
+	 *
+	 *   [0] 도색 정도   0 = 가이드(노랑), 1 = 도색 완료(흰색)
+	 *   [1] 프리뷰 상태 0 = 없음, 1 = 이번에 칠해질 칸, 2 = 칠해지지 않을 칸
+	 *
+	 * 예전에는 가이드 / 도색 / 프리뷰 / 프리뷰차단을 컴포넌트 4개로 나눠서 위에 겹쳐 덮었다.
+	 * 전용 머티리얼 없이도 보이게 하려던 것인데, 칠해진 칸 밑에 가이드 노란색이 그대로
+	 * 남아 있는 것이 문제였다. 한 칸은 한 번만 그려져야 한다.
+	 *
+	 * 그래서 이 컴포넌트의 머티리얼은 **PerInstanceCustomData 를 읽어야 한다.**
+	 * 안 읽는 머티리얼을 꽂으면 모든 칸이 한 가지 색으로 납작하게 보인다.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UInstancedStaticMeshComponent> BorderMeshes;
 
-	// 칠해진 칸만 그리는 덮개. 가이드 위에 살짝 띄워 불투명하게 덮는다.
-	//
-	// 인스턴스 하나를 두 모습 사이에서 오가게 하지 않고 컴포넌트를 둘로 나눈 이유:
-	// 인스턴스마다 색을 다르게 하려면 머티리얼이 per-instance custom data 를 읽어야 하는데,
-	// 그러면 전용 머티리얼 없이는 아무 변화도 보이지 않는다. 컴포넌트를 나누면 머티리얼
-	// 슬롯이 둘로 갈려서, 지금 붙어 있는 기본 머티리얼 그대로도 칸이 칠해지는 것이 보인다.
-	//
-	// 칸이 수십 개뿐이라 드로우콜 하나가 느는 비용은 문제가 되지 않는다.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
-	TObjectPtr<UInstancedStaticMeshComponent> PaintedMeshes;
-
-	// 지금 손을 떼면 칠해질 칸. 이 기계의 플레이어에게만 보인다.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
-	TObjectPtr<UInstancedStaticMeshComponent> PreviewMeshes;
-
 	/**
-	 * 지금 손을 떼도 칠해지지 않을 칸. 두 가지가 여기로 온다.
-	 *   1. 이미 칠해졌거나 남은 페인트로 살 수 없는 칸 (차징 붓 기획서 2.6)
-	 *   2. 아직 최소 홀드(0.3초)를 못 채워서 확정되지 않은 칸
+	 * 붓이 쓸고 갈 범위를 바닥에 그리는 사각형. 이 기계의 플레이어에게만 보인다.
 	 *
-	 * 둘을 한 색으로 묶은 이유: 플레이어가 알아야 하는 것은 "지금 놓으면 이 칸이 나가느냐"
-	 * 하나뿐이고, 둘 다 답이 아니오다. 2번은 0.3초를 넘기는 순간 확정색으로 바뀌므로
-	 * 그 전환 자체가 최소 홀드를 눈에 보이게 만든다. (결정 B 의 위험을 덜어주는 장치)
+	 * 칸에 표시를 켜는 대신 범위 자체를 도구로 보여준다. 차징할수록 앞으로 길어지고,
+	 * 이 안에 중심이 들어온 칸이 칠해진다.
 	 *
-	 * 색을 칸마다 다르게 하려면 머티리얼이 per-instance custom data 를 읽어야 해서
-	 * 전용 머티리얼 없이는 아무것도 안 보인다. 그래서 컴포넌트를 나눈다. (PaintedMeshes 와 같은 이유)
+	 * 사각형은 통째로 한 색이라 per-instance custom data 가 필요 없다. 그래서 칸과
+	 * 머티리얼을 공유하지 않는다. 색 파라미터 하나, 불투명도 파라미터 하나면 되는
+	 * 훨씬 단순한 머티리얼(M_BorderPreview)을 쓴다.
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
-	TObjectPtr<UInstancedStaticMeshComponent> PreviewBlockedMeshes;
+	TObjectPtr<UStaticMeshComponent> PreviewBox;
+
+	/**
+	 * 이번 붓질로 실제로 칠해질 구간을 테두리 위에 덧그리는 띠.
+	 *
+	 * 사각형(PreviewBox)은 "붓이 닿는 영역" 이고 이쪽은 "그래서 칠해지는 자리" 다.
+	 * 둘을 나눈 이유: 사각형만 그리면 그게 결과인 줄 알고 보게 되는데, 실제로는 그 안에서
+	 * 테두리와 겹치는 부분만 칠해진다. 각도를 잘못 잡으면 사각형은 넓은데 띠가 짧게 나오고,
+	 * 플레이어는 그 차이를 보고 스스로 자세를 고친다.
+	 *
+	 * 칠해질 칸마다 인스턴스를 하나씩 놓는다. 칸보다 넓게 그려서 서로 붙으면 한 줄로 보이고,
+	 * 중간에 이미 칠해진 칸이 있으면 그 자리만 비어서 그것도 그대로 정보가 된다.
+	 * 모서리도 칸을 따라가므로 저절로 꺾인다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
+	TObjectPtr<UInstancedStaticMeshComponent> PreviewBandMeshes;
 
 protected:
 	// 칸 하나의 목표 길이(cm). (차징 붓 기획서 2.1)
@@ -367,12 +404,25 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge")
 	TArray<float> ChargeThresholds = { 0.3f, 0.7f, 1.2f, 1.8f };
 
-	// 차징을 시작할 칸이 이미 칠해져 있을 때 진행 방향으로 훑어볼 칸 수. (차징 붓 기획서 2.3)
-	//
-	// 이게 없으면 절반쯤 칠한 뒤부터는 "딱 빈 칸 앞에 서기" 가 이 작업의 주된 일이 된다.
-	// 너무 키우면 엉뚱하게 먼 칸부터 칠해져서 어디가 칠해질지 예측이 안 된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0"))
-	int32 AnchorSnapCells = 2;
+	/**
+	 * 단계별 붓 범위의 크기(cm). X = 앞으로 뻗는 길이, Y = 좌우 폭. (차징 붓 기획서 2.3)
+	 *
+	 * 캐릭터 발밑에서 바라보는 방향으로 뻗는 직사각형이고, 차징할수록 커진다.
+	 * 이 안에 중심이 들어온 칸이 칠해진다.
+	 *
+	 * ChargeThresholds 와 개수가 같아야 한다. 모자라면 마지막 값을 계속 쓴다.
+	 *
+	 * 폭을 테두리 두께(BorderThickness, 기본 12)에 맞추지 않고 넉넉히 주는 이유는 관용이다.
+	 * 딱 맞추면 선 위에 정확히 서지 않은 순간 아무것도 안 칠해진다. 대충 맞춰 서도 걸리되,
+	 * 각도를 잘 잡을수록 더 많이 걸리는 정도가 적당하다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge")
+	TArray<FVector2D> ChargeAreaSizes = {
+		FVector2D(120.f, 110.f),
+		FVector2D(270.f, 120.f),
+		FVector2D(430.f, 130.f),
+		FVector2D(590.f, 140.f)
+	};
 
 	// 릴리즈 붓질 모션 동안 이동이 잠기는 시간(초). 패링은 이 동안에도 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0.0"))
@@ -394,30 +444,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "1.0"))
 	float BorderThickness = 12.f;
 
-	// 작업 전 상태. 반투명하게 띄워 "여기를 칠해야 한다" 를 알린다.
-	//
-	// 에디터 컬러 픽커의 Hex(sRGB) 기준 FFE200 에 해당하는 값이다.
-	// FLinearColor 는 선형 색이라 sRGB 값을 그대로 넣으면 실제보다 밝게 나온다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	FLinearColor GuideColor = FLinearColor(1.f, 0.76f, 0.f, 1.f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float GuideOpacity = 0.35f;
-
-	// 칠해진 칸의 모습. 불투명한 흰 선이 되어 실제로 도색된 것처럼 보인다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	FLinearColor PaintedColor = FLinearColor(0.95f, 0.95f, 0.92f, 1.f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PaintedOpacity = 1.f;
-
-	// 머티리얼에 넘길 파라미터 이름. 없는 이름을 넘겨도 그냥 무시된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	FName ColorParameterName = TEXT("Color");
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
-	FName OpacityParameterName = TEXT("Opacity");
-
 	/**
 	 * 테두리를 도로면보다 살짝 띄워 Z-파이팅을 막는다. (cm)
 	 *
@@ -428,36 +454,19 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
 	float GuideHeightOffset = 2.f;
 
-	// 도색 덮개를 가이드보다 얼마나 더 띄울 것인가. (cm)
-	// 둘이 같은 높이면 어느 쪽이 위로 나올지 정해지지 않아 칠한 칸이 지직거린다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "0.01"))
-	float PaintedHeightOffset = 0.5f;
-
-	// 이번에 칠해질 칸의 색. 도색 색과 같은 계열로 두면 "이렇게 칠해진다" 가 바로 읽힌다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview")
-	FLinearColor PreviewColor = FLinearColor(1.f, 1.f, 0.96f, 1.f);
-
-	// 칠해지지 않을 칸의 색. 회색이라 "여기는 안 나간다" 로 읽힌다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview")
-	FLinearColor PreviewBlockedColor = FLinearColor(0.18f, 0.18f, 0.18f, 1.f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PreviewOpacity = 0.8f;
-
-	// 프리뷰가 깜빡이는 속도(Hz). 0 이면 깜빡이지 않는다.
-	//
-	// 칠해질 칸만 깜빡인다. 칠해지지 않을 칸은 가만히 둬서 둘이 한눈에 갈리게 한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.0"))
-	float PreviewPulseSpeed = 3.f;
-
-	// 깜빡임의 깊이. 0 이면 안 깜빡이고, 1 이면 완전히 사라졌다 돌아온다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PreviewPulseDepth = 0.45f;
-
-	// 프리뷰를 도색 덮개보다 얼마나 더 띄울 것인가. (cm)
-	// 이미 칠해진 칸을 겨눴을 때 그 위에 회색이 얹혀야 "여기는 안 나간다" 가 보인다.
+	// 범위 사각형을 칸보다 얼마나 더 띄울 것인가. (cm)
+	// 칸 위에 얹혀야 "이 칸들이 범위 안에 있다" 로 읽힌다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.01"))
-	float PreviewHeightOffset = 0.5f;
+	float PreviewBoxHeightOffset = 1.f;
+
+	// 결과 띠를 테두리보다 몇 배 넓게 그릴 것인가.
+	// 칸과 똑같은 폭이면 테두리에 묻혀서 "칠해질 자리" 가 따로 안 보인다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "1.0"))
+	float PreviewBandWidthScale = 2.4f;
+
+	// 결과 띠를 범위 사각형보다 얼마나 더 띄울 것인가. (cm)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.01"))
+	float PreviewBandHeightOffset = 0.5f;
 
 	/**
 	 * 칸이 하나씩 켜지는 간격(초). (차징 붓 기획서 5.5 "싹—")
@@ -528,11 +537,11 @@ private:
 	// 누적 차징 시간. 체온 계수가 곱해진 시간이 쌓이므로 더울수록 천천히 찬다.
 	float ChargeSeconds = 0.f;
 
-	// 차징을 시작한 칸. 여기서부터 진행 방향으로 단계만큼 칠한다.
-	int32 ChargeAnchorCell = INDEX_NONE;
+	// 범위 사각형의 기준점(월드). 캐릭터 발밑이고, 여기서 앞으로 뻗는다.
+	FVector ChargeOriginLocation = FVector::ZeroVector;
 
-	// 칸 인덱스가 늘어나는 쪽으로 칠할 것인가. 차징 시작 시점에 정해지고 중간에 바뀌지 않는다.
-	bool bChargeForward = true;
+	// 범위가 뻗는 방향(월드, 수평). 차징 시작 시점에 얼어붙고 중간에 바뀌지 않는다.
+	FVector ChargeForwardDirection = FVector::ForwardVector;
 
 	// 마지막으로 알린 단계. 값이 바뀔 때만 OnChargeLevelChanged 를 부른다.
 	int32 LastReportedChargeLevel = 0;
@@ -546,25 +555,23 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> ChargingWorker;
 
+	// 범위 사각형의 머티리얼. 상태 숫자 하나만 넘긴다.
+	//
+	// 칸 쪽(BorderMeshes)에는 MID 가 없다. C++ 이 넣을 값이 없기 때문이다.
+	// 칸의 상태는 per-instance custom data 로 가고, 색은 머티리얼 인스턴스가 갖는다.
 	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> GuideMaterial;
+	TObjectPtr<UMaterialInstanceDynamic> PreviewBoxMaterial;
 
+	// 결과 띠의 머티리얼. 사각형과 같은 부모 머티리얼을 쓰되 인스턴스가 달라서
+	// 불투명도를 따로 줄 수 있다. 상태(PreviewState)는 둘 다 같은 값을 받는다.
 	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> PaintedMaterial;
+	TObjectPtr<UMaterialInstanceDynamic> PreviewBandMaterial;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> PreviewMaterial;
+	// 지금 띠에 떠 있는 칸들. 목록이 그대로면 인스턴스를 다시 만들지 않는다.
+	TArray<int32> PreviewBandCells;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> PreviewBlockedMaterial;
-
-	// 지금 프리뷰에 떠 있는 칸들. 목록이 그대로면 인스턴스를 다시 만들지 않는다.
-	TArray<int32> PreviewReadyCells;
-
-	TArray<int32> PreviewBlockedCells;
-
-	// 깜빡임 위상. 누적 시간이라 프레임레이트와 무관하게 같은 속도로 돈다.
-	float PreviewPulseTime = 0.f;
+	// 마지막으로 머티리얼에 넣은 상태. 값이 그대로면 다시 쓰지 않는다.
+	int32 LastPreviewState = -1;
 
 	// 이 기계의 플레이어. 매 프레임 컴포넌트를 찾지 않으려고 들고 있는다.
 	UPROPERTY(Transient)

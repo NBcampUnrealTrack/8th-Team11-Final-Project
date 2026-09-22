@@ -41,8 +41,13 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
 
-	// 기본 머티리얼은 불투명이라 반투명 연출이 나오지 않는다.
-	// 형태는 바로 보이게 해두고, 반투명 머티리얼은 컴포넌트 Details 의 Materials 슬롯에서 교체한다.
+	/**
+	 * 임시 머티리얼이다. 형태만 보이게 해두는 용도다.
+	 *
+	 * 이 존이 제대로 보이려면 PerInstanceCustomData 를 읽는 전용 머티리얼이 필요하다.
+	 * (BorderMeshes 주석 참고) 그게 붙기 전까지는 모든 칸이 한 색으로 납작하게 보인다.
+	 * 컴포넌트 Details 의 Materials 슬롯에서 교체한다.
+	 */
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(
 		TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
@@ -52,35 +57,43 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	// 반투명 가이드가 그림자를 드리우면 바닥에 얼룩처럼 보인다.
 	BorderMeshes->SetCastShadow(false);
 
-	PaintedMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PaintedMeshes"));
-	PaintedMeshes->SetupAttachment(Area);
-	PaintedMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PaintedMeshes->SetCastShadow(false);
+	// 칸마다 한 값을 넘긴다. [0] 도색 정도(0 = 가이드, 1 = 도색 완료).
+	//
+	// 이 줄이 빠지면 값이 항상 0 으로 들어가서 칠해도 색이 안 바뀐다.
+	// 증상이 "머티리얼이 안 먹는다" 처럼 나타나 원인을 찾기 어렵다.
+	BorderMeshes->NumCustomDataFloats = 1;
 
-	PreviewMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PreviewMeshes"));
-	PreviewMeshes->SetupAttachment(Area);
-	PreviewMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PreviewMeshes->SetCastShadow(false);
+	PreviewBox = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewBox"));
+	PreviewBox->SetupAttachment(Area);
+	PreviewBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PreviewBox->SetCastShadow(false);
 
-	PreviewBlockedMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PreviewBlockedMeshes"));
-	PreviewBlockedMeshes->SetupAttachment(Area);
-	PreviewBlockedMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PreviewBlockedMeshes->SetCastShadow(false);
+	// 위치가 캐릭터를 따라다니므로 존의 트랜스폼을 따라가면 안 된다.
+	// 매 프레임 월드 좌표로 직접 놓는다.
+	PreviewBox->SetUsingAbsoluteLocation(true);
+	PreviewBox->SetUsingAbsoluteRotation(true);
+	PreviewBox->SetUsingAbsoluteScale(true);
+
+	// 띄울 일이 생기기 전까지는 숨겨 둔다.
+	PreviewBox->SetVisibility(false);
+
+	PreviewBandMeshes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("PreviewBandMeshes"));
+	PreviewBandMeshes->SetupAttachment(Area);
+	PreviewBandMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PreviewBandMeshes->SetCastShadow(false);
 
 	if (PlaneMesh.Succeeded())
 	{
 		BorderMeshes->SetStaticMesh(PlaneMesh.Object);
-		PaintedMeshes->SetStaticMesh(PlaneMesh.Object);
-		PreviewMeshes->SetStaticMesh(PlaneMesh.Object);
-		PreviewBlockedMeshes->SetStaticMesh(PlaneMesh.Object);
+		PreviewBox->SetStaticMesh(PlaneMesh.Object);
+		PreviewBandMeshes->SetStaticMesh(PlaneMesh.Object);
 	}
 
 	if (BasicMaterial.Succeeded())
 	{
 		BorderMeshes->SetMaterial(0, BasicMaterial.Object);
-		PaintedMeshes->SetMaterial(0, BasicMaterial.Object);
-		PreviewMeshes->SetMaterial(0, BasicMaterial.Object);
-		PreviewBlockedMeshes->SetMaterial(0, BasicMaterial.Object);
+		PreviewBox->SetMaterial(0, BasicMaterial.Object);
+		PreviewBandMeshes->SetMaterial(0, BasicMaterial.Object);
 	}
 }
 
@@ -151,7 +164,7 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 
 	TickCellReveal(DeltaSeconds);
 
-	UpdatePreview(DeltaSeconds);
+	UpdatePreview();
 }
 
 void ACWWorkZone_BorderSketch::TickCharge(float DeltaSeconds)
@@ -233,7 +246,7 @@ void ACWWorkZone_BorderSketch::ApplyWork(UCWWorkerComponent* Worker, const FVect
 
 	if (!bCharging)
 	{
-		BeginCharge(Worker, WorldLocation);
+		BeginCharge(Worker);
 	}
 	else if (ChargingWorker != Worker)
 	{
@@ -291,43 +304,122 @@ float ACWWorkZone_BorderSketch::GetChargeRatio() const
 
 void ACWWorkZone_BorderSketch::GetChargeTargetCells(TArray<int32>& OutCells) const
 {
-	CollectCellRun(ChargeAnchorCell, bChargeForward, GetChargeLevel(), OutCells);
-}
-
-void ACWWorkZone_BorderSketch::CollectCellRun(int32 AnchorCell, bool bForward, int32 Count,
-	TArray<int32>& OutCells) const
-{
 	OutCells.Reset();
 
-	if (Count <= 0 || !Cells.IsValidIndex(AnchorCell))
+	if (!bCharging || GetChargeLevel() <= 0)
 	{
 		return;
 	}
 
-	// 칸이 단계보다 적은 아주 작은 존이면 한 바퀴가 전부다.
-	// 여기서 자르지 않으면 고리를 넘어가 같은 칸이 두 번 들어온다.
-	const int32 TargetCount = FMath::Min(Count, Cells.Num());
-	const int32 Step = bForward ? 1 : -1;
+	CollectCellsInArea(ChargeOriginLocation, ChargeForwardDirection,
+		GetChargeAreaSize(GetChargeLevel()), OutCells);
+}
 
-	for (int32 Offset = 0; Offset < TargetCount; ++Offset)
+FVector2D ACWWorkZone_BorderSketch::GetChargeAreaSize(int32 Level) const
+{
+	if (ChargeAreaSizes.Num() == 0)
 	{
-		OutCells.Add(WrapCellIndex(AnchorCell + Step * Offset));
+		return FVector2D::ZeroVector;
+	}
+
+	// 단계 0 은 최소 홀드 전이다. 아직 아무것도 안 나가지만 어디를 겨누는지는 보여줘야 하므로
+	// 1단계 크기를 쓴다. 색이 빨강이라 "지금 놓으면 안 나간다" 는 따로 전달된다.
+	const int32 SizeIndex = FMath::Clamp(Level - 1, 0, ChargeAreaSizes.Num() - 1);
+
+	return ChargeAreaSizes[SizeIndex];
+}
+
+void ACWWorkZone_BorderSketch::CollectCellsInArea(const FVector& Origin, const FVector& Forward,
+	const FVector2D& AreaSize, TArray<int32>& OutCells) const
+{
+	OutCells.Reset();
+
+	if (AreaSize.X <= 0.f || AreaSize.Y <= 0.f || Cells.Num() == 0)
+	{
+		return;
+	}
+
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward).GetSafeNormal();
+	const float HalfWidth = AreaSize.Y * 0.5f;
+
+	// 거리와 함께 모아서 가까운 순으로 정렬한다. 페인트가 모자라면 앞에서부터 끊기는데,
+	// 순서가 뒤죽박죽이면 범위 한가운데가 비고 끝만 칠해지는 그림이 나온다.
+	TArray<TPair<float, int32>> Found;
+
+	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
+	{
+		const FVector ToCell = GetCellWorldLocation(CellIndex) - Origin;
+
+		// 높이는 보지 않는다. 사각형은 바닥에 눕힌 평면이다.
+		const float AlongForward = FVector::DotProduct(ToCell, Forward);
+		if (AlongForward < 0.f || AlongForward > AreaSize.X)
+		{
+			continue;
+		}
+
+		if (FMath::Abs(FVector::DotProduct(ToCell, Right)) > HalfWidth)
+		{
+			continue;
+		}
+
+		Found.Emplace(AlongForward, CellIndex);
+	}
+
+	Found.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B)
+	{
+		return A.Key < B.Key;
+	});
+
+	OutCells.Reserve(Found.Num());
+	for (const TPair<float, int32>& Entry : Found)
+	{
+		OutCells.Add(Entry.Value);
 	}
 }
 
-bool ACWWorkZone_BorderSketch::ComputeChargeForward(const UCWWorkerComponent* Worker, int32 AnchorCell) const
+void ACWWorkZone_BorderSketch::GetChargeFrame(const UCWWorkerComponent* Worker,
+	FVector& OutOrigin, FVector& OutForward) const
 {
-	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
-	if (WorkerActor == nullptr || !Cells.IsValidIndex(AnchorCell))
+	// 차징 중이면 시작할 때 얼려둔 값을 그대로 쓴다.
+	//
+	// 그래서 이 함수는 차징을 시작하는 자리에서 쓰면 안 된다. 얼릴 값을 정하는 시점에
+	// 부르면 아직 비어 있는 자기 값을 도로 읽어간다. 그쪽은 ComputeWorkerFrame 을 쓴다.
+	if (bCharging)
 	{
-		return true;
+		OutOrigin = ChargeOriginLocation;
+		OutForward = ChargeForwardDirection;
+		return;
 	}
 
-	FVector LocalForward = GetActorTransform().InverseTransformVector(WorkerActor->GetActorForwardVector());
-	LocalForward.Z = 0.f;
+	ComputeWorkerFrame(Worker, OutOrigin, OutForward);
+}
 
-	// 접선과 거의 수직이면 내적이 0 근처라 부호가 애매하다. 그때는 인덱스가 늘어나는 쪽으로 둔다.
-	return FVector::DotProduct(LocalForward, GetCellTangent(AnchorCell)) >= 0.f;
+void ACWWorkZone_BorderSketch::ComputeWorkerFrame(const UCWWorkerComponent* Worker,
+	FVector& OutOrigin, FVector& OutForward) const
+{
+	OutOrigin = FVector::ZeroVector;
+	OutForward = FVector::ForwardVector;
+
+	const AActor* WorkerActor = (Worker != nullptr) ? Worker->GetOwner() : nullptr;
+	if (WorkerActor == nullptr)
+	{
+		return;
+	}
+
+	// 기준점은 캐릭터 발밑이다. 커서를 기준으로 잡으면 범위가 캐릭터와 커서 사이 어디쯤에서
+	// 시작할지가 애매해져서, 어디까지 닿는지를 눈으로 익히기 어렵다.
+	// 커서는 방향만 정한다. (캐릭터가 커서를 바라보므로 정면이 곧 커서 방향이다)
+	OutOrigin = WorkerActor->GetActorLocation();
+
+	FVector Forward = WorkerActor->GetActorForwardVector();
+	Forward.Z = 0.f;
+
+	if (!Forward.Normalize())
+	{
+		Forward = FVector::ForwardVector;
+	}
+
+	OutForward = Forward;
 }
 
 int32 ACWWorkZone_BorderSketch::GetPaintedCellCount() const
@@ -351,20 +443,19 @@ FString ACWWorkZone_BorderSketch::GetDebugDetailText() const
 	return FString::Printf(TEXT(" 칸 %d/%d"), GetPaintedCellCount(), Cells.Num());
 }
 
-void ACWWorkZone_BorderSketch::BeginCharge(UCWWorkerComponent* Worker, const FVector& WorldLocation)
+void ACWWorkZone_BorderSketch::BeginCharge(UCWWorkerComponent* Worker)
 {
 	ChargingWorker = Worker;
 	bCharging = true;
 	ChargeSeconds = 0.f;
 	LastReportedChargeLevel = 0;
 
-	const int32 NearestCell = FindNearestCell(WorldLocation);
-
-	// 진행 방향은 차징이 시작될 때 한 번만 정하고 중간에 다시 보지 않는다.
-	// 매 프레임 다시 정하면 접선과 거의 수직으로 서 있을 때 부호가 계속 뒤집혀 칠할 칸이 좌우로 튄다.
-	bChargeForward = ComputeChargeForward(Worker, NearestCell);
-
-	ChargeAnchorCell = FindSnappedAnchor(NearestCell, bChargeForward);
+	// 범위의 기준점과 방향은 차징이 시작될 때 한 번만 정하고 중간에 다시 보지 않는다.
+	// 누른 뒤에도 커서를 따라 범위가 돌면 조준한 의미가 없어진다.
+	//
+	// 여기서 GetChargeFrame 을 쓰면 안 된다. 그쪽은 차징 중이면 얼려둔 값을 돌려주는데,
+	// 이 시점에는 bCharging 이 이미 켜져 있어서 아직 빈 값을 자기 자신에 도로 넣는다.
+	ComputeWorkerFrame(Worker, ChargeOriginLocation, ChargeForwardDirection);
 
 	if (IsLocalCharger())
 	{
@@ -469,7 +560,6 @@ void ACWWorkZone_BorderSketch::ResetChargeState()
 {
 	bCharging = false;
 	ChargeSeconds = 0.f;
-	ChargeAnchorCell = INDEX_NONE;
 	LastReportedChargeLevel = 0;
 	ChargingWorker = nullptr;
 }
@@ -510,43 +600,7 @@ bool ACWWorkZone_BorderSketch::IsChargingWorkerEligible() const
 	return GetSquaredDistanceToPoint(WorkerActor->GetActorLocation()) <= FMath::Square(WorkRange);
 }
 
-int32 ACWWorkZone_BorderSketch::FindSnappedAnchor(int32 AnchorCell, bool bForward) const
-{
-	if (!Cells.IsValidIndex(AnchorCell))
-	{
-		return AnchorCell;
-	}
 
-	// 시작 칸이 이미 칠해져 있으면 진행 방향으로 조금 훑어 빈 칸을 찾는다. (차징 붓 기획서 2.3)
-	// 훑어본 범위가 전부 칠해져 있으면 원래 칸을 그대로 둔다. 그 릴리즈는 헛손질이 된다.
-	const int32 Step = bForward ? 1 : -1;
-	const int32 SearchCount = FMath::Min(AnchorSnapCells, Cells.Num() - 1);
-
-	for (int32 Offset = 0; Offset <= SearchCount; ++Offset)
-	{
-		const int32 CandidateCell = WrapCellIndex(AnchorCell + Step * Offset);
-		if (!IsCellPainted(CandidateCell))
-		{
-			return CandidateCell;
-		}
-	}
-
-	return AnchorCell;
-}
-
-FVector ACWWorkZone_BorderSketch::GetCellTangent(int32 CellIndex) const
-{
-	if (Cells.Num() < 2 || !Cells.IsValidIndex(CellIndex))
-	{
-		return FVector::ZeroVector;
-	}
-
-	// 다음 칸을 향하는 방향. 모서리 칸에서는 대각선이 되지만 부호는 여전히 맞다.
-	FVector Tangent = Cells[WrapCellIndex(CellIndex + 1)].Center - Cells[CellIndex].Center;
-	Tangent.Z = 0.f;
-
-	return Tangent.GetSafeNormal();
-}
 
 float ACWWorkZone_BorderSketch::GetCellPaintCost() const
 {
@@ -575,18 +629,13 @@ void ACWWorkZone_BorderSketch::RebuildCells()
 {
 	Cells.Reset();
 	BorderMeshes->ClearInstances();
-	PaintedMeshes->ClearInstances();
-
-	// 칸 배열이 새로 만들어지면 프리뷰의 칸 번호는 더 이상 같은 자리를 가리키지 않는다.
-	// 캐시까지 비워야 다음 프레임에 다시 만든다.
-	PreviewMeshes->ClearInstances();
-	PreviewBlockedMeshes->ClearInstances();
-	PreviewReadyCells.Reset();
-	PreviewBlockedCells.Reset();
 
 	// 점등 상태도 같은 이유로 버린다. 옛 칸 번호는 새 격자에서 다른 자리를 가리킨다.
 	RevealedCellFlags.Reset();
 	PendingRevealCells.Reset();
+
+	PreviewBandMeshes->ClearInstances();
+	PreviewBandCells.Reset();
 
 	const FVector AreaExtent = Area->GetUnscaledBoxExtent();
 	const float SizeX = AreaExtent.X * 2.f;
@@ -616,7 +665,7 @@ void ACWWorkZone_BorderSketch::RebuildCells()
 
 	for (const FCWBorderCell& Cell : Cells)
 	{
-		BorderMeshes->AddInstance(MakeCellTransform(Cell, GuideHeightOffset));
+		BorderMeshes->AddInstance(MakeCellTransform(Cell));
 	}
 }
 
@@ -644,97 +693,137 @@ void ACWWorkZone_BorderSketch::AppendSideCells(const FVector& Start, const FVect
 	}
 }
 
-int32 ACWWorkZone_BorderSketch::FindNearestCell(const FVector& WorldLocation) const
+
+
+void ACWWorkZone_BorderSketch::UpdatePreview()
 {
-	if (Cells.Num() == 0)
-	{
-		return INDEX_NONE;
-	}
-
-	const FVector LocalLocation = GetActorTransform().InverseTransformPosition(WorldLocation);
-
-	// 높이는 보지 않는다. 커서가 도로면을 찍든 캐릭터 허리 높이를 찍든 같은 칸이어야 한다.
-	int32 NearestIndex = INDEX_NONE;
-	float NearestDistanceSquared = TNumericLimits<float>::Max();
-
-	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
-	{
-		const FVector Offset = Cells[CellIndex].Center - LocalLocation;
-		const float DistanceSquared = Offset.X * Offset.X + Offset.Y * Offset.Y;
-		if (DistanceSquared < NearestDistanceSquared)
-		{
-			NearestDistanceSquared = DistanceSquared;
-			NearestIndex = CellIndex;
-		}
-	}
-
-	return NearestIndex;
-}
-
-int32 ACWWorkZone_BorderSketch::WrapCellIndex(int32 CellIndex) const
-{
-	if (Cells.Num() == 0)
-	{
-		return INDEX_NONE;
-	}
-
-	// % 는 음수를 음수로 내므로 한 번 더 더해서 올린다.
-	return ((CellIndex % Cells.Num()) + Cells.Num()) % Cells.Num();
-}
-
-void ACWWorkZone_BorderSketch::UpdatePreview(float DeltaSeconds)
-{
-	TArray<int32> ReadyCells;
-	TArray<int32> BlockedCells;
-
 	UCWWorkerComponent* const Worker = FindLocalWorker();
 
-	if (ShouldShowPreview(Worker))
+	if (!ShouldShowPreview(Worker))
 	{
-		TArray<int32> TargetCells;
+		UpdatePreviewBox(0, false, FVector::ZeroVector, FVector::ForwardVector, -1);
 
-		if (bCharging)
-		{
-			GetChargeTargetCells(TargetCells);
-
-			// 아직 최소 홀드를 못 채웠으면 단계가 0 이라 목록이 비어 있다.
-			// 그래도 첫 칸은 보여준다. 어디를 겨누고 있는지 안 보이면 조준할 방법이 없다.
-			// 0.3초를 넘기는 순간 이 칸이 확정색으로 바뀌면서 최소 홀드가 눈에 보인다.
-			if (TargetCells.Num() == 0)
-			{
-				CollectCellRun(ChargeAnchorCell, bChargeForward, 1, TargetCells);
-				BlockedCells = TargetCells;
-			}
-		}
-		else
-		{
-			// 상시 조준 표시. 지금 누르면 어느 칸이 나가는지를 늘 보여준다.
-			// 차징 중에는 앵커가 얼어 있으므로 여기 계산은 누르기 전에만 돈다.
-			const int32 NearestCell = FindNearestCell(Worker->GetWorkLocation());
-			const bool bForward = ComputeChargeForward(Worker, NearestCell);
-
-			CollectCellRun(FindSnappedAnchor(NearestCell, bForward), bForward, 1, TargetCells);
-		}
-
-		if (BlockedCells.Num() == 0)
-		{
-			// 살 수 있는 칸과 아닌 칸으로 가른다. 실제 릴리즈와 같은 함수를 쓰므로
-			// 화면에 흰색으로 보인 칸은 반드시 칠해지고, 회색은 반드시 안 칠해진다.
-			bool bPaintShort = false;
-			FilterAffordableCells(Worker, TargetCells, ReadyCells, bPaintShort);
-
-			for (const int32 CellIndex : TargetCells)
-			{
-				if (!ReadyCells.Contains(CellIndex))
-				{
-					BlockedCells.Add(CellIndex);
-				}
-			}
-		}
+		// 띠도 같이 비운다. 이걸 빼먹으면 사각형만 사라지고 띠는 마지막 모습 그대로 남는다.
+		// 붓을 놓은 자리에 띠가 얹힌 채로 굳어서, 방금 칠한 칸들이 덮여 보인다.
+		UpdatePreviewBand(TArray<int32>());
+		return;
 	}
 
-	ApplyPreviewCells(ReadyCells, BlockedCells);
-	UpdatePreviewPulse(DeltaSeconds);
+	FVector Origin = FVector::ZeroVector;
+	FVector Forward = FVector::ForwardVector;
+	GetChargeFrame(Worker, Origin, Forward);
+
+	// 차징 중이 아니어도 1단계 범위를 계속 보여준다. 지금 누르면 어디가 나가는지가
+	// 늘 보여야 조준이라는 행동이 성립한다.
+	const int32 Level = bCharging ? GetChargeLevel() : 0;
+
+	TArray<int32> CellsInArea;
+	CollectCellsInArea(Origin, Forward, GetChargeAreaSize(Level), CellsInArea);
+
+	// 실제 릴리즈와 같은 함수로 거른다. 그래야 화면 색과 실제 결과가 갈리지 않는다.
+	TArray<int32> AffordableCells;
+	bool bPaintShort = false;
+	FilterAffordableCells(Worker, CellsInArea, AffordableCells, bPaintShort);
+
+	UpdatePreviewBox(AffordableCells.Num(), bPaintShort, Origin, Forward, Level);
+
+	// 사각형은 "붓이 닿는 영역", 띠는 "그래서 칠해지는 자리" 다.
+	// 단계 0 에서는 아무것도 안 나가므로 띠도 비운다. 사각형만 빨갛게 남는다.
+	UpdatePreviewBand(Level > 0 ? AffordableCells : TArray<int32>());
+}
+
+void ACWWorkZone_BorderSketch::UpdatePreviewBand(const TArray<int32>& AffordableCells)
+{
+	// 목록이 그대로면 인스턴스를 다시 만들지 않는다. 바뀌는 것은 플레이어가 움직이거나
+	// 단계가 오를 때뿐인데 이 함수는 매 프레임 불린다.
+	if (PreviewBandCells == AffordableCells)
+	{
+		return;
+	}
+
+	PreviewBandCells = AffordableCells;
+
+	PreviewBandMeshes->ClearInstances();
+	for (const int32 CellIndex : PreviewBandCells)
+	{
+		if (Cells.IsValidIndex(CellIndex))
+		{
+			PreviewBandMeshes->AddInstance(MakeBandTransform(Cells[CellIndex]));
+		}
+	}
+}
+
+void ACWWorkZone_BorderSketch::UpdatePreviewBox(int32 AffordableCount, bool bPaintShort,
+	const FVector& Origin, const FVector& Forward, int32 Level)
+{
+	// Level 이 음수면 띄울 상황이 아니다.
+	if (Level < 0)
+	{
+		PreviewBox->SetVisibility(false);
+		LastPreviewState = -1;
+		return;
+	}
+
+	const FVector2D AreaSize = GetChargeAreaSize(Level);
+	if (AreaSize.X <= 0.f || AreaSize.Y <= 0.f)
+	{
+		PreviewBox->SetVisibility(false);
+		LastPreviewState = -1;
+		return;
+	}
+
+	// /Engine/BasicShapes/Plane 은 100x100 이고 원점이 가운데다.
+	// 발밑에서 앞으로 뻗게 하려면 길이의 절반만큼 앞으로 밀어야 한다.
+	FVector BoxLocation = Origin + Forward * (AreaSize.X * 0.5f);
+	BoxLocation.Z = GetActorLocation().Z + GuideHeightOffset + PreviewBoxHeightOffset;
+
+	PreviewBox->SetWorldLocationAndRotation(BoxLocation, Forward.Rotation());
+	PreviewBox->SetWorldScale3D(FVector(AreaSize.X / 100.f, AreaSize.Y / 100.f, 1.f));
+	PreviewBox->SetVisibility(true);
+
+	/**
+	 * 숫자 하나로 상태만 넘긴다. 무슨 색으로 그릴지는 머티리얼 인스턴스가 정한다.
+	 *
+	 *   0 안 나감  — 최소 홀드 전이거나, 겨눈 자리에 칠할 칸이 없거나, 페인트가 0 이다
+	 *   1 나간다   — 지금 놓으면 칠해진다
+	 *   2 일부만   — 페인트가 모자라 중간에서 끊긴다
+	 *
+	 * 색을 C++ 이 고르면 아티스트가 MI 에서 바꾼 값이 런타임에 조용히 무시된다.
+	 * "머티리얼을 고쳤는데 게임에서는 안 변한다" 가 그래서 생긴다.
+	 *
+	 * 2 는 **페인트 부족일 때만** 쓴다. 범위 안에 이미 칠해진 칸이 섞였다고 경고를 내면
+	 * 반쯤 칠한 뒤부터는 늘 경고라, 정작 보충하러 가야 할 때를 구분할 수 없게 된다.
+	 * 이미 칠해진 칸은 페인트도 진행도도 쓰지 않으므로 알릴 일이 아니다.
+	 */
+	int32 PreviewState = 0;
+	if (Level > 0 && AffordableCount > 0)
+	{
+		PreviewState = bPaintShort ? 2 : 1;
+	}
+
+	// 깜빡임은 머티리얼이 Time 으로 스스로 돈다. 여기서 매 프레임 넣을 것이 없으므로
+	// 상태가 바뀐 프레임에만 쓴다.
+	if (PreviewState == LastPreviewState)
+	{
+		return;
+	}
+
+	LastPreviewState = PreviewState;
+
+	// 사각형과 띠가 같은 상태를 본다. 둘은 머티리얼 인스턴스가 달라서 불투명도는
+	// 따로 주되(사각형은 배경, 띠는 전면), 색은 늘 같이 움직여야 한다.
+	//
+	// 각각 따로 검사한다. 한쪽이 없다고 다른 쪽까지 건너뛰면, 사각형 슬롯이 비었을 때
+	// 띠가 영영 상태를 못 받아 기본값 색으로 굳는다.
+	if (PreviewBoxMaterial != nullptr)
+	{
+		PreviewBoxMaterial->SetScalarParameterValue(TEXT("PreviewState"), static_cast<float>(PreviewState));
+	}
+
+	if (PreviewBandMaterial != nullptr)
+	{
+		PreviewBandMaterial->SetScalarParameterValue(TEXT("PreviewState"), static_cast<float>(PreviewState));
+	}
 }
 
 bool ACWWorkZone_BorderSketch::ShouldShowPreview(const UCWWorkerComponent* Worker) const
@@ -793,65 +882,6 @@ UCWWorkerComponent* ACWWorkZone_BorderSketch::FindLocalWorker()
 	}
 
 	return CachedLocalWorker;
-}
-
-void ACWWorkZone_BorderSketch::ApplyPreviewCells(const TArray<int32>& ReadyCells, const TArray<int32>& BlockedCells)
-{
-	// 목록이 그대로면 인스턴스를 다시 만들지 않는다. 프리뷰는 매 프레임 계산되는데
-	// 실제로 바뀌는 것은 플레이어가 움직이거나 단계가 오를 때뿐이다.
-	if (PreviewReadyCells == ReadyCells && PreviewBlockedCells == BlockedCells)
-	{
-		return;
-	}
-
-	PreviewReadyCells = ReadyCells;
-	PreviewBlockedCells = BlockedCells;
-
-	PreviewMeshes->ClearInstances();
-	for (const int32 CellIndex : PreviewReadyCells)
-	{
-		if (Cells.IsValidIndex(CellIndex))
-		{
-			PreviewMeshes->AddInstance(MakeCellTransform(Cells[CellIndex],
-				GuideHeightOffset + PaintedHeightOffset + PreviewHeightOffset));
-		}
-	}
-
-	PreviewBlockedMeshes->ClearInstances();
-	for (const int32 CellIndex : PreviewBlockedCells)
-	{
-		if (Cells.IsValidIndex(CellIndex))
-		{
-			PreviewBlockedMeshes->AddInstance(MakeCellTransform(Cells[CellIndex],
-				GuideHeightOffset + PaintedHeightOffset + PreviewHeightOffset));
-		}
-	}
-}
-
-void ACWWorkZone_BorderSketch::UpdatePreviewPulse(float DeltaSeconds)
-{
-	if (PreviewMaterial == nullptr)
-	{
-		return;
-	}
-
-	// 띄울 것이 없으면 위상을 되감고 끝낸다. 다음에 뜰 때 늘 같은 밝기에서 시작한다.
-	//
-	// 여기서 빠져나가지 않으면 레벨에 놓인 모든 테두리 존이, 아무도 근처에 없어도
-	// 매 프레임 머티리얼 파라미터를 쓴다.
-	if (PreviewReadyCells.Num() == 0)
-	{
-		PreviewPulseTime = 0.f;
-		return;
-	}
-
-	PreviewPulseTime += DeltaSeconds;
-
-	// 칠해질 칸만 깜빡인다. 칠해지지 않을 칸은 가만히 둬서 둘이 한눈에 갈린다.
-	const float Pulse = 0.5f * (1.f + FMath::Sin(PreviewPulseTime * PreviewPulseSpeed * 2.f * PI));
-	const float PulsedOpacity = PreviewOpacity * FMath::Lerp(1.f - PreviewPulseDepth, 1.f, Pulse);
-
-	PreviewMaterial->SetScalarParameterValue(OpacityParameterName, PulsedOpacity);
 }
 
 void ACWWorkZone_BorderSketch::ReceiveBorderCells(UCWWorkerComponent* Worker, const TArray<int32>& CellIndices)
@@ -1032,17 +1062,18 @@ void ACWWorkZone_BorderSketch::RefreshProgressFromCells()
 
 void ACWWorkZone_BorderSketch::RefreshPaintedInstances()
 {
-	// 바뀐 칸만 골라 넣지 않고 매번 통째로 다시 만든다.
-	// 칸이 수십 개라 비용이 없고, 인스턴스 인덱스와 칸 인덱스를 따로 짝지어 관리하지 않아도 된다.
-	PaintedMeshes->ClearInstances();
-
+	// 인스턴스를 더하거나 빼지 않는다. 칸은 처음 만든 그대로 있고 값만 바뀐다.
+	// 인스턴스 인덱스가 곧 칸 인덱스라 따로 짝지어 둘 것도 없다.
 	for (int32 CellIndex = 0; CellIndex < Cells.Num(); ++CellIndex)
 	{
-		if (RevealedCellFlags.IsValidIndex(CellIndex) && RevealedCellFlags[CellIndex] != 0)
-		{
-			PaintedMeshes->AddInstance(MakeCellTransform(Cells[CellIndex], GuideHeightOffset + PaintedHeightOffset));
-		}
+		const bool bRevealed = RevealedCellFlags.IsValidIndex(CellIndex) && RevealedCellFlags[CellIndex] != 0;
+
+		// 마지막 인자가 false 인 이유: 칸마다 렌더 상태를 더럽히면 한 번의 갱신에
+		// 수십 번 다시 올린다. 아래에서 한 번에 처리한다.
+		BorderMeshes->SetCustomDataValue(CellIndex, 0, bRevealed ? 1.f : 0.f, false);
 	}
+
+	BorderMeshes->MarkRenderStateDirty();
 }
 
 void ACWWorkZone_BorderSketch::TickCellReveal(float DeltaSeconds)
@@ -1194,7 +1225,7 @@ FVector ACWWorkZone_BorderSketch::GetCellWorldLocation(int32 CellIndex) const
 	}
 
 	FVector LocalLocation = Cells[CellIndex].Center;
-	LocalLocation.Z += GuideHeightOffset + PaintedHeightOffset;
+	LocalLocation.Z += GuideHeightOffset;
 
 	return GetActorTransform().TransformPosition(LocalLocation);
 }
@@ -1217,48 +1248,42 @@ void ACWWorkZone_BorderSketch::PlayLocalChargeSound(USoundBase* Sound, const UCW
 	UGameplayStatics::PlaySoundAtLocation(this, Sound, WorkerActor->GetActorLocation());
 }
 
-FTransform ACWWorkZone_BorderSketch::MakeCellTransform(const FCWBorderCell& Cell, float ZOffset) const
+FTransform ACWWorkZone_BorderSketch::MakeCellTransform(const FCWBorderCell& Cell) const
 {
 	// /Engine/BasicShapes/Plane 은 100x100 이라 크기를 100 으로 나누면 그대로 배율이 된다.
 	const FVector Scale = Cell.bAlongX
 		? FVector(Cell.Length / 100.f, CellThickness / 100.f, 1.f)
 		: FVector(CellThickness / 100.f, Cell.Length / 100.f, 1.f);
 
+	// 칸이 한 번만 그려지므로 높이도 하나다. 겹쳐 덮던 시절의 층 구분이 필요 없다.
 	FVector Location = Cell.Center;
-	Location.Z += ZOffset;
+	Location.Z += GuideHeightOffset;
+
+	return FTransform(FRotator::ZeroRotator, Location, Scale);
+}
+
+FTransform ACWWorkZone_BorderSketch::MakeBandTransform(const FCWBorderCell& Cell) const
+{
+	// 길이는 칸과 똑같이 둔다. 그래야 옆 칸과 딱 붙어서 한 줄로 보인다.
+	// 폭만 넓혀서 테두리 위로 비어져 나오게 한다.
+	const float BandThickness = CellThickness * PreviewBandWidthScale;
+
+	const FVector Scale = Cell.bAlongX
+		? FVector(Cell.Length / 100.f, BandThickness / 100.f, 1.f)
+		: FVector(BandThickness / 100.f, Cell.Length / 100.f, 1.f);
+
+	FVector Location = Cell.Center;
+	Location.Z += GuideHeightOffset + PreviewBoxHeightOffset + PreviewBandHeightOffset;
 
 	return FTransform(FRotator::ZeroRotator, Location, Scale);
 }
 
 void ACWWorkZone_BorderSketch::SetupMaterials()
 {
-	GuideMaterial = BorderMeshes->CreateAndSetMaterialInstanceDynamic(0);
-	if (GuideMaterial != nullptr)
-	{
-		GuideMaterial->SetVectorParameterValue(ColorParameterName, GuideColor);
-		GuideMaterial->SetScalarParameterValue(OpacityParameterName, GuideOpacity);
-	}
-
-	PaintedMaterial = PaintedMeshes->CreateAndSetMaterialInstanceDynamic(0);
-	if (PaintedMaterial != nullptr)
-	{
-		PaintedMaterial->SetVectorParameterValue(ColorParameterName, PaintedColor);
-		PaintedMaterial->SetScalarParameterValue(OpacityParameterName, PaintedOpacity);
-	}
-
-	PreviewMaterial = PreviewMeshes->CreateAndSetMaterialInstanceDynamic(0);
-	if (PreviewMaterial != nullptr)
-	{
-		PreviewMaterial->SetVectorParameterValue(ColorParameterName, PreviewColor);
-		PreviewMaterial->SetScalarParameterValue(OpacityParameterName, PreviewOpacity);
-	}
-
-	PreviewBlockedMaterial = PreviewBlockedMeshes->CreateAndSetMaterialInstanceDynamic(0);
-	if (PreviewBlockedMaterial != nullptr)
-	{
-		PreviewBlockedMaterial->SetVectorParameterValue(ColorParameterName, PreviewBlockedColor);
-		PreviewBlockedMaterial->SetScalarParameterValue(OpacityParameterName, PreviewOpacity);
-	}
+	// 칸(BorderMeshes)에는 MID 를 만들지 않는다. C++ 이 넣을 값이 없기 때문이다.
+	// 칸의 상태는 per-instance custom data 로 가고, 색은 머티리얼 인스턴스가 가진다.
+	PreviewBoxMaterial = PreviewBox->CreateAndSetMaterialInstanceDynamic(0);
+	PreviewBandMaterial = PreviewBandMeshes->CreateAndSetMaterialInstanceDynamic(0);
 }
 
 void ACWWorkZone_BorderSketch::OnRep_PaintedCells()
