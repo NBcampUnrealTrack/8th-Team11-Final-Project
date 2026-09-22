@@ -4,6 +4,7 @@
 
 #include "UI/Widget/CWInteractionPromptWidget.h"
 #include "UI/Widget/CWInteractionPromptEntryWidget.h"
+#include "Components/SceneComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Interaction/Components/CWInteractionPromptComponent.h"
@@ -116,6 +117,31 @@ bool FCWInteractionPromptDisplayTest::RunTest(const FString& Parameters)
 
 	Source->OnInteractionPromptsChanged.Broadcast(Source, {});
 	TestTrue(TEXT("Empty prompts remove every entry"), Widget->Groups.IsEmpty());
+
+	// 코드로 스폰한 액터에는 기본 루트가 없어 어태치가 조용히 실패함
+	auto EnsureRoot = [](AActor* Actor)
+	{
+		if (Actor->GetRootComponent() == nullptr)
+		{
+			USceneComponent* Root = NewObject<USceneComponent>(Actor);
+			Actor->SetRootComponent(Root);
+			Root->RegisterComponent();
+		}
+		return Actor;
+	};
+
+	// 집는 순간 손에 붙은 도구. 문구 갱신을 기다리면 안내판이 손으로 끌려감
+	AActor* HeldProp = EnsureRoot(World->SpawnActor<AActor>());
+	HeldProp->AttachToActor(EnsureRoot(Pawn), FAttachmentTransformRules::KeepRelativeTransform);
+	TestTrue(TEXT("A target in my own hand stops being drawn"), Widget->IsHeldByOwner(HeldProp));
+
+	// 팀원이 든 도구는 충전(R)의 정당한 대상이라 계속 그려야 함
+	AActor* TeammateTool = EnsureRoot(World->SpawnActor<AActor>());
+	TeammateTool->AttachToActor(EnsureRoot(World->SpawnActor<APawn>()), FAttachmentTransformRules::KeepRelativeTransform);
+	TestFalse(TEXT("A tool held by a teammate keeps its prompt"), Widget->IsHeldByOwner(TeammateTool));
+
+	// 바닥에 놓인 도구는 그대로 그림
+	TestFalse(TEXT("A tool on the ground keeps its prompt"), Widget->IsHeldByOwner(Tool));
 
 	Widget->HandlePawnChanged(Pawn, nullptr);
 	TestFalse(TEXT("Pawn replacement unbinds the old source"), Source->OnInteractionPromptsChanged.IsAlreadyBound(
