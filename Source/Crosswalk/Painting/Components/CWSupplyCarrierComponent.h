@@ -242,10 +242,11 @@ private:
 public:
 	// 한 번에 들 수 있는 통 개수. (기획서 9절 "최대 소지 개수")
 	//
-	// 3 인 이유: 통 1개가 작업 존 0.5개분이라 3개면 1.5개분이다. 여러 명을 연속으로 도울 수
-	// 있어서 협동 보급에서 의미가 생기고, 혼자 들고 가면 남은 통 때문에 도구를 못 집어 손해가 된다.
+	// 2 인 이유: 통 1개가 도구 잔량 절반이라 2개가 도구 하나를 꽉 채우는 양이다.
+	// 소지량이 "도구 한 자루분" 으로 딱 떨어져서, 누구에게 줄지 고르면 그걸로 한 번 왕복이 끝난다.
+	// 3 이면 한 번 다녀와 여러 명을 채울 수 있어 보급 왕복 자체가 헐거워졌다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply", meta = (ClampMin = "1"))
-	int32 MaxCarriedCount = 3;
+	int32 MaxCarriedCount = 2;
 
 	// 도구를 충전할 수 있는 거리(cm). (기획서 9절 "도구 충전 거리")
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply", meta = (ClampMin = "0.0"))
