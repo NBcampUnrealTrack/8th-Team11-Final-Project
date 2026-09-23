@@ -45,6 +45,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnCansBurstSignature, UCWSuppl
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnSupplyActionRejectedSignature, UCWSupplyCarrierComponent*, CarrierComponent, ECWSupplyRejectReason, Reason);
 
 /**
+ * 통을 꺼내거나 반납하기로 정해진 순간. 입력을 넣은 본인 기계에서만, 서버 확정을 기다리지 않고 발행된다.
+ *
+ * 뽑기/반납 사운드가 붙는 자리다. OnCarriedCanCountChanged 는 리플리케이션 왕복을 거쳐야 해서
+ * 반응이 늦고, 왕복 시간보다 빠르게 연속 입력이 들어오면 중간값이 통째로 묶여 사운드가 통째로 빠질 수 있다.
+ * 이 델리게이트는 서버 확정 여부와 무관하게 클라이언트가 스스로 판단한 시점에 바로 나간다. (NotifyActionRejected 와 같은 이유)
+ *
+ *  bPickedUp true 면 뽑기, false 면 반납.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnCanCarriedLocallySignature, UCWSupplyCarrierComponent*, CarrierComponent, bool, bPickedUp);
+
+/**
  * 플레이어 캐릭터에 붙이는 페인트 통 운반 컴포넌트. (기획서 6-1 ~ 6-3, 6-6)
  *
  * 하는 일
@@ -126,6 +137,7 @@ public:
 	 * @param OutTarget 고른 대상. None 을 반환할 때는 건드리지 않는다.
 	 * @return 고른 동작. 대상이 없으면 None.
 	 */
+	UFUNCTION(BlueprintPure, Category = "Supply")
 	ECWInteractionPromptAction ResolveChargeOrReturnTarget(AActor*& OutTarget) const;
 
 	/**
@@ -304,6 +316,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnSupplyActionRejectedSignature OnSupplyActionRejected;
+
+	UPROPERTY(BlueprintAssignable, Category = "Supply")
+	FCWOnCanCarriedLocallySignature OnCanCarriedLocally;
 
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnCansBurstSignature OnCansBurst;
