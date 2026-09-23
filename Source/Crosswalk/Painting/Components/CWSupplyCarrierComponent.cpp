@@ -102,6 +102,12 @@ void UCWSupplyCarrierComponent::PickUpCan()
 		return;
 	}
 
+	// 서버 왕복을 기다리면 사운드가 늦게, 심지어 중간값이 묶여 아예 빠지고 나간다. (NotifyActionRejected 와 같은 이유)
+	if (IsLocallyControlled())
+	{
+		OnCanCarriedLocally.Broadcast(this, true);
+	}
+
 	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
 	{
 		Server_PickUpCan(NearestBox);
@@ -131,6 +137,12 @@ void UCWSupplyCarrierComponent::DropCan()
 	{
 		NotifyActionRejected(ECWSupplyRejectReason::NoBoxNearby);
 		return;
+	}
+
+	// 서버 왕복을 기다리면 사운드가 늦게, 심지어 중간값이 묶여 아예 빠지고 나간다. (NotifyActionRejected 와 같은 이유)
+	if (IsLocallyControlled())
+	{
+		OnCanCarriedLocally.Broadcast(this, false);
 	}
 
 	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
