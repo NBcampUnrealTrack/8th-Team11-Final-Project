@@ -1727,6 +1727,11 @@ void UCWGameInstance::RecoverToMenuAfterNetworkFailure()
 
 	bRecoveringFromNetworkFailure = true;
 
+	// 복귀 지점은 실패한 순간에 정함
+	// 복구 완료에서 정하면 새 월드의 UI 부트스트랩이 먼저 읽어 타이틀로 가 버림
+	// 여기는 아직 새 월드가 열리기 전이고 CurrentRoomCode 도 살아 있음
+	bReturnToRoomList = bReturnToRoomList || !CurrentRoomCode.IsEmpty();
+
 	ResetRoomPlayerCountAdvertise();
 
 	// 연결이 끊긴 월드를 기억해 둔다.
