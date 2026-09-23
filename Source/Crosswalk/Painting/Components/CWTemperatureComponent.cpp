@@ -332,6 +332,13 @@ void UCWTemperatureComponent::ShowDebugTemperature() const
 		: (HeatStage == ECWHeatStage::Overheated ? FColor::Red
 			: (HeatStage == ECWHeatStage::Caution ? FColor::Orange : FColor::Yellow));
 
+	// 화면 가운데 위쪽에 있는 것처럼 보이도록 앞에 붙이는 공백 개수.
+	//
+	// AddOnScreenDebugMessage 는 좌표를 받지 않아 엔진이 좌상단에 고정으로 그린다.
+	// 그리는 방식을 바꾸지 않고 위치만 옮기려면 이 방법뿐이다.
+	// 해상도가 다르면 가운데에서 어긋나는데, 디버그 표시라 그대로 둔다. 숫자만 고치면 된다.
+	static constexpr int32 DebugIndentSpaces = 120;
+
 	// 이동/작업 계수를 같이 찍어야 "느려진 게 체온 때문인지" 가 바로 보인다.
 	// 키를 액터별로 고정해야 캐릭터마다 한 줄씩 갱신된다. (매 프레임 새 줄이 쌓이지 않음)
 	//
@@ -342,7 +349,8 @@ void UCWTemperatureComponent::ShowDebugTemperature() const
 		static_cast<uint64>(Owner->GetUniqueID()),
 		2.f,
 		LineColor,
-		FString::Printf(TEXT("%s%s : 체온 %.1f도 (%s) | 이동 x%.2f | 작업 x%.2f%s%s"),
+		FString::Printf(TEXT("%s%s%s : 체온 %.1f도 (%s) | 이동 x%.2f | 작업 x%.2f%s%s"),
+			*FString::ChrN(DebugIndentSpaces, TEXT(' ')),
 			bIsMine ? TEXT("[나] ") : TEXT(""),
 			*PlayerName,
 			CurrentTemperature,
