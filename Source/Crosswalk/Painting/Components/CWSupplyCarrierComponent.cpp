@@ -363,6 +363,8 @@ void UCWSupplyCarrierComponent::PerformCharge(ACWBaseTool* RequestedTool)
 	SetCarriedCount(CarriedCount - 1);
 
 	RequestedTool->AddPaint(ChargeAmountPerCan);
+
+	Multicast_PlayChargeSound();
 }
 
 ACWPaintSupplyBox* UCWSupplyCarrierComponent::FindNearestBox(float RadiusScale) const
@@ -536,6 +538,11 @@ void UCWSupplyCarrierComponent::BreakCansAndSpill(const FVector& SpillLocation)
 void UCWSupplyCarrierComponent::Multicast_PlayCanBurst_Implementation(FVector_NetQuantize BurstLocation, int32 BrokenCount)
 {
 	OnCansBurst.Broadcast(this, BurstLocation, BrokenCount);
+}
+
+void UCWSupplyCarrierComponent::Multicast_PlayChargeSound_Implementation()
+{
+	OnToolCharged.Broadcast(this);
 }
 
 ACWPaintDecalField* UCWSupplyCarrierComponent::FindDecalField(const FVector& BurstLocation) const
