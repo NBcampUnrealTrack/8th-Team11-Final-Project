@@ -173,6 +173,22 @@ public:
 	virtual bool CanUseTool(ECWToolType ToolType) const override;
 
 	virtual bool CanWorkNow(ECWToolType ToolType) const override;
+
+	/**
+	 * 안내는 CanWorkNow 와 다르게 판단해야 한다.
+	 *
+	 * 그쪽은 깨끗한 오염 레이어에도 낙서를 시작할 수 있어야 해서 채우기 도구에 대해 완료를
+	 * 보지 않는다. 작업 판정으로는 맞지만, 그대로 안내에 쓰면 도색이 끝난 스트라이프가
+	 * 흰 롤러를 든 내내 계속 빛난다.
+	 */
+	virtual ECWZoneHighlightState GetHighlightStateFor(ECWToolType ToolType) const override;
+
+	/**
+	 * 오염 레이어는 Area 박스가 아니라 칠해진 칸을 밝힌다. (기획서 5.6)
+	 * bHighlightPaintedCells 가 꺼져 있으면 부모와 똑같이 박스 데칼을 쓴다.
+	 */
+	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState) override;
+
 	virtual bool IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const override;
 
 	virtual bool HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const override;
@@ -570,6 +586,15 @@ private:
 	void RefreshPaintFieldSolidState(float NewProgress);
 
 	/**
+	 * 지금 표시 상태를 페인트 필드 셰이더에 반영한다. (bHighlightPaintedCells 전용)
+	 *
+	 * OnHighlightStateChanged 에서만 부르면 안 된다. 격자 텍스처가 다시 만들어질 때
+	 * PaintFieldMID 가 nullptr 로 끊기는데, 그 사이 상태가 안 바뀌면 다시 켜줄 사람이 없어
+	 * 발광이 영영 꺼진 채로 남는다. 그래서 MID 를 다시 물리는 자리에서도 같이 부른다.
+	 */
+	void RefreshPaintFieldHighlight();
+
+	/**
 	 * 칸 상태를 담을 텍스처를 만든다. 크기가 그대로면 아무것도 하지 않는다.
 	 *
 	 * 텍스처는 격자보다 가로세로 한 칸씩 크다. 그 테두리 텍셀을 0 으로 남겨 두면
@@ -885,6 +910,23 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Visual", meta = (ClampMin = "0.0", ClampMax = "1.5"))
 	float PaintFieldWarpCells = 0.7f;
+
+	/**
+	 * 하이라이트를 Area 박스가 아니라 "칠해진 칸" 으로 그린다. (기획서 5.6)
+	 *
+	 * 오염 레이어가 이걸 켠다. 도로 전체를 덮는 단일 존이라 Area 박스를 그리면 화면 전체가
+	 * 켜지고 아무 정보도 되지 않는다. 플레이어가 알아야 하는 것은 존의 위치가 아니라
+	 * 칠해진 칸이 어디 있는가다. 스테이지 마무리에 맵 오브젝트 사이에 남은 페인트를
+	 * 찾는 것이 이 옵션이 푸는 문제다.
+	 *
+	 * 모드로 자동 판단하지 않고 스위치로 두는 이유는 bHighlightable 과 같다.
+	 * 청소 존도 "고리 없는 지우기 모드" 라서 자동 판단으로는 같이 걸린다.
+	 *
+	 * 켜면 PaintFieldMaterial 이 Highlight 스칼라 파라미터를 갖고 있어야 한다.
+	 * (bUsePaintField 가 꺼져 있거나 머티리얼이 없으면 아무 일도 일어나지 않는다)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
+	bool bHighlightPaintedCells = false;
 
 	// 붓이 칸을 바꾼 자리에 터질 파티클. 비워 두면 이펙트가 나오지 않는다.
 	//
