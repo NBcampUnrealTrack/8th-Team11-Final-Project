@@ -101,7 +101,7 @@ private:
 	/** 집을 수 있는 도구 중 가장 가까운 것. 없으면 nullptr. */
 	ACWBaseTool* FindNearestPickableTool() const;
 
-	/** 도구를 내려놓을 지점. 캐릭터 앞쪽 지면으로 잡는다. */
+	/** 도구를 내려놓을 지점. 캐릭터 앞쪽 지면으로 잡되, 주울 수 없는 곳이면 발밑으로 잡는다. */
 	FVector CalculateDropLocation() const;
 
 	void SetFocusedTool(ACWBaseTool* NewTool);
@@ -118,6 +118,15 @@ protected:
 	// 내려놓을 때 캐릭터 앞으로 밀어내는 거리(cm). 발밑에 두면 다시 집을 때 헷갈린다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tool")
 	float DropForwardDistance = 90.f;
+
+	// 내려놓을 바닥이 캐릭터 발 높이와 이만큼(cm)까지만 달라도 된다.
+	// 이보다 높으면 매시 윗면, 낮으면 난간 밖으로 보고 발밑에 둔다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tool", meta = (ClampMin = "0.0"))
+	float MaxDropHeightDelta = 50.f;
+
+	// 앞으로 밀어낼 때 벽에서 띄우는 거리(cm). 도구가 벽에 파묻혀 보이지 않게 한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tool", meta = (ClampMin = "0.0"))
+	float DropClearanceRadius = 20.f;
 
 	// 서버가 집기 요청을 검증할 때 PickupRadius 에 곱하는 여유값.
 	// 클라이언트와 서버의 캐릭터 위치가 핑만큼 어긋나 있어서, 딱 맞게 재면 정상 요청도 거절된다.
