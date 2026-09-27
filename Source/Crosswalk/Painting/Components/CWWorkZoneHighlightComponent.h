@@ -55,10 +55,13 @@ private:
 	void RefreshHighlights();
 
 	/**
-	 * 모든 존의 표시를 끈다.
+	 * 내가 켜둔 표시를 끈다.
 	 *
 	 * 조기 반환 대신 이걸 부르는 자리가 있다. 존이 상태를 들고 있기 때문에 그냥 돌아가면
 	 * 마지막으로 켜둔 표시가 그대로 남는다. 도구를 내려놓거나 캐릭터가 사라져도 안 꺼진다.
+	 *
+	 * 한 번도 켠 적이 없으면 아무것도 하지 않는다. 표시 상태는 존이 들고 있는 공용 값이라,
+	 * 켠 적 없는 컴포넌트가 끄면 남이 켜둔 것을 끄는 것이 된다.
 	 */
 	void ClearAllHighlights();
 
@@ -107,6 +110,17 @@ private:
 	// 없으면 이 컴포넌트는 놀고 있는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UCWToolHolderComponent> ToolHolderComponent;
+
+	/**
+	 * 이 컴포넌트가 존을 켠 적이 있는가.
+	 *
+	 * 없으면 ClearAllHighlights 가 아무것도 하지 않는다. 이게 없으면 남의 캐릭터에 붙은
+	 * 컴포넌트가 내 표시를 끈다. 클라이언트 월드에는 다른 플레이어의 폰도 전부 존재하고,
+	 * 그 폰들의 컴포넌트는 IsLocallyControlled 가 false 라 매번 끄는 경로로 들어간다.
+	 * 내 컴포넌트가 0.2초마다 켜고 남의 컴포넌트가 0.2초마다 꺼서 화면이 깜빡였다.
+	 * 두 타이머의 위상 차이가 접속 시점마다 달라서 깜빡이는 주기도 사람마다 달랐다.
+	 */
+	bool bHasAppliedHighlights = false;
 
 	FTimerHandle RefreshTimerHandle;
 };

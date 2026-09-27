@@ -75,6 +75,19 @@ bool UCWWorkZoneHighlightComponent::IsLocallyControlled() const
 
 void UCWWorkZoneHighlightComponent::ClearAllHighlights()
 {
+	/**
+	 * 내가 켠 적이 없으면 끄지도 않는다.
+	 *
+	 * 표시 상태는 존이 들고 있는 값이라 이 월드의 모든 컴포넌트가 같은 것을 본다.
+	 * 남의 캐릭터에 붙은 컴포넌트까지 끄기에 나서면 내가 켜둔 표시를 지운다.
+	 */
+	if (!bHasAppliedHighlights)
+	{
+		return;
+	}
+
+	bHasAppliedHighlights = false;
+
 	const UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this);
 	if (PaintingSubsystem == nullptr)
 	{
@@ -100,10 +113,14 @@ void UCWWorkZoneHighlightComponent::RefreshHighlights()
 	}
 
 	/**
-	 * 표시할 수 없는 상황이면 조기 반환하지 않고 전부 내린다.
+	 * 표시할 수 없는 상황이면 조기 반환하지 않고 내가 켜둔 것을 내린다.
 	 *
 	 * 존이 상태를 들고 있기 때문이다. 그냥 돌아가면 마지막으로 켜둔 표시가 화면에 남는다.
 	 * 도구를 내려놓았는데도 안 꺼지는 버그가 정확히 여기서 나온다.
+	 *
+	 * 끄는 것은 ClearAllHighlights 가 "내가 켠 적이 있을 때만" 하도록 막아 둔다.
+	 * 이 경로에는 남의 캐릭터에 붙은 컴포넌트도 매번 들어오기 때문이다. 클라이언트 월드에는
+	 * 다른 플레이어의 폰이 전부 존재하고, 그 폰들은 IsLocallyControlled 가 false 다.
 	 *
 	 * "내가 조종하는 캐릭터인가" 를 BeginPlay 가 아니라 여기서 보는 이유도 있다.
 	 * 그 시점에는 컨트롤러가 아직 안 붙어 있을 수 있어 판단을 믿을 수 없다.
@@ -141,6 +158,12 @@ void UCWWorkZoneHighlightComponent::RefreshHighlights()
 			: ECWZoneHighlightState::None;
 
 		Zone->SetHighlightState(State);
+
+		// 하나라도 켰으면 끌 책임이 생긴다. (ClearAllHighlights 주석 참고)
+		if (State != ECWZoneHighlightState::None)
+		{
+			bHasAppliedHighlights = true;
+		}
 
 #if ENABLE_DRAW_DEBUG
 		if (!bDrawDebugBoxes || State == ECWZoneHighlightState::None || World == nullptr || Zone->Area == nullptr)
