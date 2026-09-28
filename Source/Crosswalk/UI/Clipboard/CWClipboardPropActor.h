@@ -61,6 +61,9 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
+	// 떠 있는 채로 맵 이동 등으로 사라지면 해상도 고정이 인게임까지 남으므로 여기서 풂
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 #pragma endregion
 
 #pragma region Setup
@@ -123,6 +126,9 @@ private:
 
 	// 판과 종이의 경계 상자가 전부 화면 아래로 벗어났는지
 	bool IsPropOffScreen() const;
+
+	// 종이 글씨는 3D 월드에 그려져 해상도 품질이 낮으면 뭉개지므로 떠 있는 동안만 100% 를 요청함
+	void SetHoldFullWorldResolution(bool bHold);
 
 	// 최종 카메라 시점 기준으로 이번 프레임 트랜스폼을 설정함
 	void UpdateTransformFromCamera();
@@ -250,6 +256,9 @@ private:
 
 	// 내리기 완료는 원래 숨김 포즈에 닿을 시각에 미리 알림. 끝에서 한 번 더 알리지 않도록 기록함
 	bool bLowerNotified = false;
+
+	// 해상도 고정 요청은 설정 객체가 횟수로 세므로 액터마다 한 번만 요청하도록 기록함
+	bool bHoldsFullWorldResolution = false;
 
 	float SwayElapsed = 0.f;
 

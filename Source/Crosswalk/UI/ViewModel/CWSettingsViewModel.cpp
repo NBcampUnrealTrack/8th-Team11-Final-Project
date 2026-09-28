@@ -275,6 +275,13 @@ bool UCWSettingsViewModel::RequestSetQualityByIndex(int32 Index)
 
 	bIsVideoModeConfirmationPending = true;
 
+	// 클립보드가 떠 있는 동안 고정된 해상도를 확인 중에만 풀어 고른 화질 그대로 보여줌
+	// 확정·되돌리기에서 다시 고정함 (FinishPendingVideoMode)
+	if (UCWGameUserSettings* CWGameUserSettings = Cast<UCWGameUserSettings>(GameUserSettings))
+	{
+		CWGameUserSettings->SetWorldResolutionPreview(true);
+	}
+
 	// 확인 전에는 화면에만 임시 적용하고 저장하지 않음
 	GameUserSettings->ApplyNonResolutionSettings();
 
@@ -394,6 +401,12 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 			// 스냅샷이 없는 예외 상황에서는 엔진 기본 복구 사용
 			GameUserSettings->RevertVideoMode();
 			GameUserSettings->ApplyResolutionSettings(false);
+		}
+
+		// 확정·되돌리기로 품질이 정해졌으니 미리보기를 끝내고 클립보드 해상도 고정을 되살림
+		if (UCWGameUserSettings* CWGameUserSettings = Cast<UCWGameUserSettings>(GameUserSettings))
+		{
+			CWGameUserSettings->SetWorldResolutionPreview(false);
 		}
 	}
 

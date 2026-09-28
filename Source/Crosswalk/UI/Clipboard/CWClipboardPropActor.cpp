@@ -1,6 +1,7 @@
 // CWClipboardPropActor.cpp
 
 #include "UI/Clipboard/CWClipboardPropActor.h"
+#include "Core/CWGameUserSettings.h"
 
 #include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -110,6 +111,12 @@ void ACWClipboardPropActor::BeginPlay()
 	Super::BeginPlay();
 
 	ApplyLightingChannels();
+}
+
+void ACWClipboardPropActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	SetHoldFullWorldResolution(false);
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACWClipboardPropActor::Tick(float DeltaSeconds)
@@ -539,6 +546,7 @@ void ACWClipboardPropActor::StartRaise()
 
 	SetActorHiddenInGame(false);
 	SetActorTickEnabled(true);
+	SetHoldFullWorldResolution(true);
 
 	// 첫 프레임부터 제자리에 있도록 미리 한 번 설정함
 	UpdateTransformFromCamera();
@@ -591,6 +599,28 @@ float ACWClipboardPropActor::ComputeAlpha(float InOffsetSeconds) const
 	}
 
 	return FMath::Clamp((MotionElapsed - InOffsetSeconds) / Duration, 0.f, 1.f);
+}
+
+void ACWClipboardPropActor::SetHoldFullWorldResolution(bool bHold)
+{
+	if (bHoldsFullWorldResolution == bHold)
+	{
+		return;
+	}
+	UCWGameUserSettings* Settings = UCWGameUserSettings::GetCWGameUserSettings();
+	if (!Settings)
+	{
+		return;
+	}
+	bHoldsFullWorldResolution = bHold;
+	if (bHold)
+	{
+		Settings->AcquireFullWorldResolution();
+	}
+	else
+	{
+		Settings->ReleaseFullWorldResolution();
+	}
 }
 
 bool ACWClipboardPropActor::IsPropOffScreen() const
@@ -775,6 +805,7 @@ void ACWClipboardPropActor::FinishMotion()
 
 		SetActorHiddenInGame(true);
 		SetActorTickEnabled(false);
+		SetHoldFullWorldResolution(false);
 
 		// 틱이 멈추면 전환이 끝나지 않아 기다리던 화면의 입력이 계속 잠김
 		if (bPaperCrossfading)
