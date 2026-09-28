@@ -56,6 +56,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnSupplyActionRejectedSignature,
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnCanCarriedLocallySignature, UCWSupplyCarrierComponent*, CarrierComponent, bool, bPickedUp);
 
 /**
+ * 도구 충전이 서버에서 확정됐을 때. 서버가 확정한 뒤 모든 머신에서 같은 시점에 발행된다.
+ *
+ * 충전 사운드가 붙는 자리다. 충전한 사람과 도구를 받는 사람이 다를 수 있어서(기획서 6-3),
+ * OnCanCarriedLocally 처럼 본인 기계에만 즉시 내보내면 받는 쪽이 못 듣는다. 그래서 뽑기/반납과
+ * 달리 서버 확정 후 Multicast 로 전원에게 뿌린다. (OnCansBurst 와 같은 이유)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnToolChargedSignature, UCWSupplyCarrierComponent*, CarrierComponent);
+
+/**
  * 플레이어 캐릭터에 붙이는 페인트 통 운반 컴포넌트. (기획서 6-1 ~ 6-3, 6-6)
  *
  * 하는 일
@@ -199,6 +208,10 @@ private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayCanBurst(FVector_NetQuantize BurstLocation, int32 BrokenCount);
 
+	/** 충전 사운드를 전원에게 뿌린다. 이 5개 사운드 중 제일 자주 들려야 해서 Reliable 로 둔다. */
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayChargeSound();
+
 	/**
 	 * 이 사고를 맡을 자국 필드. 없으면 nullptr.
 	 *
@@ -322,4 +335,7 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnCansBurstSignature OnCansBurst;
+
+	UPROPERTY(BlueprintAssignable, Category = "Supply")
+	FCWOnToolChargedSignature OnToolCharged;
 };
