@@ -42,6 +42,7 @@ public:
 public:
 	// 기존 팝업의 내용을 프롭으로 옮김. 실패하면 화면 UI를 그대로 사용함
 	ACWClipboardPropActor* AttachPaperContent(UUserWidget* InOwner, UWidget* InContent);
+	ACWClipboardPropActor* GetPropActor() const { return PropActor; }
 
 	// 클립보드를 화면 안으로 올림
 	// 이미 올라와 있거나 연출이 불가능하면 건너뛰고 즉시 OnRaiseFinished 를 발행함
