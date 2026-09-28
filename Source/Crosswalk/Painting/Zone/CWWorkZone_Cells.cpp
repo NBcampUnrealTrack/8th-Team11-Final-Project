@@ -471,7 +471,7 @@ void ACWWorkZone_Cells::Tick(float DeltaSeconds)
 
 	// 모아둔 붓질을 내보낸다. 간격이 안 됐으면 다음 프레임으로 넘어간다.
 	FlushOutgoingStrokes(false);
-
+	
 	// 늦게 들어올 플레이어에게 넘길 칸 상태를 갱신한다. 서버에서만 유효하다.
 	RebuildCellSnapshotIfDue();
 
@@ -869,6 +869,101 @@ bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
 	}
 
 	return Super::CanWorkNow(ToolType);
+}
+
+ECWZoneHighlightState ACWWorkZone_Cells::GetHighlightStateFor(ECWToolType ToolType) const
+{
+	if (!bHighlightable)
+	{
+		return ECWZoneHighlightState::None;
+	}
+
+	if (IsCleanupTool(ToolType))
+	{
+		// 완료 여부를 보지 않는 것은 CanWorkNow 와 같다. 도색이 끝나도 삐져나간 페인트는 남는다.
+		// 대신 지울 것이 없으면 가리킬 이유가 없다.
+		if (GetCleanableCellCount() <= 0)
+		{
+			return ECWZoneHighlightState::None;
+		}
+
+		return IsLocked() ? ECWZoneHighlightState::Pending : ECWZoneHighlightState::Active;
+	}
+
+	if (IsFillTool(ToolType))
+	{
+		/**
+		 * 칸 발광으로 안내하는 존은 채우기 도구에 반응하지 않는다.
+		 *
+		 * 그 표시의 뜻이 "여기 칠해진 것을 치워라" 이기 때문이다. 채우는 도구를 들었을 때
+		 * 같은 자리를 밝히면 "여기다 칠하라" 로 정반대로 읽힌다.
+		 *
+		 * 오염 레이어에서 실제로 생기는 문제다. 낙서를 허용하려고 흰 롤러를 FillTools 에
+		 * 넣어두는데, 그러면 흰 롤러를 드는 순간 치울 대상이 안내로 켜진다.
+		 * 오염 레이어는 "깨끗함 = 완료" 라서 아래 완료 검사에도 걸리지 않는다.
+		 *
+		 * bHighlightable 로는 막을 수 없다. 그걸 끄면 검은 롤러일 때도 안 뜬다.
+		 */
+		if (bHighlightPaintedCells)
+		{
+			return ECWZoneHighlightState::None;
+		}
+
+		// CanWorkNow 와 갈라지는 지점이다. 그쪽은 낙서를 허용하려고 완료를 보지 않지만,
+		// 안내로는 이미 다 칠한 존을 계속 가리키면 안 된다.
+		if (IsCompleted())
+		{
+			return ECWZoneHighlightState::None;
+		}
+
+		return IsLocked() ? ECWZoneHighlightState::Pending : ECWZoneHighlightState::Active;
+	}
+
+	return Super::GetHighlightStateFor(ToolType);
+}
+
+void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState)
+{
+	if (!bHighlightPaintedCells)
+	{
+		Super::OnHighlightStateChanged_Implementation(NewState);
+		return;
+	}
+
+	/**
+	 * 오염 레이어는 박스를 그리지 않는다.
+	 *
+	 * 도로 전체를 덮는 단일 존이라 Area 를 그리면 화면 전체가 켜진다. 대신 이미 칠해진 칸을
+	 * 셰이더에서 밝혀서 "치울 대상" 을 직접 가리킨다. 칸 상태는 이미 텍스처로 넘어가 있어서
+	 * 칸을 순회하지 않고 스칼라 하나만 바꾸면 된다. 드로우콜도 그대로 1개다.
+	 */
+	RefreshPaintFieldHighlight();
+}
+
+void ACWWorkZone_Cells::RefreshPaintFieldHighlight()
+{
+	if (!bHighlightPaintedCells || PaintFieldMID == nullptr)
+	{
+		return;
+	}
+
+	float Intensity = 0.f;
+
+	switch (GetHighlightState())
+	{
+	case ECWZoneHighlightState::Active:
+		Intensity = 1.f;
+		break;
+
+	case ECWZoneHighlightState::Pending:
+		Intensity = HighlightPendingIntensity;
+		break;
+
+	default:
+		break;
+	}
+
+	PaintFieldMID->SetScalarParameterValue(TEXT("Highlight"), Intensity);
 }
 
 void ACWWorkZone_Cells::Multicast_ApplyBrushes_Implementation(const TArray<FCWBrushStroke>& Strokes)
@@ -1663,6 +1758,10 @@ void ACWWorkZone_Cells::RefreshPaintField()
 		// 흔드는 폭을 칸 크기에 비례해 넣는다. 격자 해상도가 다른 존들이 같은 설정으로 비슷하게 보인다.
 		const float AverageCellSize = (CachedCellWorldSize.X + CachedCellWorldSize.Y) * 0.5f;
 		PaintFieldMID->SetScalarParameterValue(TEXT("WarpAmountCm"), AverageCellSize * PaintFieldWarpCells);
+
+		// MID 를 새로 물렸으면 발광도 다시 걸어준다. 텍스처가 다시 만들어질 때 MID 가
+		// 끊기는데, 그 사이 표시 상태가 안 바뀌면 다시 켜줄 사람이 없다.
+		RefreshPaintFieldHighlight();
 
 		/**
 		 * MID 가 방금 새로 만들어졌을 수 있다. 완료 상태는 파라미터에만 남으므로 여기서 다시 얹는다.

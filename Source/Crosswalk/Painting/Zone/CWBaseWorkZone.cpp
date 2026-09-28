@@ -1,8 +1,10 @@
 ﻿#include "Painting/Zone/CWBaseWorkZone.h"
 
 #include "Components/BoxComponent.h"
+#include "Components/DecalComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWPaintingSubsystem.h"
 #include "Painting/Components/CWWorkerComponent.h"
@@ -237,6 +239,173 @@ bool ACWBaseWorkZone::CanUseTool(ECWToolType ToolType) const
 bool ACWBaseWorkZone::CanWorkNow(ECWToolType ToolType) const
 {
 	return !bLocked && !bCompleted && CanUseTool(ToolType);
+}
+
+ECWZoneHighlightState ACWBaseWorkZone::GetHighlightStateFor(ECWToolType ToolType) const
+{
+	// 안내에서 빼둔 존이거나, 이 도구를 안 받거나, 이미 끝났으면 그릴 것이 없다.
+	if (!bHighlightable || !CanUseTool(ToolType) || bCompleted)
+	{
+		return ECWZoneHighlightState::None;
+	}
+
+	// 받기는 하는데 앞 순서가 안 끝났다. 순서를 가르치는 몫이 이 상태에 있다.
+	return bLocked ? ECWZoneHighlightState::Pending : ECWZoneHighlightState::Active;
+}
+
+void ACWBaseWorkZone::SetHighlightState(ECWZoneHighlightState NewState)
+{
+	if (HighlightState == NewState)
+	{
+		return;
+	}
+
+	HighlightState = NewState;
+
+	OnHighlightStateChanged(HighlightState);
+}
+
+bool ACWBaseWorkZone::EnsureHighlightDecal()
+{
+	if (HighlightDecal != nullptr)
+	{
+		return true;
+	}
+
+	if (bHighlightDecalSetupFailed || Area == nullptr)
+	{
+		return false;
+	}
+
+	if (HighlightMaterial == nullptr)
+	{
+		// 조용히 안 그리면 "기능이 없는 것" 과 구분이 안 된다. 한 번은 이유를 남긴다.
+		bHighlightDecalSetupFailed = true;
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] 하이라이트 머티리얼이 없습니다. Highlight Material 프로퍼티를 확인하세요."),
+			*GetName());
+		return false;
+	}
+
+	HighlightDecal = NewObject<UDecalComponent>(this, NAME_None, RF_Transient);
+	HighlightDecal->SetupAttachment(Area);
+	HighlightDecal->SetDecalMaterial(HighlightMaterial);
+	HighlightDecal->SetSortOrder(HighlightDecalSortOrder);
+
+	// 화면에서 작아졌을 때 사라지는 최적화를 끈다. 멀리 있는 존일수록 안내가 필요한데,
+	// 기본값이면 하필 그때 조용히 사라진다.
+	HighlightDecal->SetFadeScreenSize(0.f);
+
+	/**
+	 * 데칼은 컴포넌트의 +X 방향으로 투영된다. Pitch -90 으로 X 를 아래로 돌려야 바닥에 찍힌다.
+	 *
+	 * 리티클과 달리 상대 회전을 쓴다. 저쪽은 부모가 캐릭터라 월드 회전이어야 했지만,
+	 * 이쪽은 부모가 Area 라서 존이 돌아간 만큼 데칼도 같이 돌아야 맞는다.
+	 * 횡단보도 존은 대부분 돌아가 있다.
+	 */
+	HighlightDecal->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f));
+
+	// 붙자마자 보이지 않게 한다. 상태를 반영하기 전 한 프레임이 찍히는 것을 막는다.
+	HighlightDecal->SetVisibility(false);
+	HighlightDecal->RegisterComponent();
+
+	HighlightMID = HighlightDecal->CreateDynamicMaterialInstance();
+
+	return true;
+}
+
+void ACWBaseWorkZone::ApplyHighlightDecalSize()
+{
+	if (HighlightDecal == nullptr || Area == nullptr)
+	{
+		return;
+	}
+
+	const FVector2D SafeScale(
+		FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER),
+		FMath::Max(HighlightSizeScale.Y, KINDA_SMALL_NUMBER));
+
+	// DecalSize 의 X 가 투영 깊이, Y/Z 가 평면 반쪽 크기다.
+	// Pitch -90 을 거치면 로컬 Y 가 존의 Y 로, 로컬 Z 가 존의 X 로 간다.
+	// 스케일은 Area 에 붙어 있어 자동으로 따라오므로 스케일 안 먹은 값을 넣는다.
+	const FVector UnscaledExtent = Area->GetUnscaledBoxExtent();
+
+	HighlightDecal->DecalSize = FVector(
+		HighlightDecalProjectionDepth,
+		UnscaledExtent.Y * SafeScale.Y,
+		UnscaledExtent.X * SafeScale.X);
+
+	HighlightDecal->MarkRenderStateDirty();
+
+	if (HighlightMID == nullptr)
+	{
+		return;
+	}
+
+	/**
+	 * 테두리 두께를 UV 단위로 환산해 넘긴다. 머티리얼은 존의 실제 크기를 모른다.
+	 *
+	 * UV 는 그려지는 면 전체(반쪽이 아니라 전체)를 0~1 로 덮으므로 월드 두께를 전체 길이로 나눈다.
+	 * 여기서 쓰는 길이는 Area 가 아니라 **배율을 먹인 실제 표시 크기**여야 한다.
+	 * 배율을 빼먹으면 존을 줄였을 때 테두리만 상대적으로 가늘어진다.
+	 *
+	 * 축 대응은 DecalSize 와 다르다. U 가 존의 X, V 가 존의 Y 다.
+	 * 데칼의 UV 방향은 메쉬 축과 따로 놀아서, DecalSize 가 맞았다고 UV 도 같으리라는 보장이 없다.
+	 * 이걸 반대로 잡으면 긴 축 두께를 짧은 축 길이로 나누게 되는데, 횡단보도 스트라이프처럼
+	 * 비율이 극단적인 존에서는 테두리가 아니라 양 끝을 덮는 덩어리가 된다.
+	 *
+	 * 스케일 먹은 크기를 써야 한다. Area 스케일이 3배인 존에서 안 먹은 값으로 나누면
+	 * 테두리가 3배로 굵어진다.
+	 */
+	const FVector ScaledExtent = Area->GetScaledBoxExtent();
+
+	const float WorldSizeX = FMath::Max(ScaledExtent.X * 2.f * SafeScale.X, KINDA_SMALL_NUMBER);
+	const float WorldSizeY = FMath::Max(ScaledExtent.Y * 2.f * SafeScale.Y, KINDA_SMALL_NUMBER);
+
+	// 테두리가 존을 다 먹지 않게 절반에서 자른다. 아주 얇은 존에서도 가운데가 남는다.
+	HighlightMID->SetVectorParameterValue(
+		HighlightEdgeWidthParameterName,
+		FLinearColor(
+			FMath::Min(HighlightEdgeThickness / WorldSizeX, 0.5f),
+			FMath::Min(HighlightEdgeThickness / WorldSizeY, 0.5f),
+			0.f,
+			0.f));
+}
+
+void ACWBaseWorkZone::OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState)
+{
+	if (NewState == ECWZoneHighlightState::None)
+	{
+		// 아직 한 번도 안 만들었으면 만들 이유가 없다.
+		// 데디케이티드 서버에서 데칼이 아예 생기지 않는 경로가 여기다.
+		if (HighlightDecal != nullptr)
+		{
+			HighlightDecal->SetVisibility(false);
+		}
+
+		return;
+	}
+
+	if (!EnsureHighlightDecal())
+	{
+		return;
+	}
+
+	// 켤 때마다 다시 잰다. 디테일 패널에서 배율·두께를 바꾸고 도구를 다시 들면 바로 보인다.
+	ApplyHighlightDecalSize();
+
+	const bool bActive = (NewState == ECWZoneHighlightState::Active);
+
+	if (HighlightMID != nullptr)
+	{
+		HighlightMID->SetVectorParameterValue(
+			HighlightColorParameterName, bActive ? HighlightActiveColor : HighlightPendingColor);
+
+		HighlightMID->SetScalarParameterValue(
+			HighlightIntensityParameterName, bActive ? 1.f : HighlightPendingIntensity);
+	}
+
+	HighlightDecal->SetVisibility(true);
 }
 
 void ACWBaseWorkZone::SetProgress(float NewProgress)

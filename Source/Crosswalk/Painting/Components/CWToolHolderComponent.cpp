@@ -243,36 +243,100 @@ ACWBaseTool* UCWToolHolderComponent::FindNearestPickableTool() const
 
 FVector UCWToolHolderComponent::CalculateDropLocation() const
 {
-	// DropHeldTool 에서만 부르고, 그때는 Owner 와 HeldTool 이 모두 유효하다.
+	/**
+	 * DropHeldTool 에서만 부르고, 그때는 Owner 와 HeldTool 이 모두 유효하다.
+	 *
+	 * 목표는 "캐릭터가 걸어가서 다시 주울 수 있는 곳" 이다. 예전에는 앞쪽 지점의 2m 위에서
+	 * 아래로 쏴서 처음 맞은 면에 놓았다. 그러면 벤치, 화단, 정류장 지붕 윗면이나 벽 너머,
+	 * 치고 지나가던 차 지붕에 올라가 회수할 수 없는 경우가 생겼다. 그래서
+	 *   1. 캐릭터에서 앞쪽으로 수평 스윕해서 벽을 넘지 않게 하고
+	 *   2. 허리 높이에서 아래로만 쏴서 머리 위 매시는 보지 않고
+	 *   3. 찾은 면이 걸을 수 있는 기울기이고 발 높이와 비슷할 때만 쓴다.
+	 * 조건에 안 맞으면 캐릭터 발밑에 둔다. 방금 서 있던 자리라 반드시 닿을 수 있다.
+	 *
+	 * 트레이스 채널은 ECC_Pawn 이다. "캐릭터 이동을 막는 것" 만 맞기 때문에
+	 * 작업존(Visibility 블록), 휴식구역, 도구, 차량 박스(오버랩) 같은 판정용 볼륨은 걸리지 않는다.
+	 * 다른 플레이어 캡슐은 Pawn 을 막으므로 응답에서 따로 뺀다.
+	 */
 	const AActor* Owner = GetOwner();
-	const FVector AheadLocation = Owner->GetActorLocation() + Owner->GetActorForwardVector() * DropForwardDistance;
+	const FVector Origin = Owner->GetActorLocation();
+
+	float CapsuleRadius = 0.f;
+	float CapsuleHalfHeight = 0.f;
+	Owner->GetSimpleCollisionCylinder(CapsuleRadius, CapsuleHalfHeight);
+	const float FeetZ = Origin.Z - CapsuleHalfHeight;
+	const FVector FeetLocation(Origin.X, Origin.Y, FeetZ);
 
 	const UWorld* World = GetWorld();
 	if (World == nullptr)
 	{
-		return AheadLocation;
+		return FeetLocation;
 	}
-
-	// 캐릭터 키 정도만 위아래로 훑으면 인도든 도로든 잡힌다.
-	constexpr float GroundTraceHalfHeight = 200.f;
 
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(Owner);
 	QueryParams.AddIgnoredActor(HeldTool);
 
-	FHitResult Hit;
-	if (World->LineTraceSingleByChannel(
-		Hit,
-		AheadLocation + FVector(0.f, 0.f, GroundTraceHalfHeight),
-		AheadLocation - FVector(0.f, 0.f, GroundTraceHalfHeight),
-		ECC_Visibility,
-		QueryParams))
+	FCollisionResponseParams ResponseParams;
+	ResponseParams.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
+
+	// 걸을 수 있는 바닥인지. 0.7 은 약 45도로, 캐릭터 무브먼트 기본 보행 각도와 비슷하다.
+	constexpr float MinFloorNormalZ = 0.7f;
+
+	const auto FindFloorBelow = [&](const FVector& Location, FVector& OutFloor) -> bool
 	{
-		return Hit.ImpactPoint;
+		FHitResult Hit;
+		if (!World->LineTraceSingleByChannel(
+			Hit,
+			FVector(Location.X, Location.Y, Origin.Z),
+			FVector(Location.X, Location.Y, FeetZ - MaxDropHeightDelta),
+			ECC_Pawn,
+			QueryParams,
+			ResponseParams))
+		{
+			return false;
+		}
+
+		if (Hit.ImpactNormal.Z < MinFloorNormalZ || FMath::Abs(Hit.ImpactPoint.Z - FeetZ) > MaxDropHeightDelta)
+		{
+			return false;
+		}
+
+		OutFloor = Hit.ImpactPoint;
+		return true;
+	};
+
+	// 1. 앞으로 밀어내되 벽이나 펜스에 막히면 그 앞에서 멈춘다.
+	FVector DropTarget = Origin + Owner->GetActorForwardVector().GetSafeNormal2D() * DropForwardDistance;
+
+	FHitResult WallHit;
+	if (World->SweepSingleByChannel(
+		WallHit,
+		Origin,
+		DropTarget,
+		FQuat::Identity,
+		ECC_Pawn,
+		FCollisionShape::MakeSphere(DropClearanceRadius),
+		QueryParams,
+		ResponseParams))
+	{
+		DropTarget = WallHit.Location;
 	}
 
-	// 앞이 허공이면(난간 밖 등) 그냥 지금 높이에 둔다.
-	return AheadLocation;
+	// 2~3. 그 지점 아래에서 주울 수 있는 바닥을 찾는다.
+	FVector Floor;
+	if (FindFloorBelow(DropTarget, Floor))
+	{
+		return Floor;
+	}
+
+	// 앞이 난간 밖이거나 매시 위라면 발밑에 둔다.
+	if (FindFloorBelow(Origin, Floor))
+	{
+		return Floor;
+	}
+
+	return FeetLocation;
 }
 
 void UCWToolHolderComponent::SetFocusedTool(ACWBaseTool* NewTool)

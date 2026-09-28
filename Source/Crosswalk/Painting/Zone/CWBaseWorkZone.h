@@ -10,9 +10,30 @@
 class ACWBaseWorkZone;
 class UBoxComponent;
 class UCWWorkerComponent;
+class UDecalComponent;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnWorkProgressSignature, ACWBaseWorkZone*, Zone, float, Progress);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkCompletedSignature, ACWBaseWorkZone*, Zone);
+
+/**
+ * 소지한 도구를 기준으로 이 존을 화면에 어떻게 표시할 것인가. (작업존 하이라이트 기획서 5.2)
+ *
+ * 작업 판정(CanWorkNow)과 별개인 축이다. 두 상태를 같이 보여주는 이유는 순서 때문이다.
+ * 작업 가능한 존만 켜면, 순서가 아직인 도구를 들었을 때 화면에 아무 변화가 없어서
+ * "이 도구는 고장났나" 로 읽힌다. 잠긴 존을 흐리게라도 보여줘야 순서가 전달된다.
+ */
+UENUM(BlueprintType)
+enum class ECWZoneHighlightState : uint8
+{
+	// 이 도구와 무관하거나 이미 끝난 존. 아무것도 그리지 않는다.
+	None,
+	// 이 도구를 받는 존이지만 앞 순서가 안 끝나 잠겨 있다. "여기 쓸 건데 아직 차례가 아니다"
+	Pending,
+	// 지금 이 도구로 작업할 수 있다.
+	Active
+};
 
 /**
  * 작업 단계 하나를 담당하는 액터의 공통 부모.
@@ -171,6 +192,32 @@ public:
 	virtual bool CanWorkNow(ECWToolType ToolType) const;
 
 	/**
+	 * 이 존을 이 도구로 어떻게 표시할 것인가. (기획서 5.3)
+	 *
+	 * CanWorkNow 를 그대로 쓰지 않고 따로 여는 이유가 이 함수의 존재 이유다.
+	 * 칸 존은 깨끗한 오염 레이어에도 낙서를 시작할 수 있어야 해서 채우기 도구에 대해 완료를
+	 * 보지 않는데, 그 판정을 안내에 그대로 쓰면 도색이 끝난 스트라이프가 흰 롤러를 든 내내
+	 * 계속 빛난다.
+	 *
+	 * 작업 판정과 표시 판정을 나누되 기존 함수는 건드리지 않는다. 판정 책임이 존에 남는 것은
+	 * CanUseTool · HasWorkAt · IsWorkerInRange 와 같은 구조다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work|Highlight")
+	virtual ECWZoneHighlightState GetHighlightStateFor(ECWToolType ToolType) const;
+
+	/**
+	 * 표시 상태를 바꾼다. 바뀐 경우에만 OnHighlightStateChanged 가 돈다.
+	 *
+	 * 완전히 로컬이다. 리플리케이트하지 않는다. 판정에 쓰이는 값이 이미 전부 복제되고 있어서
+	 * 각 머신이 같은 답을 내고, 남의 화면에 내 안내가 뜰 이유도 없다.
+	 * 그래서 이 값은 "이 기계의 플레이어 기준" 이라는 점에 주의한다.
+	 */
+	void SetHighlightState(ECWZoneHighlightState NewState);
+
+	UFUNCTION(BlueprintPure, Category = "Work|Highlight")
+	ECWZoneHighlightState GetHighlightState() const { return HighlightState; }
+
+	/**
 	 * 이 지점에서 이 작업자가 실제로 진행시킬 일이 남아 있는가.
 	 *
 	 * 존이 겹쳐 있을 때 어느 쪽을 잡을지 가르는 데 쓴다. 박스 거리만 보면 겹친 두 존이
@@ -271,6 +318,37 @@ protected:
 
 	/** 진행도가 바뀔 때마다 호출. 자식 클래스에서 메쉬/머티리얼을 갱신하는 자리. */
 	virtual void OnProgressChanged(float NewProgress);
+
+	/**
+	 * 표시 상태가 바뀔 때 호출. 연출을 붙이는 자리다.
+	 *
+	 * ACWBaseTool::OnFocusChanged 와 같은 패턴이다. 상태는 C++ 이 정하고, 그걸로 무엇을
+	 * 그릴지는 자식이나 BP 가 정한다. 기본 구현은 아무것도 하지 않는다.
+	 *
+	 * 3단계에서 여기에 바닥 데칼 토글이 들어간다. 그때까지는 하이라이트 컴포넌트가
+	 * 디버그 박스로 그리고 있어서 화면이 비지 않는다.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "Work|Highlight")
+	void OnHighlightStateChanged(ECWZoneHighlightState NewState);
+	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState);
+
+	/**
+	 * 하이라이트 데칼과 MID 를 만든다. 처음 켜질 때 한 번만 돈다.
+	 *
+	 * 생성자나 BeginPlay 가 아니라 여기서 만드는 이유는 리티클(UCWWorkReticleComponent)과 같다.
+	 * 하이라이트는 완전히 로컬이라 데디케이티드 서버에서는 켜질 일이 없다. 켜질 때 만들면
+	 * 그런 머신에서는 데칼이 아예 생기지 않는다. 존이 수십 개인 레벨에서 그만큼 절약된다.
+	 */
+	bool EnsureHighlightDecal();
+
+	/**
+	 * 데칼 크기와 테두리 두께를 Area 크기에서 다시 계산한다.
+	 *
+	 * 만드는 자리가 아니라 켜지는 자리에서 부른다. 그래야 PIE 중에 디테일 패널에서
+	 * 배율이나 두께를 바꾸고 도구를 다시 들기만 해도 결과가 바로 보인다.
+	 * 만들 때 한 번만 하면 값을 만질 때마다 PIE 를 껐다 켜야 한다.
+	 */
+	void ApplyHighlightDecalSize();
 
 	/**
 	 * 디버그 줄 끝에 붙일 추가 정보. 자식이 자기 단위를 덧붙이는 자리다.
@@ -412,6 +490,94 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Paint")
 	bool bBlocksPaintSpill = false;
 
+	/**
+	 * 이 존을 도구 안내(하이라이트) 대상으로 삼을 것인가. (기획서 5.4)
+	 *
+	 * 도구 목록만으로는 거를 수 없는 존이 있어서 명시적 스위치를 둔다.
+	 * ACWWorkZone_Cells::CanUseTool 은 FillTools / CleanupTools 에 든 도구를 AcceptedTools 와
+	 * 무관하게 통과시키기 때문에, 낙서용으로 흰 롤러를 받는 오염 레이어는 흰 롤러를 드는
+	 * 순간 도로 전체가 안내 대상이 된다.
+	 *
+	 * 추측으로 거르는 규칙(ObjectiveName 이 비었는지 등)보다 이쪽이 낫다.
+	 * 왜 안 뜨는지가 레벨에서 바로 보인다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
+	bool bHighlightable = true;
+
+	// 하이라이트를 그릴 데칼 머티리얼. 비워두면 이 존은 아무것도 그리지 않는다.
+	//
+	// 아래 파라미터 이름 두 개를 갖고 있어야 한다. 이름이 안 맞으면 값이 조용히 버려져서
+	// 머티리얼 기본값 그대로 그려진다. 그래서 처음 만들 때 한 번 검사하고 로그를 남긴다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
+	TObjectPtr<UMaterialInterface> HighlightMaterial;
+
+	// 지금 작업할 수 있는 상태의 색.
+	//
+	// 리티클의 진행 가능 색(UCWWorkReticleComponent::WorkableColor)과 같은 값이다.
+	// 두 표시가 같은 화면에 뜨는데 초록의 의미가 서로 다르면 화면이 거짓말을 한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color")
+	FLinearColor HighlightActiveColor = FLinearColor(0.1f, 0.9f, 0.2f, 1.f);
+
+	// 아직 차례가 아닌 상태의 색.
+	//
+	// 빨강을 쓰지 않는다. 리티클이 빨강을 "눌러도 진행되지 않는다" 에 이미 쓰고 있어서,
+	// 여기에 또 쓰면 두 빨강의 의미가 갈린다. Pending 은 금지가 아니라 "아직" 이므로
+	// 색상을 바꾸는 대신 채도를 뺀다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color")
+	FLinearColor HighlightPendingColor = FLinearColor(0.42f, 0.44f, 0.46f, 1.f);
+
+	// 아직 차례가 아닌 상태의 세기. Active 는 항상 1 이다.
+	//
+	// 색만 바꾸지 않고 세기까지 빼는 이유: 색상(hue) 차이만으로 가르면 색각 이상 플레이어가
+	// 두 상태를 구분하지 못한다. 명도가 같이 갈려야 누구에게나 읽힌다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HighlightPendingIntensity = 0.35f;
+
+	// 데칼 정렬 순서. 같은 자리를 여러 데칼이 덮으면 이 값이 큰 쪽이 위로 온다.
+	//
+	// 참고 — 먼지 = -10, 도색 자국(ACWPaintDecalField) = 0, 조준 원 = 100.
+	// 도색 결과보다는 위에 보여야 하고, 조준 원보다는 아래여야 한다.
+	// 조준이 항상 최상위라는 기존 규약을 깨지 않는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
+	int32 HighlightDecalSortOrder = 50;
+
+	// 데칼이 아래로 투영되는 깊이(cm). 도로 요철과 연석을 타넘는 여유다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "1.0"))
+	float HighlightDecalProjectionDepth = 50.f;
+
+	/**
+	 * 하이라이트를 Area 박스 대비 얼마로 그릴 것인가. X 가 존의 X, Y 가 존의 Y 다.
+	 *
+	 * Area 를 줄여서 맞추면 안 되기 때문에 따로 둔다. 그 박스에는 작업 가능 거리와 커서
+	 * 트레이스가 묶여 있어서, 표시를 맞추려고 건드리면 작업 판정이 같이 바뀐다.
+	 *
+	 * 작업 영역이 실제 그림보다 넉넉하게 잡혀 있는 존에서 1 미만으로 낮춘다.
+	 * 1 을 넘기면 그림 바깥까지 테두리가 나간다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "0.05"))
+	FVector2D HighlightSizeScale = FVector2D(1.f, 1.f);
+
+	/**
+	 * 테두리 선의 두께(cm). 월드 기준이다.
+	 *
+	 * 머티리얼이 UV 로 두께를 잡으면 안 되기 때문에 여기서 cm 로 받아 UV 로 환산해 넘긴다.
+	 * 존마다 가로세로 비율이 다른데 UV 두께를 그대로 쓰면 짧은 쪽만 굵어진다.
+	 * 횡단보도 스트라이프는 비율이 극단적이라 테두리가 존을 통째로 덮어버린다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "0.1"))
+	float HighlightEdgeThickness = 12.f;
+
+	// 머티리얼 파라미터 이름. 머티리얼 쪽 이름을 바꿨다면 여기도 같이 바꾼다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Material")
+	FName HighlightColorParameterName = TEXT("Color");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Material")
+	FName HighlightIntensityParameterName = TEXT("Intensity");
+
+	// 축별 테두리 두께를 UV 단위로 담아 넘긴다. R 이 U 축, G 가 V 축이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Material")
+	FName HighlightEdgeWidthParameterName = TEXT("EdgeWidth");
+
 	// 진행도가 이 값을 넘으면 완료 처리하고, 그 뒤로는 작업 입력을 받지 않는다.
 	//
 	// 기본값이 1 보다 낮은 이유는 칸 채우기 존 때문이다. 격자 구석 칸까지 전부 칠하기가
@@ -459,6 +625,19 @@ private:
 	// 잠금을 풀기 위해 끝나기를 기다리는 존들. 서버에서만 채운다.
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<ACWBaseWorkZone>> WatchedZones;
+
+	// 지금 이 기계에서의 표시 상태. 로컬 전용이라 복제하지 않는다.
+	ECWZoneHighlightState HighlightState = ECWZoneHighlightState::None;
+
+	// 하이라이트 하나에 데칼 하나. 껐다 켤 때 만들고 지우지 않고 가시성만 바꾼다.
+	UPROPERTY(Transient)
+	TObjectPtr<UDecalComponent> HighlightDecal;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HighlightMID;
+
+	// 데칼을 만들려다 실패했는가. 실패 로그를 상태가 바뀔 때마다 찍지 않으려고 둔다.
+	bool bHighlightDecalSetupFailed = false;
 
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Work")
