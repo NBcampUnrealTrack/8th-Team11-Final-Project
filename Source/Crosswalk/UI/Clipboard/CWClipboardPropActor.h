@@ -4,10 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Styling/SlateBrush.h"
 #include "CWClipboardPropActor.generated.h"
 
 class APlayerController;
+class SRetainerWidget;
+class SWidget;
 class UCurveFloat;
+class UMaterialInterface;
 class USpotLightComponent;
 class UStaticMeshComponent;
 class UUserWidget;
@@ -74,6 +78,15 @@ public:
 	void ReleasePaperPointer(FKey InKey);
 	void ReleasePaperPointers();
 	void ScrollPaper(float InDelta);
+	void FocusPaperInput();
+	UUserWidget* GetPaperOwner() const { return PaperOwner.Get(); }
+	void SetPresentationScale(float InScale, float InHeightRatio = 1.f);
+	void SetPaperOnlyPresentation(bool bEnabled);
+
+	// 이전 종이를 지우면서 새 종이를 그림. 끝나면 OnPaperCrossfadeFinished 를 발행함
+	// 올라와 있지 않거나 이전 종이가 없으면 즉시 교체하고 바로 발행함
+	void CrossfadePaperContent(UUserWidget* InOwner, UWidget* InContent);
+	bool IsPaperCrossfading() const { return bPaperCrossfading; }
 
 #pragma endregion
 
@@ -102,6 +115,15 @@ private:
 	// 경과 시간에서 지연을 뺀 뒤 0~1 로 정규화
 	float ComputeAlpha(float InOffsetSeconds) const;
 
+	// 종이만 보이는 연출은 판 중심을 화면 중앙에 맞추므로 올라온 포즈가 설정값과 다름
+	FVector GetEffectiveRaisedLocation(FRotator& OutRotation) const;
+
+	// 지금 움직임의 길이. 내리기는 더 멀리 가므로 거리 비율만큼 늘려 속도를 올리기와 맞춤
+	float GetActiveMotionDuration() const;
+
+	// 판과 종이의 경계 상자가 전부 화면 아래로 벗어났는지
+	bool IsPropOffScreen() const;
+
 	// 최종 카메라 시점 기준으로 이번 프레임 트랜스폼을 설정함
 	void UpdateTransformFromCamera();
 
@@ -113,6 +135,14 @@ private:
 
 	// 게임 월드 충돌과 무관하게 종이 평면만 마우스로 선택함
 	void UpdatePaperPointer();
+
+	void UpdatePaperCrossfade(float DeltaSeconds);
+
+	// 겹침 패널을 걷어내고 새 종이만 남김. 중간에 끊겨도 두 페이지의 투명도를 원래대로 돌려놓음
+	void EndPaperCrossfade();
+
+	// 페이지를 렌더 타깃에 그린 뒤 붓 마스크로 지우거나 써 내려감
+	TSharedRef<SRetainerWidget> MakeInkLayer(const TSharedRef<SWidget>& InContent, bool bReveal);
 
 #pragma endregion
 
@@ -160,6 +190,14 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Pose")
 	FRotator RaisedRelativeRotation = FRotator(70.f, 0.f, 0.f);
 
+	// 내릴 때만 쓰는 도착 포즈. 숨김 포즈는 올라오는 출발점이라 판 윗부분이 화면에 남아 있음
+	// 내릴 때는 화면 밖까지 빼야 마지막에 툭 사라지지 않음
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Pose")
+	FVector LoweredRelativeLocation = FVector(50.f, 5.f, -130.f);
+
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Pose")
+	FRotator LoweredRelativeRotation = FRotator(10.f, 0.f, -12.f);
+
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Motion", meta = (ClampMin = "0.05"))
 	float MotionDuration = 0.45f;
 
@@ -182,6 +220,23 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Lighting")
 	bool bIsolateLighting = true;
 
+	// 이전 글씨가 지워지는 데 걸리는 시간
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|PaperFade", meta = (ClampMin = "0.05", Units = "s"))
+	float PaperEraseDuration = 0.6f;
+
+	// 전환 시작부터 새 글씨를 쓰기 시작할 때까지. 지우기보다 짧으면 두 페이지가 잠깐 겹쳐 끊김 없이 이어짐
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|PaperFade", meta = (ClampMin = "0.0", Units = "s"))
+	float PaperDrawDelay = 0.4f;
+
+	// 새 글씨가 써지는 데 걸리는 시간
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|PaperFade", meta = (ClampMin = "0.05", Units = "s"))
+	float PaperDrawDuration = 0.6f;
+
+	// 사선 지그재그 붓 마스크 (M_UI_PaperInkWipe). 비우면 두 페이지를 투명도로만 교차함
+	// 줄 수·기울기·붓 끝 거칠기는 머티리얼 파라미터라 머티리얼 인스턴스로 바꿔 끼우면 됨
+	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|PaperFade")
+	TObjectPtr<UMaterialInterface> PaperInkWipeMaterial;
+
 #pragma endregion
 
 #pragma region State
@@ -191,13 +246,36 @@ private:
 
 	float MotionElapsed = 0.f;
 
+	float LowerMotionDuration = 0.f;
+
+	// 내리기 완료는 원래 숨김 포즈에 닿을 시각에 미리 알림. 끝에서 한 번 더 알리지 않도록 기록함
+	bool bLowerNotified = false;
+
 	float SwayElapsed = 0.f;
 
 	TWeakObjectPtr<APlayerController> OwningPlayerController;
 
 	TWeakObjectPtr<UUserWidget> PaperOwner;
+	TWeakObjectPtr<UWidget> PaperContent;
+	TWeakObjectPtr<UWidget> FadingOutContent;
+	float PaperContentOpacity = 1.f;
+	float FadingOutOpacity = 1.f;
+	bool bPaperCrossfading = false;
+	float PaperFadeElapsed = 0.f;
+	TSharedPtr<SRetainerWidget> EraseInkLayer;
+	TSharedPtr<SRetainerWidget> WriteInkLayer;
+
+	// 바닥 종이 이미지는 브러시 포인터만 받으므로 전환이 끝날 때까지 여기서 들고 있음
+	UPROPERTY(Transient)
+	FSlateBrush PaperFadeBrush;
 	TSet<FKey> PressedPaperKeys;
 	bool bPaperInteractionEnabled = false;
+	bool bPaperOnlyPresentation = false;
+	float PresentationScale = 1.f;
+	FVector2D OriginalPaperDrawSize = FVector2D::ZeroVector;
+	FTransform OriginalClipboardTransform;
+	FVector OriginalPaperLocation = FVector::ZeroVector;
+	FVector OriginalHandLocation = FVector::ZeroVector;
 
 #pragma endregion
 
@@ -207,6 +285,8 @@ public:
 	FCWClipboardMotionFinishedSignature OnRaiseFinished;
 
 	FCWClipboardMotionFinishedSignature OnLowerFinished;
+
+	FCWClipboardMotionFinishedSignature OnPaperCrossfadeFinished;
 
 #pragma endregion
 };

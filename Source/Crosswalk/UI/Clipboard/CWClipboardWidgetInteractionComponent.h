@@ -18,4 +18,7 @@ public:
 		SetCustomHitResult(InHit);
 		SimulatePointerMovement();
 	}
+
+	// 가상 포인터로 선택한 입력칸에 실제 키보드와 IME 포커스를 넘김
+	void FocusHardwareUser(int32 UserIndex);
 };

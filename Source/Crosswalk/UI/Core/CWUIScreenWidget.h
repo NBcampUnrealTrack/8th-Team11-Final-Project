@@ -32,7 +32,7 @@ public:
 public:
 	// 화면을 직접 만들지 않고 전환 요청만 전달
 	UFUNCTION(BlueprintCallable, Category = "CW|UI")
-	void RequestOpenPage(ECWUIPage TargetPage);
+	virtual void RequestOpenPage(ECWUIPage TargetPage);
 
 #pragma endregion
 

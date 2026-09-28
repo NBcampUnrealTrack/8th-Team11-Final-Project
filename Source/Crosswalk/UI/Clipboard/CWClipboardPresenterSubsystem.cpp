@@ -45,6 +45,8 @@ ACWClipboardPropActor* UCWClipboardPresenterSubsystem::AttachPaperContent(
 	}
 
 	InContent->RemoveFromParent();
+	PropActor->SetPresentationScale(1.f);
+	PropActor->SetPaperOnlyPresentation(false);
 	PropActor->SetPaperContent(InOwner, InContent);
 	return PropActor;
 }
