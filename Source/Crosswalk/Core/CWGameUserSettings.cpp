@@ -3,6 +3,8 @@
 #include "Core/CWGameUserSettings.h"
 
 #include "Engine/Engine.h"
+#include "HAL/IConsoleManager.h"
+#include "Scalability.h"
 
 #pragma region GameUserSettingsOverrides
 
@@ -21,6 +23,67 @@ void UCWGameUserSettings::SetToDefaults()
 	// UEngine::SetMaxFPS()가 이 값으로 t.MaxFPS를 다시 맞추므로(ApplyNonResolutionSettings
 	// 경로), 여기 기본값이 0이면 그래픽 옵션만 바꿔도 프레임 제한이 풀린다.
 	SetFrameRateLimit(60.0f);
+}
+
+void UCWGameUserSettings::ApplyNonResolutionSettings()
+{
+	Super::ApplyNonResolutionSettings();
+	if (FullWorldResolutionRequests > 0)
+	{
+		ApplyWorldResolutionOverride();
+	}
+}
+
+#pragma endregion
+
+#pragma region WorldUIResolution
+
+void UCWGameUserSettings::AcquireFullWorldResolution()
+{
+	if (++FullWorldResolutionRequests == 1)
+	{
+		ApplyWorldResolutionOverride();
+	}
+}
+
+void UCWGameUserSettings::ReleaseFullWorldResolution()
+{
+	if (FullWorldResolutionRequests <= 0)
+	{
+		return;
+	}
+	if (--FullWorldResolutionRequests == 0)
+	{
+		ApplyWorldResolutionOverride();
+	}
+}
+
+void UCWGameUserSettings::SetWorldResolutionPreview(bool bPreview)
+{
+	if (bWorldResolutionPreview == bPreview)
+	{
+		return;
+	}
+	bWorldResolutionPreview = bPreview;
+	if (FullWorldResolutionRequests > 0)
+	{
+		ApplyWorldResolutionOverride();
+	}
+}
+
+void UCWGameUserSettings::ApplyWorldResolutionOverride() const
+{
+	static IConsoleVariable* ResolutionQuality =
+		IConsoleManager::Get().FindConsoleVariable(TEXT("sg.ResolutionQuality"));
+	if (!ResolutionQuality)
+	{
+		return;
+	}
+	// 품질 적용과 같은 우선순위로 넣어야 이후 설정 화면의 품질 적용이 정상적으로 덮어씀
+	const float Value = FullWorldResolutionRequests > 0 && !bWorldResolutionPreview
+		? Scalability::MaxResolutionScale
+		: ScalabilityQuality.ResolutionQuality;
+	ResolutionQuality->Set(Value, ECVF_SetByScalability);
 }
 
 #pragma endregion
