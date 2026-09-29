@@ -1699,7 +1699,31 @@ void ACWPlayerCharacter::EndSitting()
 
 void ACWPlayerCharacter::Server_RequestStandUp_Implementation()
 {
+	// 서버도 같은 기준으로 다시 본다. 클라이언트가 보낸 요청이라 여기서 한 번 더 걸러야
+	// 유예가 실제로 지켜진다. 클라이언트는 서버보다 늦게 앉기 시작하므로 정상 경로에서는
+	// 이 검사에 걸리지 않는다.
+	if (!CanRequestStandUp())
+	{
+		return;
+	}
+
 	EndSitting();
+}
+
+bool ACWPlayerCharacter::CanRequestStandUp() const
+{
+	if (!bIsSitting)
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr || SitStartWorldTime < 0.f)
+	{
+		return true;
+	}
+
+	return World->GetTimeSeconds() - SitStartWorldTime >= StandUpInputDelay;
 }
 
 void ACWPlayerCharacter::OnRep_Sitting()
@@ -1725,6 +1749,13 @@ void ACWPlayerCharacter::ApplySittingState()
 		 */
 		Movement->StopMovementImmediately();
 		Movement->SetMovementMode(MOVE_None);
+
+		// 기립 유예의 기준점. 각 머신이 자기가 앉은 것을 안 시점부터 잰다.
+		if (const UWorld* World = GetWorld())
+		{
+			SitStartWorldTime = World->GetTimeSeconds();
+		}
+
 		return;
 	}
 
@@ -1985,7 +2016,13 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 	 */
 	if (bIsSitting)
 	{
-		Server_RequestStandUp();
+		// 앉자마자는 받지 않는다. 의자까지 걸어오면서 누르고 있던 이동 입력이
+		// 그대로 이어져 앉는 순간 다시 일어나기 때문이다.
+		if (CanRequestStandUp())
+		{
+			Server_RequestStandUp();
+		}
+
 		return;
 	}
 
@@ -2035,6 +2072,21 @@ FCWInteractionPrompt ACWPlayerCharacter::ResolveInteractPrompt() const
 		{
 			Prompt.TargetActor = Interactable;
 			Prompt.Action = ECWInteractionPromptAction::Interact;
+			return Prompt;
+		}
+
+		/**
+		 * 휴식구역 앞에서는 "내려놓기" 로 떨어지지 않는다.
+		 *
+		 * 앉는 것이 E 라서, 사람들은 일어날 때도 손이 먼저 E 로 간다. 그때 자리가 차
+		 * 있거나 의자에서 반 발짝 벗어나 있으면 휴식구역이 CanInteract 에서 걸러지고,
+		 * 상호작용 대상이 없는 것으로 떨어져 도구가 휴식구역 바닥에 쌓인다.
+		 *
+		 * 프롬프트 단계에서 잘라야 머리 위 표시와 실제 동작이 함께 사라진다.
+		 * 내려놓고 싶으면 휴식구역에서 나와서 누르면 되고, 일어나는 것은 WASD 다.
+		 */
+		if (bLastQueryNearRestZone)
+		{
 			return Prompt;
 		}
 
@@ -2109,6 +2161,14 @@ void ACWPlayerCharacter::Interact()
 		// 잡을 대상이 없다. 입력이 조용히 씹힌 것처럼 보이지 않게 이유만 발행한다.
 		// 박스 앞이면 보급 쪽이 (더 들 수 없음 / 도구를 들고 있음), 아니면 도구 쪽이
 		// (양손이 찼음) 이유를 안다. 두 함수 모두 막히면 NotifyActionRejected 를 부른다.
+		//
+		// 단, 휴식구역 앞에서는 이 되돌림도 하지 않는다. 여기서 ToolHolder 로 넘기면
+		// 위에서 막은 "내려놓기" 가 뒷문으로 다시 들어온다. (ResolveInteractPrompt 주석 참고)
+		if (bLastQueryNearRestZone && ToolHolderComponent->GetHeldTool() != nullptr)
+		{
+			break;
+		}
+
 		if (SupplyCarrierComponent->IsNearSupplyBox())
 		{
 			SupplyCarrierComponent->PickUpCan();
@@ -2124,6 +2184,7 @@ void ACWPlayerCharacter::Interact()
 AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) const
 {
 	OutDistanceSquared = TNumericLimits<float>::Max();
+	bLastQueryNearRestZone = false;
 
 	// [진단] 이번 호출의 측정값을 먼저 비운다. 아래에서 일찍 빠져나가도 직전 호출의
 	// 숫자가 남아 있으면 요약이 그만큼 부풀어 오른다.
@@ -2179,6 +2240,18 @@ AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) c
 		if (OverlapActor == nullptr || !OverlapActor->Implements<UInterface_Interactable>())
 		{
 			continue;
+		}
+
+		/**
+		 * 휴식구역이 사정권에 있다는 사실은 CanInteract 결과와 상관없이 기억해 둔다.
+		 *
+		 * 자리가 차 있거나 의자에서 조금 벗어나 있으면 아래 CanInteract 에서 걸러지는데,
+		 * 그러면 E 가 "상호작용 대상 없음" 으로 떨어져 들고 있던 도구를 내려놓는다.
+		 * 앉으려고 누른 E 가 도구를 휴식구역 바닥에 버리는 결과가 된다.
+		 */
+		if (OverlapActor->IsA<ACWRestZone>())
+		{
+			bLastQueryNearRestZone = true;
 		}
 
 		// 도구는 도구 소지 컴포넌트가 따로 관리한다. 위 함수 주석 참고.

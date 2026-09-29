@@ -349,6 +349,15 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestStandUp();
 
+	/**
+	 * 지금 기립 입력을 받아도 되는 시점인가.
+	 *
+	 * 앉자마자 WASD 가 먹으면, 앉히려고 마지막으로 누른 이동 입력이 그대로 이어져서
+	 * 앉는 순간 다시 일어나 버린다. 앉는 연출을 볼 새도 없다.
+	 * 클라이언트와 서버가 같은 기준으로 판단하도록 양쪽에서 부른다.
+	 */
+	bool CanRequestStandUp() const;
+
 private:
 	virtual void BeginPlay() override;
 
@@ -680,6 +689,18 @@ protected:
 	// 작업차량은 도구보다 덩치가 커서 같은 반경으로 잡으면 트렁크 앞에 붙어야만 반응한다.
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0.0"))
 	float InteractRadius = 250.f;
+
+	/**
+	 * 앉은 뒤 WASD 가 먹기 시작할 때까지의 유예(초).
+	 *
+	 * 없으면 앉는 순간 바로 일어난다. 의자까지 걸어와서 E 를 누르는 동안 이동 키가
+	 * 아직 눌려 있거나, 떼자마자 다시 눌리기 때문이다. 앉는 동작을 볼 새도 없이
+	 * 일어나 버려서 앉았다는 것 자체가 안 보인다.
+	 *
+	 * 나중에 앉는 전환 애니메이션이 붙으면 그 길이에 맞춰 다시 잡는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Rest", meta = (ClampMin = "0.0"))
+	float StandUpInputDelay = 1.5f;
 
 	/** 넉백에 섞는 위쪽 속도(cm/s). 0이면 바닥을 미끄러지듯 밀려나 우스꽝스러운 맛이 없다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Hit", meta = (ClampMin = "0.0"))
@@ -1050,6 +1071,23 @@ private:
 	 * 살아남아 허상 포인터를 남긴다.
 	 */
 	TWeakObjectPtr<ACWRestZone> CurrentRestZone;
+
+	/**
+	 * 앉기 시작한 월드 시각(초). 모든 머신이 자기 화면 기준으로 기록한다.
+	 *
+	 * 클라이언트는 OnRep 이 도착한 시점이라 서버보다 핑만큼 늦게 시작한다. 그래서 유예가
+	 * 클라이언트 쪽에서 조금 더 길게 끝나는데, 그쪽이 안전하다. 서버가 먼저 열려 있어야
+	 * 클라이언트가 보낸 기립 요청이 거절당하지 않는다.
+	 */
+	float SitStartWorldTime = -1.f;
+
+	/**
+	 * 직전 FindNearestInteractable 호출에서 사정권 안에 휴식구역이 있었는가.
+	 *
+	 * CanInteract 결과와 무관하게 기록한다. 자리가 차 있거나 의자에서 반 발짝 벗어나면
+	 * 상호작용 대상에서 빠지는데, 그때 E 가 "내려놓기" 로 떨어지는 것을 막아야 한다.
+	 */
+	mutable bool bLastQueryNearRestZone = false;
 
 	// 애셋 IMC 가 빠뜨린 키만 담는 보완 컨텍스트. 지정된 컨텍스트 위에 얹는다.
 	UPROPERTY(Transient)
