@@ -17,6 +17,12 @@
 #include "Painting/Tools/CWBaseTool.h"
 #include "UObject/ConstructorHelpers.h"
 
+namespace
+{
+	// BorderMeshes 의 per-instance custom data 칸 수. [0] 도색 정도, [1] 대시 개수.
+	constexpr int32 BorderCustomDataCount = 2;
+}
+
 ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 {
 	// 작업 키를 뗀 것은 ApplyWork 가 끊기는 것으로만 알 수 있다. 그걸 재려면 존이 틱을 돌아야 한다.
@@ -57,11 +63,11 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	// 반투명 가이드가 그림자를 드리우면 바닥에 얼룩처럼 보인다.
 	BorderMeshes->SetCastShadow(false);
 
-	// 칸마다 한 값을 넘긴다. [0] 도색 정도(0 = 가이드, 1 = 도색 완료).
+	// 칸마다 두 값을 넘긴다. [0] 도색 정도(0 = 가이드, 1 = 도색 완료), [1] 대시 개수.
 	//
 	// 이 줄이 빠지면 값이 항상 0 으로 들어가서 칠해도 색이 안 바뀐다.
 	// 증상이 "머티리얼이 안 먹는다" 처럼 나타나 원인을 찾기 어렵다.
-	BorderMeshes->NumCustomDataFloats = 1;
+	BorderMeshes->NumCustomDataFloats = BorderCustomDataCount;
 
 	PreviewBox = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewBox"));
 	PreviewBox->SetupAttachment(Area);
@@ -219,6 +225,32 @@ void ACWWorkZone_BorderSketch::TickCharge(float DeltaSeconds)
 
 			ShowChargeDebug(TEXT("단계"), CurrentLevel, 0);
 		}
+	}
+
+	// 최대 단계에서 FullChargeHoldSeconds 가 지나면 저절로 내보낸다.
+	// 더 눌러봐야 범위가 늘지 않고 차에 노출되는 시간만 길어진다. 다만 닿자마자 나가면
+	// 최대 범위를 볼 틈이 없으므로 잠깐 붙잡아 둔다. (FullChargeHoldSeconds 주석 참고)
+	if (ChargeThresholds.Num() == 0 || CurrentLevel < ChargeThresholds.Num())
+	{
+		return;
+	}
+
+	// 체온 계수가 곱해지지 않은 실제 프레임 시간을 쌓는다.
+	FullChargeElapsed += DeltaSeconds;
+	if (FullChargeElapsed < FullChargeHoldSeconds)
+	{
+		return;
+	}
+
+	UCWWorkerComponent* const Worker = ChargingWorker;
+	ReleaseCharge();
+
+	// 키를 뗀 것과 똑같이 작업 자체를 끝낸다. 차징만 막으면 bWorking 이 켜진 채로 남아서
+	// 작업 애니메이션과 체온 상승이 계속 돈다. 서버에도 같이 알려지므로 남의 화면에서도 멈춘다.
+	// 작업 시작은 키를 누른 순간(Started)에만 들어오므로, 다음 차징은 키를 다시 눌러야 시작된다.
+	if (Worker != nullptr)
+	{
+		Worker->StopWork();
 	}
 }
 
@@ -560,6 +592,7 @@ void ACWWorkZone_BorderSketch::ResetChargeState()
 {
 	bCharging = false;
 	ChargeSeconds = 0.f;
+	FullChargeElapsed = 0.f;
 	LastReportedChargeLevel = 0;
 	ChargingWorker = nullptr;
 }
@@ -630,6 +663,13 @@ void ACWWorkZone_BorderSketch::RebuildCells()
 	Cells.Reset();
 	BorderMeshes->ClearInstances();
 
+	// 생성자에서 정한 값이지만 여기서 다시 맞춘다. 예전에 1 로 저장된 블루프린트나 레벨 인스턴스는
+	// 그 값을 들고 오고, 그러면 [1] 대시 개수가 조용히 버려져 선이 실선으로 돌아간다.
+	if (BorderMeshes->NumCustomDataFloats != BorderCustomDataCount)
+	{
+		BorderMeshes->SetNumCustomDataFloats(BorderCustomDataCount);
+	}
+
 	// 점등 상태도 같은 이유로 버린다. 옛 칸 번호는 새 격자에서 다른 자리를 가리킨다.
 	RevealedCellFlags.Reset();
 	PendingRevealCells.Reset();
@@ -665,8 +705,15 @@ void ACWWorkZone_BorderSketch::RebuildCells()
 
 	for (const FCWBorderCell& Cell : Cells)
 	{
-		BorderMeshes->AddInstance(MakeCellTransform(Cell));
+		const int32 InstanceIndex = BorderMeshes->AddInstance(MakeCellTransform(Cell));
+
+		// 대시 개수는 칸 모양에서 정해지는 값이라 칸을 만들 때 한 번만 넣는다.
+		// 정수로 반올림해야 칸 경계에서 대시가 반토막 나지 않는다. (DashPitch 주석 참고)
+		const int32 DashCount = FMath::Max(1, FMath::RoundToInt(Cell.Length / FMath::Max(DashPitch, 1.f)));
+		BorderMeshes->SetCustomDataValue(InstanceIndex, 1, static_cast<float>(DashCount), false);
 	}
+
+	BorderMeshes->MarkRenderStateDirty();
 }
 
 void ACWWorkZone_BorderSketch::AppendSideCells(const FVector& Start, const FVector& End, bool bAlongX)
@@ -1251,15 +1298,17 @@ void ACWWorkZone_BorderSketch::PlayLocalChargeSound(USoundBase* Sound, const UCW
 FTransform ACWWorkZone_BorderSketch::MakeCellTransform(const FCWBorderCell& Cell) const
 {
 	// /Engine/BasicShapes/Plane 은 100x100 이라 크기를 100 으로 나누면 그대로 배율이 된다.
-	const FVector Scale = Cell.bAlongX
-		? FVector(Cell.Length / 100.f, CellThickness / 100.f, 1.f)
-		: FVector(CellThickness / 100.f, Cell.Length / 100.f, 1.f);
+	//
+	// 세로 변 칸은 스케일 축을 바꾸지 않고 90도 돌려 놓는다. 그래야 모든 칸에서 메시의 X(= UV 의 U)가
+	// 선을 따라가고, 머티리얼이 U 하나로 점선을 그릴 수 있다. (BorderMeshes 주석 참고)
+	const FVector Scale(Cell.Length / 100.f, CellThickness / 100.f, 1.f);
+	const FRotator Rotation = Cell.bAlongX ? FRotator::ZeroRotator : FRotator(0.f, 90.f, 0.f);
 
 	// 칸이 한 번만 그려지므로 높이도 하나다. 겹쳐 덮던 시절의 층 구분이 필요 없다.
 	FVector Location = Cell.Center;
 	Location.Z += GuideHeightOffset;
 
-	return FTransform(FRotator::ZeroRotator, Location, Scale);
+	return FTransform(Rotation, Location, Scale);
 }
 
 FTransform ACWWorkZone_BorderSketch::MakeBandTransform(const FCWBorderCell& Cell) const
