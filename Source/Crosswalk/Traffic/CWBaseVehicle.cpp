@@ -142,9 +142,12 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	 * 넣는 값이 서버와 클라이언트에서 같다는 점이 중요하다. 목표 지점은 양쪽이 정지선
 	 * 위치와 차체 길이로 각자 계산하므로, 통신 없이도 두 기계가 같은 자리에 선다.
 	 * 그래서 갚을 빚도 같이 없앤다 - 남겨 두면 확정해 놓고 도로 밀어낸다.
+	 *
+	 * 조건에는 -StopSettleTolerance 하한을 둔다. 목표를 지나친 차를 확정하면 뒤로 스냅한다.
+	 * ResolveStepSpeed 가 그런 차를 걸러내지만, 스냅하는 경로 자체를 막아 둔다.
 	 */
 	if (Step.bStopLineLimited && Step.StopTargetDistance >= 0.f
-		&& Step.StopTargetDistance - DistanceAlongLane <= StopSettleTolerance)
+		&& FMath::Abs(Step.StopTargetDistance - DistanceAlongLane) <= StopSettleTolerance)
 	{
 		DistanceAlongLane = Step.StopTargetDistance;
 		LocalDistanceAlongLane = DistanceAlongLane;
@@ -161,6 +164,16 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	if (!HasAuthority())
 	{
 		ApplyServerDistanceCorrection(DeltaSeconds);
+	}
+
+	// 정지선이 살아 있는 동안에는 목표 지점을 넘지 못한다. 앞차에 막혀 느린 프레임도 포함한다.
+	// 이동과 클라이언트 보정이 모두 끝난 뒤에 자른다.
+	// 오버슈트가 ResolveStepSpeed 의 "이미 지나친 차" 판정으로 새면 빨간불에 그냥
+	// 통과하게 된다. 프레임 히치, 타임 딜레이션, 보정량과 무관하게 목표에서 멈추도록 한다.
+	// 목표에 닿으면 다음 프레임에 남은 거리가 0 이 되어 위의 정지 확정 분기가 받는다.
+	if (Step.StopTargetDistance >= 0.f)
+	{
+		DistanceAlongLane = FMath::Min(DistanceAlongLane, Step.StopTargetDistance);
 	}
 
 	if (DistanceAlongLane >= CurrentLane->GetLaneLength())
@@ -875,6 +888,23 @@ FCWVehicleStepResolution ACWBaseVehicle::ResolveStepSpeed() const
 		const float StopTarget = StopLineDistance - (GetVehicleLength() * 0.5f) - StopLineGap;
 
 		const float RemainingToStop = StopTarget - DistanceAlongLane;
+
+		/**
+		 * 서야 할 지점을 이미 지나친 차는 이 정지선을 보지 않는다.
+		 *
+		 * 앞범퍼가 서야 할 자리를 이미 지난 구간(StopTarget ~ 정지선)에서
+		 * 빨간불이 켜지면, 아래로 내려가 속도 0 과 정지 확정을 받고 Tick 이 StopTarget 으로
+		 * 뒤로 끌고 갔다. 반길이 + StopLineGap 만큼(승용차 약 280cm) 순간이동하던 버그다.
+		 *
+		 * 이미 진입한 차를 세우는 것보다 그냥 보내는 편이 덜 어색하다. 결과는 앞차 추종만 남고
+		 * StopTargetDistance 는 -1 이라 정지 확정도 걸리지 않는다. 입력이 진행 거리와 정지선
+		 * 위치뿐이라 서버와 클라이언트가 같은 프레임에 같은 판정을 내린다.
+		 */
+		if (RemainingToStop < -StopSettleTolerance)
+		{
+			return Result;
+		}
+
 		float StopLineSpeed = ResolveApproachSpeed(RemainingToStop, StopLineBrakeDistance, DesiredSpeed);
 
 		/**
