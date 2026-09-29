@@ -35,7 +35,9 @@ struct FCWBorderCell
  *   1. 테두리 직사각형의 둘레를 CellLength 길이의 칸으로 나눈다
  *   2. 라인 테두리 도구를 들고 존 옆에서 작업 키를 누르고 있으면 차징이 시작된다
  *   3. 누른 시간이 길수록 단계가 올라간다 (0.3초 1칸 → 0.7초 2칸 → 1.2초 3칸 → 1.8초 4칸)
- *   4. 키를 떼면 그 단계만큼의 칸이 한 번에 칠해진다
+ *   4. 키를 떼면 그 단계만큼의 칸이 한 번에 칠해진다. 최대 단계에 닿고 FullChargeHoldSeconds(1초)가
+ *      지나면 떼지 않아도 칠해지고 작업이 끝난다. 다음 차징은 키를 다시 눌러야 시작된다
+ *      (더 눌러도 얻는 게 없는데 계속 붙잡고 있으면 차에 노출되는 시간만 늘어난다)
  *   5. 진행도 = 칠해진 칸 수 / 전체 칸 수. 전부 칠하면 완료다
  *
  * 차징 중에는 움직일 수도, 조준을 바꿀 수도, 패링할 수도 없다. 이게 이 존의 핵심이다.
@@ -140,7 +142,7 @@ protected:
 	void OnChargeLevelChanged(int32 NewLevel);
 
 	/**
-	 * 손을 뗐을 때. ChargeLevel 0 은 최소 홀드를 못 채운 허탕이다.
+	 * 손을 뗐을 때, 또는 최대 단계에서 FullChargeHoldSeconds 가 지나 저절로 나갔을 때. ChargeLevel 0 은 최소 홀드를 못 채운 허탕이다.
 	 *
 	 * PaintedCellCount 가 ChargeLevel 보다 작을 수 있다. 이미 칠해진 칸이 섞여 있거나
 	 * 페인트가 모자라 되는 만큼만 칠한 경우다. 0 이면 붓이 헛돈 것이므로 마른 붓 소리를 낸다.
@@ -338,8 +340,15 @@ public:
 	 * 칸 하나가 인스턴스 하나이고, 인스턴스 인덱스가 곧 칸 인덱스다. 한 번 만든 뒤로는
 	 * 인스턴스를 더하거나 빼지 않고 **per-instance custom data 만 바꾼다.**
 	 *
-	 *   [0] 도색 정도   0 = 가이드(노랑), 1 = 도색 완료(흰색)
-	 *   [1] 프리뷰 상태 0 = 없음, 1 = 이번에 칠해질 칸, 2 = 칠해지지 않을 칸
+	 *   [0] 도색 정도   0 = 가이드(노랑 점선), 1 = 도색 완료(흰색 실선)
+	 *   [1] 대시 개수   이 칸 안에 들어가는 점선 주기 수. 칸을 만들 때 한 번 넣고 바꾸지 않는다.
+	 *
+	 * 점선은 머티리얼이 UV.U 로 그린다. frac(U * [1]) 가 대시 비율보다 작은 곳만 남기고,
+	 * [0] 이 1 이면 전부 남긴다. 칠하기 전인지 후인지가 선 모양만 봐도 읽혀야 한다.
+	 * 노란 실선은 이미 칠해진 선처럼 보인다.
+	 *
+	 * 모든 칸에서 U 가 선을 따라가도록 세로 변 칸은 90도 돌려서 놓는다. (MakeCellTransform)
+	 * 스케일 축만 바꿔 놓으면 세로 변에서는 U 가 선 폭 방향이 되어 점선이 가로로 잘린다.
 	 *
 	 * 예전에는 가이드 / 도색 / 프리뷰 / 프리뷰차단을 컴포넌트 4개로 나눠서 위에 겹쳐 덮었다.
 	 * 전용 머티리얼 없이도 보이게 하려던 것인데, 칠해진 칸 밑에 가이드 노란색이 그대로
@@ -424,6 +433,17 @@ protected:
 		FVector2D(590.f, 140.f)
 	};
 
+	/**
+	 * 최대 단계에 닿은 뒤 저절로 나가기까지 기다리는 시간(초).
+	 *
+	 * 닿자마자 나가면 최대 범위가 어디까지인지 볼 틈이 없다. 이 동안은 최대 범위 프리뷰가
+	 * 떠 있고, 그 사이 키를 떼면 평소처럼 그 자리에서 나간다.
+	 *
+	 * 체온 계수를 곱하지 않은 실제 시간이다. 보고 판단하는 시간이라 더워도 늘어나면 안 된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0.0"))
+	float FullChargeHoldSeconds = 1.f;
+
 	// 릴리즈 붓질 모션 동안 이동이 잠기는 시간(초). 패링은 이 동안에도 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0.0"))
 	float ReleaseSeconds = 0.25f;
@@ -443,6 +463,16 @@ protected:
 	// 테두리 선의 두께(cm). 선은 Area 경계에 중심을 두고 그려져서 안팎으로 절반씩 걸친다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "1.0"))
 	float BorderThickness = 12.f;
+
+	/**
+	 * 가이드 점선의 한 주기 길이(cm). 대시 하나와 그 뒤 간격을 합친 길이다.
+	 *
+	 * 칸 길이가 변마다 조금씩 달라서, 칸마다 이 값에 가장 가까운 정수 개로 나눠 넣는다.
+	 * 개수가 정수라야 칸 경계에서 대시가 반토막 나지 않고 옆 칸과 같은 박자로 이어진다.
+	 * 대시와 간격의 비율은 머티리얼 인스턴스(M_BorderCell 의 DashRatio)가 정한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide", meta = (ClampMin = "1.0"))
+	float DashPitch = 30.f;
 
 	/**
 	 * 테두리를 도로면보다 살짝 띄워 Z-파이팅을 막는다. (cm)
@@ -551,6 +581,9 @@ private:
 
 	// 릴리즈 모션이 끝나는 시각. 그때까지는 이동이 잠기고 새 차징도 시작되지 않는다.
 	float ReleaseEndTime = -1000.f;
+
+	// 최대 단계에 머문 실제 시간(초). FullChargeHoldSeconds 를 넘기면 저절로 나간다.
+	float FullChargeElapsed = 0.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> ChargingWorker;
