@@ -12,6 +12,7 @@ class UCWUIScreenWidget;
 class UCWUIPageConfigDataAsset;
 class UUserWidget;
 class UCWInteractionPromptWidget;
+class UCWStageIntroWidget;
 
 UCLASS(
 	ClassGroup = (CW),
@@ -70,6 +71,10 @@ protected:
 	// 기본 구현을 즉시 사용하고 문구나 배치는 UI 전용 파생 클래스에서 조절함
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TSubclassOf<UCWInteractionPromptWidget> InteractionPromptClass;
+
+	// 안내 이미지를 BP에서 지정해 화면 조정에 C++ 재빌드가 필요하지 않게 함
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
+	TSubclassOf<UCWStageIntroWidget> StageIntroClass;
 
 #pragma endregion
 };
