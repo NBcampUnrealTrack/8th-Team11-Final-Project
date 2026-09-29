@@ -150,6 +150,13 @@ private:
 	// 페이지를 렌더 타깃에 그린 뒤 붓 마스크로 지우거나 써 내려감
 	TSharedRef<SRetainerWidget> MakeInkLayer(const TSharedRef<SWidget>& InContent, bool bReveal);
 
+	// 붓 레이어를 프로세스에서 처음 그리는 프레임에 렌더 준비가 겹쳐 첫 전환만 종이가 깜빡임
+	// 올라오는 동안 보이지 않는 작은 붓 레이어를 같은 경로로 미리 그려 첫 전환 전에 준비를 끝냄
+	void BeginPaperWarmup();
+
+	// 미리 그리던 레이어를 걷고 페이지만 남김. 페이지를 옮기기 전에 불러야 부모가 둘이 되지 않음
+	void EndPaperWarmup();
+
 #pragma endregion
 
 #pragma region Components
@@ -277,6 +284,16 @@ private:
 	// 바닥 종이 이미지는 브러시 포인터만 받으므로 전환이 끝날 때까지 여기서 들고 있음
 	UPROPERTY(Transient)
 	FSlateBrush PaperFadeBrush;
+
+	TSharedPtr<SRetainerWidget> WarmupInkLayer;
+
+	// 미리 그리기 레이어도 브러시 포인터만 받으므로 걷을 때까지 여기서 들고 있음
+	UPROPERTY(Transient)
+	FSlateBrush PaperWarmupImageBrush;
+	UPROPERTY(Transient)
+	FSlateBrush PaperWarmupBoxBrush;
+	UPROPERTY(Transient)
+	FSlateBrush PaperWarmupRoundedBrush;
 	TSet<FKey> PressedPaperKeys;
 	bool bPaperInteractionEnabled = false;
 	bool bPaperOnlyPresentation = false;

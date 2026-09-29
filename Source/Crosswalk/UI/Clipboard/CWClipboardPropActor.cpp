@@ -18,7 +18,11 @@
 #include "Components/Widget.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Slate/SRetainerWidget.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Widgets/Images/SImage.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Text/STextBlock.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/SViewport.h"
 #include "Widgets/SWindow.h"
@@ -213,6 +217,7 @@ void ACWClipboardPropActor::SetPaperOnlyPresentation(bool bEnabled)
 void ACWClipboardPropActor::SetPaperContent(UUserWidget* InOwner, UWidget* InContent)
 {
 	// 전환 도중 강제로 바뀌면 겹침 패널부터 걷어야 두 페이지가 반투명하게 남지 않음
+	EndPaperWarmup();
 	EndPaperCrossfade();
 	ReleasePaperPointers();
 	PaperOwner = InOwner;
@@ -240,6 +245,7 @@ void ACWClipboardPropActor::ClearPaperContent(const UUserWidget* InOwner)
 	}
 
 	SetPaperInteractionEnabled(false);
+	EndPaperWarmup();
 	EndPaperCrossfade();
 	PaperWidget->SetSlateWidget(nullptr);
 	PaperWidget->SetVisibility(false);
@@ -250,6 +256,8 @@ void ACWClipboardPropActor::ClearPaperContent(const UUserWidget* InOwner)
 void ACWClipboardPropActor::CrossfadePaperContent(UUserWidget* InOwner, UWidget* InContent)
 {
 	// 진행 중인 전환이 있으면 끝난 상태로 만든 뒤 그 결과를 이전 종이로 삼음
+	// 미리 그리기 레이어가 씌워져 있으면 그 패널이 이전 종이로 잡히므로 먼저 걷음
+	EndPaperWarmup();
 	EndPaperCrossfade();
 	UWidget* Previous = PaperContent.Get();
 	const TSharedPtr<SWidget> PreviousSlate = PaperWidget->GetSlateWidget();
@@ -394,6 +402,70 @@ TSharedRef<SRetainerWidget> ACWClipboardPropActor::MakeInkLayer(const TSharedRef
 		Mask->SetScalarParameterValue(TEXT("Progress"), 0.f);
 	}
 	return Layer;
+}
+
+void ACWClipboardPropActor::BeginPaperWarmup()
+{
+	UWidget* Content = PaperContent.Get();
+	if (!PaperInkWipeMaterial || !Content || bPaperCrossfading || WarmupInkLayer.IsValid())
+	{
+		return;
+	}
+
+	// 전환 때 붓 레이어 안에 그려지는 것과 같은 종류(이미지·9분할·둥근 상자·글자)를 하나씩 넣음
+	// 종류마다 렌더 준비가 따로라 하나라도 빠지면 그 요소를 처음 그릴 때 다시 깜빡일 수 있음
+	UObject* PaperTexture = nullptr;
+	if (const UBorder* PaperBorder = Cast<UBorder>(Content))
+	{
+		PaperTexture = PaperBorder->Background.GetResourceObject();
+	}
+	PaperWarmupImageBrush = FSlateBrush();
+	PaperWarmupImageBrush.SetResourceObject(PaperTexture);
+	PaperWarmupImageBrush.ImageSize = FVector2D(16.f);
+	PaperWarmupBoxBrush = PaperWarmupImageBrush;
+	PaperWarmupBoxBrush.DrawAs = ESlateBrushDrawType::Box;
+	PaperWarmupBoxBrush.Margin = FMargin(0.25f);
+	PaperWarmupRoundedBrush = FSlateRoundedBoxBrush(FLinearColor::White, 4.f, FVector2f(16.f, 16.f));
+
+	// 쓰기 마스크의 진행도 0 은 완전히 투명해 화면에는 보이지 않음
+	// 렌더 타깃 크기는 준비와 무관해 작게 두어 매 프레임 비용을 줄임
+	WarmupInkLayer = MakeInkLayer(
+		SNew(SBox).WidthOverride(64.f).HeightOverride(64.f)
+		[
+			SNew(SOverlay)
+			+ SOverlay::Slot()[SNew(SImage).Image(&PaperWarmupImageBrush)]
+			+ SOverlay::Slot()[SNew(SBorder).BorderImage(&PaperWarmupBoxBrush)]
+			+ SOverlay::Slot()[SNew(SBorder).BorderImage(&PaperWarmupRoundedBrush)]
+			+ SOverlay::Slot()[SNew(STextBlock).Text(FText::FromString(TEXT("가")))]
+		],
+		true);
+	// 페이지 위에 겹쳐 두므로 클릭이 레이어에 걸리지 않게 함
+	WarmupInkLayer->SetVisibility(EVisibility::HitTestInvisible);
+
+	const TSharedRef<SWidget> PageSlate = Content->TakeWidget();
+	PaperWidget->SetSlateWidget(nullptr);
+	PaperWidget->SetSlateWidget(
+		SNew(SOverlay)
+		+ SOverlay::Slot()[PageSlate]
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)[WarmupInkLayer.ToSharedRef()]);
+	PaperWidget->RequestRenderUpdate();
+}
+
+void ACWClipboardPropActor::EndPaperWarmup()
+{
+	if (!WarmupInkLayer.IsValid())
+	{
+		return;
+	}
+
+	PaperWidget->SetSlateWidget(nullptr);
+	WarmupInkLayer->SetContent(SNullWidget::NullWidget);
+	WarmupInkLayer.Reset();
+	if (UWidget* Content = PaperContent.Get())
+	{
+		PaperWidget->SetSlateWidget(Content->TakeWidget());
+	}
+	PaperWidget->RequestRenderUpdate();
 }
 
 bool ACWClipboardPropActor::IsPaperOwner(const UUserWidget* InOwner) const
@@ -547,6 +619,7 @@ void ACWClipboardPropActor::StartRaise()
 	SetActorHiddenInGame(false);
 	SetActorTickEnabled(true);
 	SetHoldFullWorldResolution(true);
+	BeginPaperWarmup();
 
 	// 첫 프레임부터 제자리에 있도록 미리 한 번 설정함
 	UpdateTransformFromCamera();
@@ -792,6 +865,8 @@ void ACWClipboardPropActor::FinishMotion()
 	if (ClipboardState == ECWClipboardState::Raising)
 	{
 		ClipboardState = ECWClipboardState::Raised;
+		// 입력이 열리기 전에 페이지만 남겨야 포커스·클릭이 겹침 패널 교체에 끊기지 않음
+		EndPaperWarmup();
 
 		UE_LOG(LogCWClipboard, Verbose, TEXT("[Clipboard] Raise 완료"));
 
@@ -806,6 +881,7 @@ void ACWClipboardPropActor::FinishMotion()
 		SetActorHiddenInGame(true);
 		SetActorTickEnabled(false);
 		SetHoldFullWorldResolution(false);
+		EndPaperWarmup();
 
 		// 틱이 멈추면 전환이 끝나지 않아 기다리던 화면의 입력이 계속 잠김
 		if (bPaperCrossfading)

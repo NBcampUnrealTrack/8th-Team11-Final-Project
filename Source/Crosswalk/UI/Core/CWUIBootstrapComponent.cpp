@@ -20,6 +20,8 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Components/TextBlock.h"
 #include "UI/Widget/CWInteractionPromptWidget.h"
+#include "UI/Widget/CWStageIntroWidget.h"
+#include "Kismet/GameplayStatics.h"
 
 UCWUIBootstrapComponent::UCWUIBootstrapComponent()
 {
@@ -245,6 +247,20 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (InitialPage == ECWUIPage::None)
 	{
 		UISubsystem->ApplyInputMode(InitialInputMode);
+		// 카탈로그의 1-1 맵에서만 안내를 열어 다른 스테이지의 조작을 막지 않음
+		if (StageIntroClass && UGameplayStatics::GetCurrentLevelName(this, true) == TEXT("Stage_01"))
+		{
+			UCWStageIntroWidget* Intro = CreateWidget<UCWStageIntroWidget>(OwnerPC, StageIntroClass);
+			if (!IsValid(Intro) || !UISubsystem->OpenPopup(Intro))
+			{
+				UE_LOG(LogCWUI, Error, TEXT("UIBootstrap: failed to open stage intro."));
+			}
+			else if (!Intro->BeginIntro())
+			{
+				UE_LOG(LogCWUI, Error, TEXT("UIBootstrap: stage intro pages are not configured."));
+				UISubsystem->ClosePopup(Intro);
+			}
+		}
 	}
 
 	UE_LOG(
