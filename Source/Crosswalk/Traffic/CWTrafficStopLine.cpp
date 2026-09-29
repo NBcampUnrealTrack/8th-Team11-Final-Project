@@ -4,6 +4,8 @@
 
 #include "EngineUtils.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/Level.h"
+#include "Engine/World.h"
 #include "CWTrafficLane.h"
 #include "CWTrafficSubsystem.h"
 #include "Traffic/CWTrafficLog.h"
@@ -115,14 +117,6 @@ void ACWTrafficStopLine::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void ACWTrafficStopLine::PostLoad()
-{
-	Super::PostLoad();
-
-	// 검산 표시는 Transient 라 저장되지 않는다. 레벨을 열 때 다시 만든다.
-	RefreshLaneReadout();
-}
-
 void ACWTrafficStopLine::RefreshLaneReadout()
 {
 	LaneReadout.Reset();
@@ -222,6 +216,68 @@ void ACWTrafficStopLine::RefreshLaneReadout()
 }
 
 #if WITH_EDITOR
+void ACWTrafficStopLine::PostRegisterAllComponents()
+{
+	Super::PostRegisterAllComponents();
+
+	// PIE 와 게임은 이 표시를 안 쓴다. 에디터 월드에서만 건다.
+	const UWorld* World = GetWorld();
+	if (!World || World->IsGameWorld())
+	{
+		return;
+	}
+
+	/**
+	 * 검산 표시는 Transient 라 저장되지 않는다. 레벨을 열 때 다시 만들어야 하는데,
+	 * PostLoad 에서는 트랜스폼이 아직 틀린 값이라 엉뚱한 % 와 "차선 밖" 경고가 떴다.
+	 * 그 경고를 믿고 옮기면 멀쩡한 정지선이 망가진다.
+	 *
+	 * 내 컴포넌트가 등록된 이 자리도 이르다. 레벨은 액터를 하나씩 등록하므로 차선이
+	 * 나보다 뒤에 있으면 차선 스플라인이 아직 등록 전이다. 순서에 기대지 않으려고
+	 * 레벨 전체의 등록이 끝나는 이벤트(ULevel::UpdateLevelComponents 의 끝)를 기다린다.
+	 *
+	 * 재등록으로 여기가 여러 번 불려도 핸들이 하나라 중복으로 걸리지 않는다.
+	 */
+	if (!LevelComponentsUpdatedHandle.IsValid())
+	{
+		LevelComponentsUpdatedHandle = FWorldDelegates::LevelComponentsUpdated.AddUObject(
+			this, &ACWTrafficStopLine::HandleLevelComponentsUpdated);
+	}
+
+	if (!LevelAddedToWorldHandle.IsValid())
+	{
+		LevelAddedToWorldHandle = FWorldDelegates::LevelAddedToWorld.AddUObject(
+			this, &ACWTrafficStopLine::HandleLevelAddedToWorld);
+	}
+}
+
+void ACWTrafficStopLine::PostUnregisterAllComponents()
+{
+	FWorldDelegates::LevelComponentsUpdated.Remove(LevelComponentsUpdatedHandle);
+	FWorldDelegates::LevelAddedToWorld.Remove(LevelAddedToWorldHandle);
+	LevelComponentsUpdatedHandle.Reset();
+	LevelAddedToWorldHandle.Reset();
+
+	Super::PostUnregisterAllComponents();
+}
+
+void ACWTrafficStopLine::HandleLevelComponentsUpdated(UWorld* InWorld, ULevel* InLevel)
+{
+	// 다른 레벨의 등록 이벤트에는 반응하지 않는다. 내 차선은 같은 레벨에 있다.
+	if (InLevel == GetLevel())
+	{
+		RefreshLaneReadout();
+	}
+}
+
+void ACWTrafficStopLine::HandleLevelAddedToWorld(ULevel* InLevel, UWorld* InWorld)
+{
+	if (InLevel == GetLevel())
+	{
+		RefreshLaneReadout();
+	}
+}
+
 void ACWTrafficStopLine::PostEditMove(bool bFinished)
 {
 	Super::PostEditMove(bFinished);

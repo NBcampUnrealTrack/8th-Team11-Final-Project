@@ -7,6 +7,7 @@
 #include "CWTrafficStopLine.generated.h"
 
 class ACWTrafficLane;
+class ULevel;
 class UStaticMeshComponent;
 
 /**
@@ -72,7 +73,6 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void PostLoad() override;
 
 	/**
 	 * 차선별 검산 표시를 다시 만든다.
@@ -84,11 +84,28 @@ protected:
 	void RefreshLaneReadout();
 
 #if WITH_EDITOR
+	/**
+	 * 레벨을 열 때의 검산 표시는 여기서 걸어 둔 이벤트가 만든다.
+	 *
+	 * PostLoad 에서 만들면 안 된다. 그 시점에는 정지선과 차선의 컴포넌트가 아직 등록 전이라
+	 * 월드 트랜스폼이 틀린 값이다. 이 함수(내 컴포넌트 등록 직후)도 마찬가지로 부족하다 -
+	 * 차선 액터가 나보다 뒤에 등록되면 차선 스플라인이 아직 등록 전이다. 그래서 여기서는
+	 * "레벨 전체의 등록이 끝났다" 는 이벤트만 걸고, 계산은 이벤트가 온 뒤에 한다.
+	 */
+	virtual void PostRegisterAllComponents() override;
+	virtual void PostUnregisterAllComponents() override;
+
 	/** 에디터에서 옮기면 차선 위로 다시 붙인다. 보이는 자리가 곧 정지선이어야 한다. */
 	virtual void PostEditMove(bool bFinished) override;
 
 	/** 차선을 새로 지정했을 때도 붙인다. */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	/** 이 정지선이 속한 레벨의 컴포넌트 등록이 끝났을 때 검산 표시를 만든다. */
+	void HandleLevelComponentsUpdated(UWorld* InWorld, ULevel* InLevel);
+
+	/** 스트리밍 레벨로 들어온 경우. 이쪽은 UpdateLevelComponents 를 거치지 않는다. */
+	void HandleLevelAddedToWorld(ULevel* InLevel, UWorld* InWorld);
 #endif
 
 protected:
@@ -132,4 +149,9 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|StopLine", meta = (ClampMin = "0.0"))
 	float MinRunway = 900.f;
+
+#if WITH_EDITOR
+	FDelegateHandle LevelComponentsUpdatedHandle;
+	FDelegateHandle LevelAddedToWorldHandle;
+#endif
 };
