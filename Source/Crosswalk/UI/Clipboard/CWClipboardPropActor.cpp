@@ -9,6 +9,7 @@
 #include "UI/Clipboard/CWClipboardWidgetInteractionComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/SlateBlueprintLibrary.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Curves/CurveFloat.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/GameViewportClient.h"
@@ -26,6 +27,7 @@
 #include "Widgets/SOverlay.h"
 #include "Widgets/SViewport.h"
 #include "Widgets/SWindow.h"
+#include "Widgets/SVirtualWindow.h"
 #include "GameFramework/PlayerController.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -539,6 +541,35 @@ void ACWClipboardPropActor::FocusPaperInput()
 		PaperInteraction->FocusHardwareUser(FSlateApplication::Get().GetUserIndexForController(
 			PC->GetLocalPlayer()->GetControllerId()));
 	}
+}
+
+bool ACWClipboardPropActor::ProjectPaperWidget(const FGeometry& WidgetGeometry, FVector2D& OutPosition, FVector2D& OutSize) const
+{
+	APlayerController* PC = OwningPlayerController.Get();
+	if (!bPaperInteractionEnabled || ClipboardState != ECWClipboardState::Raised ||
+		!IsValid(PC) || !PaperWidget || !PaperWidget->GetVirtualWindow().IsValid()) return false;
+	const FVector2D Size = WidgetGeometry.GetLocalSize();
+	const FVector2D ViewportPixels = UWidgetLayoutLibrary::GetViewportSize(this);
+	if (Size.X <= 0 || Size.Y <= 0 || ViewportPixels.X <= 0 || ViewportPixels.Y <= 0) return false;
+	const FGeometry PaperGeometry = PaperWidget->GetVirtualWindow()->GetCachedGeometry();
+	const FGeometry ViewportGeometry = UWidgetLayoutLibrary::GetViewportWidgetGeometry(this);
+	const FGeometry PlayerGeometry = UWidgetLayoutLibrary::GetPlayerScreenWidgetGeometry(PC);
+	const FVector2D PaperPivotOffset = FVector2D(PaperWidget->GetCurrentDrawSize()) * PaperWidget->GetPivot();
+	auto Project = [&](const FVector2D& Local, FVector2D& Out)
+	{
+		const FVector2D PaperPoint = PaperGeometry.AbsoluteToLocal(WidgetGeometry.LocalToAbsolute(Local));
+		// 월드 종이의 좌표 변환을 역으로 적용하여 화면 입력칸이 해상도 변경에도 같은 위치를 유지함
+		const FVector World = PaperWidget->GetComponentTransform().TransformPosition(
+			FVector(0, PaperPivotOffset.X - PaperPoint.X, PaperPivotOffset.Y - PaperPoint.Y));
+		FVector2D Pixel;
+		if (!PC->ProjectWorldLocationToScreen(World, Pixel, false)) return false;
+		Out = PlayerGeometry.AbsoluteToLocal(ViewportGeometry.LocalToAbsolute(Pixel / ViewportPixels * ViewportGeometry.GetLocalSize()));
+		return true;
+	};
+	FVector2D BottomRight;
+	if (!Project(FVector2D::ZeroVector, OutPosition) || !Project(Size, BottomRight)) return false;
+	OutSize = BottomRight - OutPosition;
+	return OutSize.X > 0 && OutSize.Y > 0;
 }
 
 void ACWClipboardPropActor::UpdatePaperPointer()
