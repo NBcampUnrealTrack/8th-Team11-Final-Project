@@ -394,12 +394,15 @@ void ACWBaseWorkZone::OnHighlightStateChanged_Implementation(ECWZoneHighlightSta
 	// 켤 때마다 다시 잰다. 디테일 패널에서 배율·두께를 바꾸고 도구를 다시 들면 바로 보인다.
 	ApplyHighlightDecalSize();
 
-	const bool bActive = (NewState == ECWZoneHighlightState::Active);
-
 	if (HighlightMID != nullptr)
 	{
-		HighlightMID->SetVectorParameterValue(
-			HighlightColorParameterName, bActive ? HighlightActiveColor : HighlightPendingColor);
+		/**
+		 * 넘기는 것은 상태 하나뿐이다. 색과 밝기는 머티리얼이 정한다.
+		 *
+		 * 연출을 바꿀 때마다 C++ 을 고치면 전원이 리빌드해야 한다. 어떻게 보일지는
+		 * 머티리얼 파라미터로 두는 편이 반복이 훨씬 빠르고, 존마다 다르게 줄 이유도 없다.
+		 */
+		const bool bActive = (NewState == ECWZoneHighlightState::Active);
 
 		HighlightMID->SetScalarParameterValue(
 			HighlightIntensityParameterName, bActive ? 1.f : HighlightPendingIntensity);
