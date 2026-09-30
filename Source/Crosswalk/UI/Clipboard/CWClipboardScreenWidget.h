@@ -4,11 +4,15 @@
 
 #include "CoreMinimal.h"
 #include "UI/Core/CWUIScreenWidget.h"
+#include "Styling/SlateTypes.h"
 #include "CWClipboardScreenWidget.generated.h"
 
 class ACWClipboardPropActor;
 class UCWClipboardPresenterSubsystem;
 class USizeBox;
+class UEditableTextBox;
+class SConstraintCanvas;
+class SEditableTextBox;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCWClipboardReturnFinishedSignature);
 
@@ -30,6 +34,7 @@ public:
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event) override;
 	virtual FReply NativeOnMouseWheel(const FGeometry& Geometry, const FPointerEvent& Event) override;
@@ -56,6 +61,24 @@ private:
 	void HandlePaperCrossfadeFinished();
 	void SetPaperInput(bool bEnabled);
 	void RestoreHostContent();
+	void UpdateScreenTitleInput();
+	void RemoveScreenTitleInput();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> TitleInputSource;
+	TSharedPtr<SConstraintCanvas> ScreenTitleLayer;
+	TSharedPtr<SEditableTextBox> ScreenTitleInput;
+	FMargin ScreenTitleRect;
+	ESlateVisibility TitleSourceVisibility = ESlateVisibility::Visible;
+
+	// 종이의 원본 입력칸은 화면 입력칸이 포커스를 가진 동안만 글자를 숨기므로 복원할 값을 들고 있음
+	FEditableTextBoxStyle TitleSourceStyle;
+	FEditableTextBoxStyle TitleHiddenStyle;
+	FText TitleSourceHint;
+	bool bTitleSourceTextHidden = false;
+
+	// 화면 입력칸은 이 스타일의 주소를 계속 참조하므로 입력칸보다 오래 살아야 함
+	FEditableTextBoxStyle ScreenTitleStyle;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCWClipboardPresenterSubsystem> Presenter;

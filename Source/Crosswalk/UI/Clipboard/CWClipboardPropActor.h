@@ -7,6 +7,7 @@
 #include "Styling/SlateBrush.h"
 #include "CWClipboardPropActor.generated.h"
 
+struct FGeometry;
 class APlayerController;
 class SRetainerWidget;
 class SWidget;
@@ -82,6 +83,7 @@ public:
 	void ReleasePaperPointers();
 	void ScrollPaper(float InDelta);
 	void FocusPaperInput();
+	bool ProjectPaperWidget(const FGeometry& WidgetGeometry, FVector2D& OutPosition, FVector2D& OutSize) const;
 	UUserWidget* GetPaperOwner() const { return PaperOwner.Get(); }
 	void SetPresentationScale(float InScale, float InHeightRatio = 1.f);
 	void SetPaperOnlyPresentation(bool bEnabled);
