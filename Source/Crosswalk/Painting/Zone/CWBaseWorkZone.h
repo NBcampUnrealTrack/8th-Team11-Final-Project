@@ -511,26 +511,19 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
 	TObjectPtr<UMaterialInterface> HighlightMaterial;
 
-	// 지금 작업할 수 있는 상태의 색.
-	//
-	// 리티클의 진행 가능 색(UCWWorkReticleComponent::WorkableColor)과 같은 값이다.
-	// 두 표시가 같은 화면에 뜨는데 초록의 의미가 서로 다르면 화면이 거짓말을 한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color")
-	FLinearColor HighlightActiveColor = FLinearColor(0.1f, 0.9f, 0.2f, 1.f);
-
-	// 아직 차례가 아닌 상태의 색.
-	//
-	// 빨강을 쓰지 않는다. 리티클이 빨강을 "눌러도 진행되지 않는다" 에 이미 쓰고 있어서,
-	// 여기에 또 쓰면 두 빨강의 의미가 갈린다. Pending 은 금지가 아니라 "아직" 이므로
-	// 색상을 바꾸는 대신 채도를 뺀다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color")
-	FLinearColor HighlightPendingColor = FLinearColor(0.42f, 0.44f, 0.46f, 1.f);
-
-	// 아직 차례가 아닌 상태의 세기. Active 는 항상 1 이다.
-	//
-	// 색만 바꾸지 않고 세기까지 빼는 이유: 색상(hue) 차이만으로 가르면 색각 이상 플레이어가
-	// 두 상태를 구분하지 못한다. 명도가 같이 갈려야 누구에게나 읽힌다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Color", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	/**
+	 * Pending 일 때 머티리얼에 넘기는 값. Active 는 항상 1 이다.
+	 *
+	 * 색은 C++ 이 정하지 않는다. 여기서 보내는 것은 "지금 어느 상태인가" 하나뿐이고,
+	 * 그걸로 무엇을 그릴지는 머티리얼이 정한다. 연출을 바꿀 때마다 C++ 을 고치고 전원이
+	 * 리빌드하는 것을 피하려는 것이다. 존마다 색을 다르게 줄 일도 없다.
+	 *
+	 * 머티리얼 쪽에서는 이 값으로 두 상태를 가른다. (1 에 가까우면 Active)
+	 * 0 을 주면 안 된다. 머티리얼이 세기로도 쓰고 있으면 Pending 이 통째로 사라진다.
+	 *
+	 * 칸 발광(ACWWorkZone_Cells::RefreshPaintFieldHighlight)도 같은 값을 쓴다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float HighlightPendingIntensity = 0.35f;
 
 	// 데칼 정렬 순서. 같은 자리를 여러 데칼이 덮으면 이 값이 큰 쪽이 위로 온다.
@@ -568,9 +561,6 @@ protected:
 	float HighlightEdgeThickness = 12.f;
 
 	// 머티리얼 파라미터 이름. 머티리얼 쪽 이름을 바꿨다면 여기도 같이 바꾼다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Material")
-	FName HighlightColorParameterName = TEXT("Color");
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Material")
 	FName HighlightIntensityParameterName = TEXT("Intensity");
 
