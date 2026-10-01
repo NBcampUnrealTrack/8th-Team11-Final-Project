@@ -6,6 +6,8 @@
 #include "GameFramework/PlayerState.h"
 #include "CWPlayerState.generated.h"
 
+class UCWWearableComponent;
+
 UCLASS()
 class CROSSWALK_API ACWPlayerState : public APlayerState
 {
@@ -14,6 +16,12 @@ class CROSSWALK_API ACWPlayerState : public APlayerState
 #pragma region PlayerStateLifecycle
 
 public:
+	ACWPlayerState();
+	virtual void CopyProperties(APlayerState* PlayerState) override;
+
+	UFUNCTION(BlueprintPure, Category = "CW|Wearable")
+	UCWWearableComponent* GetWearableComponent() const { return WearableComponent; }
+
 	// 준비 상태를 모든 클라이언트에 복제하도록 등록
 	virtual void GetLifetimeReplicatedProps(
 		TArray<FLifetimeProperty>& OutLifetimeProps
@@ -49,6 +57,10 @@ private:
 #pragma region PlayerStateData
 
 private:
+	// 컴포넌트 내부의 기존 WornItems만 복제한다. 이 참조는 새 복제 변수가 아니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Wearable", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UCWWearableComponent> WearableComponent;
+
 	// 방에서 해당 플레이어가 게임 시작 준비를 마쳤는지 나타냄
 	UPROPERTY(
 		ReplicatedUsing = OnRep_IsReady,

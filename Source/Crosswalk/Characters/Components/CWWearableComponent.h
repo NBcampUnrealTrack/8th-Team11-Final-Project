@@ -49,18 +49,27 @@ class CROSSWALK_API UCWWearableComponent : public UActorComponent
 public:
 	UCWWearableComponent();
 
+	/** PlayerState가 선택을 보관하고, 현재 화면의 몸 메시만 로컬에서 연결한다. */
+	void SetBodyMesh(USkeletalMeshComponent* InBodyMesh);
+	void ReleaseBodyMesh(USkeletalMeshComponent* InBodyMesh);
+	void CopySelectionTo(UCWWearableComponent* Destination) const;
+
+	/** 기존 좌석 소유자 ID로 복장 외형을 연결한다. 네트워크 요청을 보내지 않는다. */
+	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
+	static void BindLobbySeat(USkeletalMeshComponent* SeatMesh, int32 PlayerId, UMeshComponent* LegacyHelmet);
+
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	/** 슬롯에 아이템을 입힌다. Item 이 nullptr 이면 그 슬롯을 벗는다. */
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
 	void SetSlotItem(FName SlotName, UCWWearableItem* Item);
 
-	/** 슬롯의 아이템을 다음 것으로 넘긴다. H 키가 쓰는 함수다. */
+	/** 로비 버튼에서 슬롯의 아이템을 다음 것으로 넘긴다. */
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
 	void CycleSlotItem(FName SlotName);
 
 	/**
-	 * bIncludeInToggleAll 이 켜진 슬롯을 한꺼번에 입거나 벗는다. J 키가 쓰는 함수다.
+	 * 로비에서 bIncludeInToggleAll 이 켜진 슬롯을 한꺼번에 입거나 벗는다.
 	 * 하나라도 입고 있으면 전부 벗고, 아무것도 안 입었으면 각 슬롯의 기본 아이템을 입는다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
@@ -76,6 +85,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/** 실제 반영은 서버가 한다. 클라이언트에서 부른 요청이 여기로 들어온다. */
 	UFUNCTION(Server, Reliable)
@@ -123,11 +133,13 @@ private:
 	USkeletalMeshComponent* GetBodyMesh() const;
 
 	bool HasAuthority() const;
+	bool CanChangeOutfit() const;
+	void ClearVisuals();
+	TWeakObjectPtr<USkeletalMeshComponent> BodyMeshTarget;
 
 protected:
 	/**
-	 * 이 캐릭터가 쓸 카탈로그. 비어 있으면 컴포넌트가 아무것도 하지 않는다.
-	 * BP 클래스 디폴트에서 지정한다.
+	 * PlayerState가 쓸 공통 카탈로그. 모든 머신에서 같은 항목 순서를 사용한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Crosswalk|Wearable")
 	TObjectPtr<UCWWearableCatalog> Catalog;
@@ -158,8 +170,7 @@ private:
 	 * 슬롯마다 입고 있는 아이템의 카탈로그 인덱스. 길이는 카탈로그의 슬롯 수와 같다.
 	 * INDEX_NONE 이면 그 슬롯은 비어 있다.
 	 *
-	 * TArray 의 복제는 원소 단위로 diff 를 뜨므로, 헬멧 하나를 바꾸면 1바이트짜리 원소
-	 * 하나만 나간다. 예전 비트마스크와 실질적으로 같은 비용이다.
+	 * 기존 선택 배열 하나만 복제한다. 실제 전송량에는 복제 프로토콜의 부가 정보도 포함된다.
 	 */
 	UPROPERTY(ReplicatedUsing = OnRep_WornItems)
 	TArray<int8> WornItems;

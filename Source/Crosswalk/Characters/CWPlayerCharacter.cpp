@@ -31,6 +31,7 @@
 #include "Characters/Components/CWWearableComponent.h"
 #include "Characters/Wearables/CWWearableItem.h"
 #include "Core/CWDecalStatics.h"
+#include "Core/CWPlayerState.h"
 #include "Interaction/Components/CWInteractionPromptComponent.h"
 #include "Interfaces/Interface_Interactable.h"
 #include "Painting/CWPaintSupplyBox.h"
@@ -105,13 +106,6 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	SupplyCarrierComponent = CreateDefaultSubobject<UCWSupplyCarrierComponent>(TEXT("SupplyCarrierComponent"));
 	InteractionPromptComponent = CreateDefaultSubobject<UCWInteractionPromptComponent>(TEXT("InteractionPromptComponent"));
 
-	/**
-	 * 착용물 컴포넌트. 헬멧과 옷을 하나로 관리한다.
-	 *
-	 * 슬롯을 여기서 만들지 않는다. 카탈로그가 정의한 슬롯 수만큼 컴포넌트가 BeginPlay 에서
-	 * 직접 만든다. 그래서 슬롯을 늘릴 때 이 생성자를 고치지 않아도 된다.
-	 */
-	WearableComponent = CreateDefaultSubobject<UCWWearableComponent>(TEXT("WearableComponent"));
 
 	/**
 	 * 화면에 안 잡히는 동안에도 본 트랜스폼을 갱신한다. 래그돌이 "남의 화면에서만" 굳는 것을 막는다.
@@ -176,6 +170,7 @@ void ACWPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 void ACWPlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	BindWearableToPlayerState();
 
 	/**
 	 * 캐릭터는 바닥 데칼을 받지 않는다.
@@ -268,6 +263,11 @@ void ACWPlayerCharacter::BeginPlay()
 
 void ACWPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(WearableComponent))
+	{
+		WearableComponent->ReleaseBodyMesh(GetMesh());
+	}
+
 	SinkholeFallComponent->OnFallLockChanged.RemoveDynamic(this, &ACWPlayerCharacter::HandleFallLockChanged);
 	RestoreParryVisuals();
 
@@ -1823,8 +1823,6 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	// 미니게임에서 빠져나오는 키. 이 바인딩이 빠지면 Q 를 눌러도 아무 일도 안 일어난다.
 	EnhancedInput->BindAction(CancelWorkAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::CancelWork);
 
-	// 헬멧 교체. 누르는 순간 한 번만.
-	EnhancedInput->BindAction(SwapHelmetAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::SwapHelmet);
 
 	// 보급 채우기. (기획서 6-2, 6-3)
 	//
@@ -1833,8 +1831,6 @@ void ACWPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	// 대상 머리 위에 띄워 알려주므로, 키 하나가 여러 일을 해도 예측할 수 있다.
 	EnhancedInput->BindAction(ChargePaintAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ChargePaint);
 
-	// 옷 입기/벗기.
-	EnhancedInput->BindAction(ToggleOutfitAction, ETriggerEvent::Started, this, &ACWPlayerCharacter::ToggleOutfit);
 }
 
 void ACWPlayerCharacter::BuildBuiltInInput()
@@ -1850,9 +1846,7 @@ void ACWPlayerCharacter::BuildBuiltInInput()
 	EnsureInputAction(WorkAction, TEXT("BuiltIn_Work"), EInputActionValueType::Boolean);
 	EnsureInputAction(ParryAction, TEXT("BuiltIn_Parry"), EInputActionValueType::Boolean);
 	EnsureInputAction(CancelWorkAction, TEXT("BuiltIn_CancelWork"), EInputActionValueType::Boolean);
-	EnsureInputAction(SwapHelmetAction, TEXT("BuiltIn_SwapHelmet"), EInputActionValueType::Boolean);
 	EnsureInputAction(ChargePaintAction, TEXT("BuiltIn_ChargePaint"), EInputActionValueType::Boolean);
-	EnsureInputAction(ToggleOutfitAction, TEXT("BuiltIn_ToggleOutfit"), EInputActionValueType::Boolean);
 
 	BuildSupplementContext();
 }
@@ -1918,11 +1912,7 @@ void ACWPlayerCharacter::BuildSupplementContext()
 		SupplementContext->MapKey(CancelWorkAction, EKeys::Q);
 	}
 
-	if (!AlreadyMapped.Contains(SwapHelmetAction))
-	{
-		// WASD·E·Q·Space·마우스가 이미 차 있어서 손이 닿는 자리 중 남은 키로 골랐다.
-		SupplementContext->MapKey(SwapHelmetAction, EKeys::H);
-	}
+
 
 	// 보급 채우기 키(R). 꺼내기는 E 가 받으므로 전용 키는 이것 하나뿐이다. (기획서 6-2, 6-3)
 	//
@@ -1937,11 +1927,7 @@ void ACWPlayerCharacter::BuildSupplementContext()
 		SupplementContext->MapKey(ChargePaintAction, EKeys::R);
 	}
 
-	if (!AlreadyMapped.Contains(ToggleOutfitAction))
-	{
-		// 헬멧(H) 바로 옆이라 착용 관련 키끼리 붙어 있게 된다.
-		SupplementContext->MapKey(ToggleOutfitAction, EKeys::J);
-	}
+
 }
 
 void ACWPlayerCharacter::AddMoveKeyMapping(UInputMappingContext* Context, const FKey& Key, bool bSwizzleToForwardAxis, bool bNegate)
@@ -2607,4 +2593,31 @@ FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
 	}
 
 	return GetActorLocation();
+}
+
+void ACWPlayerCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	BindWearableToPlayerState();
+}
+
+void ACWPlayerCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+	BindWearableToPlayerState();
+}
+
+void ACWPlayerCharacter::BindWearableToPlayerState()
+{
+	ACWPlayerState* State = GetPlayerState<ACWPlayerState>();
+	UCWWearableComponent* NewWearable = IsValid(State) ? State->GetWearableComponent() : nullptr;
+	if (WearableComponent != NewWearable && IsValid(WearableComponent))
+	{
+		WearableComponent->ReleaseBodyMesh(GetMesh());
+	}
+	WearableComponent = NewWearable;
+	if (IsValid(WearableComponent))
+	{
+		WearableComponent->SetBodyMesh(GetMesh());
+	}
 }
