@@ -1218,7 +1218,7 @@ void ACWPlayerCharacter::HandleParrySucceeded(const FCWParrySyncData& ParrySyncD
 	 * 그 아래에 두면 사운드가 빈 소품에서 스윙까지 사라지고, 내 캐릭터만 휘두르지 않는
 	 * 기묘한 상태가 된다. 연출과 사운드는 서로의 조건이 아니다.
 	 */
-	PlayParrySwingMontage();
+	PlayParrySwingMontage(Prop);
 
 	/**
 	 * 이펙트도 몬타주와 같은 이유로 여기다. 아래 두 return 보다 위여야 한다.
@@ -1326,9 +1326,9 @@ void ACWPlayerCharacter::PlayPredictedParrySwing(int32 PropIndex)
 	 * 맨손으로 두지 않는 이유는 모션이 야구 스윙이라 그렇다 - 빈손으로 휘두르면 무엇을
 	 * 하려는 동작인지 자체가 안 읽힌다.
 	 */
-	ApplyParryProp(PropIndex);
+	const FCWParryProp* Prop = ApplyParryProp(PropIndex);
 
-	PlayParrySwingMontage();
+	PlayParrySwingMontage(Prop);
 
 	/**
 	 * 실제로 재생된 경우에만 표시를 세운다. 몬타주가 비었거나 재생에 실패하면 회수할 스윙이
@@ -1338,7 +1338,23 @@ void ACWPlayerCharacter::PlayPredictedParrySwing(int32 PropIndex)
 		&& AnimInstance->Montage_IsPlaying(ParrySwingMontage));
 }
 
-void ACWPlayerCharacter::PlayParrySwingMontage()
+void ACWPlayerCharacter::PlayParrySwingWhoosh(const FCWParryProp* Prop)
+{
+	// 로컬 전용 연출이다. 본인에게만 들리면 되므로 서버 확정을 기다릴 이유가 없다.
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (Prop == nullptr || Prop->WhooshSound == nullptr)
+	{
+		return;
+	}
+
+	UGameplayStatics::PlaySound2D(this, Prop->WhooshSound);
+}
+
+void ACWPlayerCharacter::PlayParrySwingMontage(const FCWParryProp* Prop)
 {
 	if (ParrySwingMontage == nullptr)
 	{
@@ -1389,6 +1405,18 @@ void ACWPlayerCharacter::PlayParrySwingMontage()
 	// 호스트에서 성공 스윙과 예측 스윙이 같은 프레임에 두 번 나가는 것을 막는 표시다.
 	// (PlayPredictedParrySwing 의 첫 분기)
 	LastParrySwingFrame = GFrameCounter;
+
+	/**
+	 * [버그 수정] 휘두르는 소리는 호출한 쪽이 아니라 여기, "실제로 스윙이 새로 시작되는
+	 * 지점"에서 낸다.
+	 *
+	 * 원래 PlayPredictedParrySwing 에서 직접 불렀는데, 호스트는 RequestParry 안에서 판정이
+	 * 그 자리에 끝나(HandleParrySucceeded 가 먼저 PlayParrySwingMontage 를 불러 LastParrySwingFrame
+	 * 을 이번 프레임으로 세워 버린다) PlayPredictedParrySwing 이 위쪽 "같은 프레임 중복 방지"
+	 * 가드에 걸려 통째로 건너뛰었다. 그 가드 안에 휘두르는 소리 호출까지 같이 들어있어서,
+	 * 호스트 본인이 성공시킨 패링만 휘두르는 소리가 안 나는 버그였다.
+	 */
+	PlayParrySwingWhoosh(Prop);
 
 	const float Duration = AnimInstance->Montage_Play(
 		ParrySwingMontage,

@@ -299,8 +299,24 @@ protected:
 	 * 그래서 내 화면에서도 남의 화면에서도 같은 캐릭터가 같은 시점에 휘두른다.
 	 *
 	 * 예측 스윙이 이미 돌고 있으면 다시 시작하지 않는다. (bPredictedParrySwingPending)
+	 *
+	 * 휘두르는 소리(PlayParrySwingWhoosh)도 이 함수 안, "실제로 스윙이 새로 시작되는" 분기
+	 * 에서 같이 낸다. 호출하는 쪽(HandleParrySucceeded/PlayPredictedParrySwing)에 맡기면,
+	 * 호스트는 판정이 동기로 끝나 두 호출 중 하나가 "같은 프레임 중복 방지" 가드에 걸려
+	 * 통째로 건너뛸 수 있다 - 그러면 정작 스윙은 났는데 소리만 안 나는 경우가 생긴다.
+	 *
+	 * @param Prop ApplyParryProp 이 돌려준 소품. 휘두르는 소리를 소품마다 다르게 내는 데 쓴다.
 	 */
-	void PlayParrySwingMontage();
+	void PlayParrySwingMontage(const struct FCWParryProp* Prop);
+
+	/**
+	 * 휘두르는 소리를 낸다. 본인에게만 들리는 로컬 전용 연출이라 Multicast로 퍼지지 않는다.
+	 * PlayParrySwingMontage 안에서만 부른다 - 직접 부르지 않는다.
+	 *
+	 * @param Prop ApplyParryProp 이 돌려준 소품. nullptr 이거나 WhooshSound 가 비어 있으면
+	 *             아무 일도 하지 않는다.
+	 */
+	void PlayParrySwingWhoosh(const struct FCWParryProp* Prop);
 
 	// 정상 종료뿐 아니라 피격·몬타주 중단 때도 작업 도구를 다시 보이게 한다.
 	void HandleParryMontageEnded(UAnimMontage* Montage, bool bInterrupted);
