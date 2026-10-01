@@ -360,6 +360,9 @@ protected:
 
 private:
 	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_PlayerState() override;
+	void BindWearableToPlayerState();
 
 	/** 앉은 채로 사라지면 존이 자리를 영영 붙잡는다. 나가기 전에 반드시 일어난다. */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -667,14 +670,8 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Crosswalk|Component")
 	TObjectPtr<UCWInteractionPromptComponent> InteractionPromptComponent;
 
-	/**
-	 * 헬멧과 옷을 함께 관리한다. 어떤 슬롯이 있고 무엇을 입을 수 있는지는
-	 * 카탈로그 애셋(UCWWearableCatalog)이 정의하므로 이 클래스는 슬롯을 만들지 않는다.
-	 *
-	 * HeadgearComponent + OutfitComponent + 슬롯 컴포넌트 8개를 대체한다.
-	 * BP 클래스 디폴트에서 이 컴포넌트의 Catalog 를 지정해야 동작한다.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Wearable")
+	// PlayerState가 소유한 컴포넌트의 로컬 참조. 캐릭터에는 복제 컴포넌트를 만들지 않는다.
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Wearable")
 	TObjectPtr<UCWWearableComponent> WearableComponent;
 
 protected:

@@ -6,8 +6,23 @@
 #include "Core/CWGameState.h"
 #include "Core/Room/CWRoomGameState.h"
 #include "Net/UnrealNetwork.h"
+#include "Characters/Components/CWWearableComponent.h"
 
 #pragma region PlayerStateLifecycle
+
+ACWPlayerState::ACWPlayerState()
+{
+	WearableComponent = CreateDefaultSubobject<UCWWearableComponent>(TEXT("WearableComponent"));
+}
+
+void ACWPlayerState::CopyProperties(APlayerState* PlayerState)
+{
+	Super::CopyProperties(PlayerState);
+	if (ACWPlayerState* Destination = Cast<ACWPlayerState>(PlayerState))
+	{
+		WearableComponent->CopySelectionTo(Destination->WearableComponent);
+	}
+}
 
 void ACWPlayerState::GetLifetimeReplicatedProps(
 	TArray<FLifetimeProperty>& OutLifetimeProps

@@ -3,12 +3,24 @@
 #include "UI/ViewModel/CWRoomViewModel.h"
 #include "CoreMinimal.h"
 #include "Core/CWPlayerState.h"
+#include "Characters/Components/CWWearableComponent.h"
 #include "Core/Room/CWRoomGameState.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/GameStateBase.h"
 
 #pragma region RoomRequests
+
+void UCWRoomViewModel::RequestChangeOutfit()
+{
+	APlayerController* LocalPlayerController = GetOwningPlayerController();
+	ACWPlayerState* PlayerState = IsValid(LocalPlayerController)
+		? LocalPlayerController->GetPlayerState<ACWPlayerState>() : nullptr;
+	if (IsValid(PlayerState) && IsValid(PlayerState->GetWearableComponent()))
+	{
+		PlayerState->GetWearableComponent()->CycleSlotItem(TEXT("Head"));
+	}
+}
 
 void UCWRoomViewModel::RequestToggleReady()
 {

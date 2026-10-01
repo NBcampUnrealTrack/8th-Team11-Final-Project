@@ -7,17 +7,24 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/CWDecalStatics.h"
+#include "Core/CWPlayerState.h"
+#include "Core/Room/CWRoomGameState.h"
+#include "Engine/World.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
 #include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
+#include "UObject/ConstructorHelpers.h"
 
 UCWWearableComponent::UCWWearableComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+	static ConstructorHelpers::FObjectFinder<UCWWearableCatalog> DefaultCatalog(
+		TEXT("/Game/CrossWalk/Characters/Player/Data_Asset/DA_Itemcatalog.DA_Itemcatalog"));
+	Catalog = DefaultCatalog.Object;
 }
 
 void UCWWearableComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -48,9 +55,10 @@ void UCWWearableComponent::BeginPlay()
 		return;
 	}
 
+	const bool bNeedsDefaultSelection = HasAuthority() && WornItems.Num() != Catalog->GetSlotCount();
 	PrepareSlots();
 
-	if (HasAuthority())
+	if (bNeedsDefaultSelection)
 	{
 		// 서버가 시작 복장을 확정한다. 클라이언트는 복제로 받는다.
 		for (int32 SlotIndex = 0; SlotIndex < Catalog->GetSlotCount(); ++SlotIndex)
@@ -75,7 +83,7 @@ void UCWWearableComponent::PrepareSlots()
 	const int32 SlotCount = Catalog->GetSlotCount();
 
 	// 슬롯 컴포넌트 칸을 미리 확보한다. 실제 컴포넌트는 처음 입을 때 만든다.
-	SlotComponents.Init(nullptr, SlotCount);
+	SlotComponents.SetNum(SlotCount);
 
 	/**
 	 * 서버는 권위 있게 초기화하고, 클라이언트는 복제된 값을 건드리지 않는다.
@@ -83,7 +91,7 @@ void UCWWearableComponent::PrepareSlots()
 	 * 클라이언트에서 이미 서버 값이 도착했다면 길이가 맞으므로 그대로 둔다. 여기서 Init 을
 	 * 무조건 부르면 방금 받은 착용 상태를 스스로 지워 버린다.
 	 */
-	if (HasAuthority() || WornItems.Num() != SlotCount)
+	if (HasAuthority() && WornItems.Num() != SlotCount)
 	{
 		WornItems.Init(INDEX_NONE, SlotCount);
 	}
@@ -91,6 +99,10 @@ void UCWWearableComponent::PrepareSlots()
 
 void UCWWearableComponent::SetSlotItem(FName SlotName, UCWWearableItem* Item)
 {
+	if (!CanChangeOutfit())
+	{
+		return;
+	}
 	const int32 SlotIndex = ResolveSlotIndex(SlotName);
 	if (SlotIndex == INDEX_NONE)
 	{
@@ -118,6 +130,10 @@ void UCWWearableComponent::SetSlotItem(FName SlotName, UCWWearableItem* Item)
 
 void UCWWearableComponent::CycleSlotItem(FName SlotName)
 {
+	if (!CanChangeOutfit())
+	{
+		return;
+	}
 	const int32 SlotIndex = ResolveSlotIndex(SlotName);
 	if (SlotIndex == INDEX_NONE)
 	{
@@ -141,7 +157,7 @@ void UCWWearableComponent::CycleSlotItem(FName SlotName)
 
 void UCWWearableComponent::ToggleAllSlots()
 {
-	if (Catalog == nullptr)
+	if (!CanChangeOutfit() || Catalog == nullptr)
 	{
 		return;
 	}
@@ -189,7 +205,7 @@ void UCWWearableComponent::Server_ToggleAllSlots_Implementation()
 
 void UCWWearableComponent::SetSlotItemAuthority(int32 SlotIndex, int32 ItemIndex)
 {
-	if (!HasAuthority() || Catalog == nullptr || !WornItems.IsValidIndex(SlotIndex))
+	if (!HasAuthority() || !CanChangeOutfit() || Catalog == nullptr || !WornItems.IsValidIndex(SlotIndex))
 	{
 		return;
 	}
@@ -222,7 +238,7 @@ void UCWWearableComponent::SetSlotItemAuthority(int32 SlotIndex, int32 ItemIndex
 
 void UCWWearableComponent::CycleSlotItemAuthority(int32 SlotIndex)
 {
-	if (!HasAuthority() || Catalog == nullptr || !WornItems.IsValidIndex(SlotIndex))
+	if (!HasAuthority() || !CanChangeOutfit() || Catalog == nullptr || !WornItems.IsValidIndex(SlotIndex))
 	{
 		return;
 	}
@@ -260,7 +276,7 @@ void UCWWearableComponent::CycleSlotItemAuthority(int32 SlotIndex)
 
 void UCWWearableComponent::ToggleAllSlotsAuthority()
 {
-	if (!HasAuthority() || Catalog == nullptr)
+	if (!HasAuthority() || !CanChangeOutfit() || Catalog == nullptr)
 	{
 		return;
 	}
@@ -392,7 +408,7 @@ UMeshComponent* UCWWearableComponent::EnsureSlotComponent(int32 SlotIndex, const
 		? UStaticMeshComponent::StaticClass()
 		: USkeletalMeshComponent::StaticClass();
 
-	UMeshComponent* Existing = SlotComponents[SlotIndex];
+	UMeshComponent* Existing = IsValid(SlotComponents[SlotIndex]) ? SlotComponents[SlotIndex].Get() : nullptr;
 
 	// 타입이 다르면 재사용할 수 없다. 스태틱 컴포넌트에 스켈레탈 메시를 꽂을 방법은 없다.
 	if (Existing != nullptr && Existing->GetClass() != WantedClass)
@@ -429,9 +445,9 @@ UMeshComponent* UCWWearableComponent::EnsureSlotComponent(int32 SlotIndex, const
 	const FCWWearableSlotDef* SlotDef = Catalog->GetSlotDef(SlotIndex);
 	const FName BaseName(*FString::Printf(TEXT("WearableSlot_%s"),
 		SlotDef != nullptr ? *SlotDef->SlotName.ToString() : TEXT("Unknown")));
-	const FName ComponentName = MakeUniqueObjectName(GetOwner(), WantedClass, BaseName);
+	const FName ComponentName = MakeUniqueObjectName(BodyMesh->GetOwner(), WantedClass, BaseName);
 
-	UMeshComponent* NewSlot = NewObject<UMeshComponent>(GetOwner(), WantedClass, ComponentName);
+	UMeshComponent* NewSlot = NewObject<UMeshComponent>(BodyMesh->GetOwner(), WantedClass, ComponentName);
 	if (NewSlot == nullptr)
 	{
 		return nullptr;
@@ -590,8 +606,106 @@ int32 UCWWearableComponent::ResolveSlotIndex(FName SlotName) const
 
 USkeletalMeshComponent* UCWWearableComponent::GetBodyMesh() const
 {
-	const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	return OwnerCharacter != nullptr ? OwnerCharacter->GetMesh() : nullptr;
+	return BodyMeshTarget.Get();
+}
+
+bool UCWWearableComponent::CanChangeOutfit() const
+{
+	const UWorld* World = GetWorld();
+	return World != nullptr && World->GetGameState<ACWRoomGameState>() != nullptr
+		&& World->NextURL.IsEmpty() && !World->IsInSeamlessTravel();
+}
+
+void UCWWearableComponent::ClearVisuals()
+{
+	for (UMeshComponent* Component : SlotComponents)
+	{
+		if (IsValid(Component))
+		{
+			Component->DestroyComponent();
+		}
+	}
+	SlotComponents.Reset();
+}
+
+void UCWWearableComponent::SetBodyMesh(USkeletalMeshComponent* InBodyMesh)
+{
+	if (BodyMeshTarget.Get() == InBodyMesh)
+	{
+		return;
+	}
+	ClearVisuals();
+	BodyMeshTarget = InBodyMesh;
+	if (Catalog != nullptr && IsValid(InBodyMesh))
+	{
+		SlotComponents.SetNum(Catalog->GetSlotCount());
+		ApplyWornItems();
+	}
+}
+
+void UCWWearableComponent::ReleaseBodyMesh(USkeletalMeshComponent* InBodyMesh)
+{
+	if (BodyMeshTarget.Get() == InBodyMesh)
+	{
+		ClearVisuals();
+		BodyMeshTarget.Reset();
+	}
+}
+
+void UCWWearableComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ClearVisuals();
+	BodyMeshTarget.Reset();
+	Super::EndPlay(EndPlayReason);
+}
+
+void UCWWearableComponent::CopySelectionTo(UCWWearableComponent* Destination) const
+{
+	if (HasAuthority() && IsValid(Destination) && Destination->HasAuthority())
+	{
+		// 서버 내부의 맵 이동 복사다. 변경 요청 제한과 관계없이 기존 배열을 보존한다.
+		Destination->WornItems = WornItems;
+		Destination->ApplyWornItems();
+	}
+}
+
+void UCWWearableComponent::BindLobbySeat(USkeletalMeshComponent* SeatMesh, int32 PlayerId, UMeshComponent* LegacyHelmet)
+{
+	if (!IsValid(SeatMesh) || SeatMesh->GetWorld() == nullptr)
+	{
+		return;
+	}
+	const ACWRoomGameState* Room = SeatMesh->GetWorld()->GetGameState<ACWRoomGameState>();
+	if (Room == nullptr)
+	{
+		return;
+	}
+	if (IsValid(LegacyHelmet))
+	{
+		LegacyHelmet->SetVisibility(false);
+	}
+	UCWWearableComponent* Selected = nullptr;
+	for (APlayerState* State : Room->PlayerArray)
+	{
+		ACWPlayerState* Player = Cast<ACWPlayerState>(State);
+		if (!IsValid(Player))
+		{
+			continue;
+		}
+		UCWWearableComponent* Wearable = Player->GetWearableComponent();
+		if (PlayerId >= 0 && Player->GetPlayerId() == PlayerId)
+		{
+			Selected = Wearable;
+		}
+		else
+		{
+			Wearable->ReleaseBodyMesh(SeatMesh);
+		}
+	}
+	if (Selected != nullptr)
+	{
+		Selected->SetBodyMesh(SeatMesh);
+	}
 }
 
 bool UCWWearableComponent::HasAuthority() const

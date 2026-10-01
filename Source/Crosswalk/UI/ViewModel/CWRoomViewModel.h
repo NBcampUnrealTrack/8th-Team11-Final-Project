@@ -18,6 +18,10 @@ class CROSSWALK_API UCWRoomViewModel : public UCWBaseGameStateViewModel
 #pragma region RoomRequests
 
 public:
+	// 로비 버튼에서 소유 PlayerState의 기존 복장 변경 요청을 사용한다.
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
+	void RequestChangeOutfit();
+
 	// 로컬 플레이어의 준비 상태를 반대로 변경
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
 	void RequestToggleReady();
