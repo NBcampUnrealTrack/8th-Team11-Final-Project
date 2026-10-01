@@ -87,6 +87,7 @@ public:
 	UUserWidget* GetPaperOwner() const { return PaperOwner.Get(); }
 	void SetPresentationScale(float InScale, float InHeightRatio = 1.f);
 	void SetPaperOnlyPresentation(bool bEnabled);
+	void SetCenteredPresentation(bool bEnabled) { bCenteredPresentation = bEnabled; }
 
 	// 이전 종이를 지우면서 새 종이를 그림. 끝나면 OnPaperCrossfadeFinished 를 발행함
 	// 올라와 있지 않거나 이전 종이가 없으면 즉시 교체하고 바로 발행함
@@ -299,6 +300,7 @@ private:
 	TSet<FKey> PressedPaperKeys;
 	bool bPaperInteractionEnabled = false;
 	bool bPaperOnlyPresentation = false;
+	bool bCenteredPresentation = false;
 	float PresentationScale = 1.f;
 	FVector2D OriginalPaperDrawSize = FVector2D::ZeroVector;
 	FTransform OriginalClipboardTransform;

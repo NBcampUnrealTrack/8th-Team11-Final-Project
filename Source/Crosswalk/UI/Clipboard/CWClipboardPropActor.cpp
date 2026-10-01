@@ -780,7 +780,7 @@ FVector ACWClipboardPropActor::GetEffectiveRaisedLocation(FRotator& OutRotation)
 {
 	OutRotation = bPaperOnlyPresentation ? FRotator(90.f, 0.f, 0.f) : RaisedRelativeRotation;
 	FVector Location = RaisedRelativeLocation;
-	if (bPaperOnlyPresentation && ClipboardMesh && ClipboardMesh->GetStaticMesh())
+	if ((bPaperOnlyPresentation || bCenteredPresentation) && ClipboardMesh && ClipboardMesh->GetStaticMesh())
 	{
 		const FVector MeshCenter = ClipboardMesh->GetRelativeTransform().TransformPosition(
 			ClipboardMesh->GetStaticMesh()->GetBounds().Origin) * PresentationScale;

@@ -69,6 +69,8 @@ private:
 
 	void AttachPaperContent();
 	void RestorePaperContent();
+	void HideRoomPresentation();
+	void RestoreRoomPresentation();
 
 #pragma endregion
 
@@ -91,6 +93,8 @@ private:
 	TObjectPtr<UCWClipboardPresenterSubsystem> ClipboardPresenter;
 
 	TWeakObjectPtr<ACWClipboardPropActor> PaperActor;
+	TArray<TWeakObjectPtr<UUserWidget>> HiddenRoomWidgets;
+	TArray<ESlateVisibility> RoomVisibilities;
 
 	// 연출 완료 후 Designer에서 지정한 원래 Visibility로 복구
 	ESlateVisibility OriginalInteractionVisibility =

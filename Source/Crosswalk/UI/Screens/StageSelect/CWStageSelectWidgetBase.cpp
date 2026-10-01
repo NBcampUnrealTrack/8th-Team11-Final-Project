@@ -5,6 +5,8 @@
 #include "Components/SizeBox.h"
 #include "Engine/LocalPlayer.h"
 #include "UI/Clipboard/CWClipboardPresenterSubsystem.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "UI/Room/CWRoomScreenWidget.h"
 
 #pragma region UserWidgetOverrides
 
@@ -31,6 +33,7 @@ void UCWStageSelectWidgetBase::NativeDestruct()
 	}
 
 	RestorePaperContent();
+	RestoreRoomPresentation();
 
 	ClipboardPresenter = nullptr;
 
@@ -88,6 +91,7 @@ void UCWStageSelectWidgetBase::NativeOnMouseCaptureLost(const FCaptureLostEvent&
 
 void UCWStageSelectWidgetBase::BeginOpenStageSelect()
 {
+	HideRoomPresentation();
 	bIsClosing = false;
 	bCloseCompleted = false;
 
@@ -247,6 +251,11 @@ void UCWStageSelectWidgetBase::AttachPaperContent()
 	}
 
 	PaperActor = ClipboardPresenter->AttachPaperContent(this, Panel_ClipboardPaper);
+	if (PaperActor.IsValid())
+	{
+		// 손을 포함한 프롭 전체가 같은 원점 이동을 따라가도록 액터에서 중앙 보정함
+		PaperActor->SetCenteredPresentation(true);
+	}
 	if (!PaperActor.IsValid())
 	{
 		SizeBox_PaperHost->SetContent(Panel_ClipboardPaper);
@@ -275,8 +284,42 @@ void UCWStageSelectWidgetBase::FinishCloseStageSelect()
 	}
 
 	bCloseCompleted = true;
+	RestoreRoomPresentation();
 
 	OnClosePresentationFinished.Broadcast();
+}
+
+void UCWStageSelectWidgetBase::HideRoomPresentation()
+{
+	if (!HiddenRoomWidgets.IsEmpty())
+	{
+		return;
+	}
+	TArray<UUserWidget*> Rooms;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Rooms, UCWRoomScreenWidget::StaticClass(), false);
+	for (UUserWidget* Room : Rooms)
+	{
+		if (IsValid(Room) && Room->GetOwningLocalPlayer() == GetOwningLocalPlayer())
+		{
+			HiddenRoomWidgets.Add(Room);
+			RoomVisibilities.Add(Room->GetVisibility());
+			// 위젯을 제거하지 않아야 닫기 복제 이벤트 구독과 준비 상태가 유지됨
+			Room->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
+}
+
+void UCWStageSelectWidgetBase::RestoreRoomPresentation()
+{
+	for (int32 Index = 0; Index < HiddenRoomWidgets.Num(); ++Index)
+	{
+		if (UUserWidget* Room = HiddenRoomWidgets[Index].Get())
+		{
+			Room->SetVisibility(RoomVisibilities[Index]);
+		}
+	}
+	HiddenRoomWidgets.Reset();
+	RoomVisibilities.Reset();
 }
 
 #pragma endregion
