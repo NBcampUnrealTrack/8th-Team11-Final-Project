@@ -30,9 +30,22 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Prop")
 	TObjectPtr<UStaticMesh> Mesh;
 
-	/** 이 소품을 휘두를 때 나는 소리. 비우면 이 소품이 뽑힌 패링이 무음이 된다. */
+	/**
+	 * 패링 성공 판정음. 소품에 따라 금속 타격, 플라스틱 타격처럼 다르다. 비우면 이 소품이
+	 * 뽑힌 패링이 무음이 된다. 서버 확정 뒤 모든 머신에 Multicast로 퍼진다
+	 * (ACWPlayerCharacter::HandleParrySucceeded 참고) - 이름과 달리 "휘두르는 소리"가
+	 * 아니라 "맞는 소리"다.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Prop")
 	TObjectPtr<USoundBase> SwingSound;
+
+	/**
+	 * 휘두르는 순간(스윙 시작) 나는 소리. 본인에게만 들리는 로컬 전용 연출이라
+	 * Multicast로 퍼지지 않는다 (ACWPlayerCharacter::PlayParrySwingWhoosh 참고).
+	 * 비우면 이 소품은 휘두르는 소리 없이 성공음(SwingSound)만 난다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Prop")
+	TObjectPtr<USoundBase> WhooshSound;
 
 	/**
 	 * 이 소품이 차를 쳐낼 때 터지는 이펙트. 비우면 이 소품이 뽑힌 패링만 이펙트 없이 나간다.
