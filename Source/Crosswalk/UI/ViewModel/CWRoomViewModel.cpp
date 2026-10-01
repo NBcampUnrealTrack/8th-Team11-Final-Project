@@ -42,9 +42,7 @@ void UCWRoomViewModel::RequestToggleReady()
 	}
 
 	// 준비 상태는 PlayerState의 Server RPC를 통해 서버에서 확정
-	CWPlayerState->ServerSetReady(
-		!CWPlayerState->IsReady()
-	);
+	CWPlayerState->ServerSetReady(IsLocalHost() || !CWPlayerState->IsReady());
 }
 
 #pragma endregion
@@ -70,6 +68,13 @@ void UCWRoomViewModel::RefreshRoomState()
 	{
 		LocalPlayerState =
 			LocalPlayerController->PlayerState;
+	}
+
+	// 호스트도 실제 서버 준비 값을 설정해야 전원 준비 판정과 표시가 일치함
+	if (ACWPlayerState* HostState = Cast<ACWPlayerState>(LocalPlayerState);
+		IsLocalHost() && IsValid(HostState) && !HostState->IsReady())
+	{
+		HostState->ServerSetReady(true);
 	}
 
 	TArray<FCWRoomPlayerInfo> NewRoomPlayers;
