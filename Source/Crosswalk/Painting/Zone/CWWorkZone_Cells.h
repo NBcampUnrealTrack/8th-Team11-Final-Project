@@ -594,6 +594,9 @@ private:
 	 */
 	void RefreshPaintFieldHighlight();
 
+	/** 기존 칸 텍스처로 도색된 부분의 안내 테두리를 숨긴다. 네트워크 상태는 추가하지 않는다. */
+	void RefreshHighlightPaintMask();
+
 	/**
 	 * 칸 상태를 담을 텍스처를 만든다. 크기가 그대로면 아무것도 하지 않는다.
 	 *

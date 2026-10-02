@@ -103,6 +103,12 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	}
 }
 
+void ACWWorkZone_BorderSketch::OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState)
+{
+	// BorderMeshes는 칠한 칸을 흰 선으로 바꾼다. 전체 데칼을 덧그리면 그 위에 안내가 남는다.
+	Super::OnHighlightStateChanged_Implementation(ECWZoneHighlightState::None);
+}
+
 void ACWWorkZone_BorderSketch::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
