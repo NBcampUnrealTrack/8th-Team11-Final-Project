@@ -166,7 +166,8 @@ void UCWWorkZoneHighlightComponent::RefreshHighlights()
 		}
 
 #if ENABLE_DRAW_DEBUG
-		if (!bDrawDebugBoxes || State == ECWZoneHighlightState::None || World == nullptr || Zone->Area == nullptr)
+		if (!bDrawDebugBoxes || !Zone->ShouldDrawDebugHighlightBox()
+			|| State == ECWZoneHighlightState::None || World == nullptr || Zone->Area == nullptr)
 		{
 			continue;
 		}

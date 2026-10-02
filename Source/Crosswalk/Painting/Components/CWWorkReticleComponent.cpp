@@ -71,15 +71,8 @@ void UCWWorkReticleComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	// 붓 중심은 작업 컴포넌트가 이미 계산해 둔 값을 그대로 쓴다. 다시 트레이스하지 않는다. (기획서 8)
 	const FVector BrushCenter = WorkerComponent->GetWorkLocation();
 
-	// 실제로 칠해지는 월드 반경. 판정(초록/빨강)은 이 값 기준으로 돈다.
-	const float PaintedRadius = Zone->GetPaintedWorldRadius(WorkerComponent);
-
-	// 화면에 그리는 반경은 여기서 실제 반경과 갈라진다.
-	//
-	// 붓이 작을 때 원이 점처럼 보여 조준을 도와주지 못하기 때문에 최소 크기를 보장한다.
-	// 그 대신 "원 안쪽이 곧 칠해질 범위" 라는 보장은 포기했다. 원은 위치 표지에 가깝다.
-	// (MinReticleRadius 주석 참고)
-	const float DrawRadius = FMath::Max(PaintedRadius * ReticleRadiusScale, MinReticleRadius);
+	// 최소 크기나 표시 배율을 더하지 않고 실제 칸 판정의 월드 반경을 그대로 그린다.
+	const float DrawRadius = Zone->GetPaintedWorldRadius(WorkerComponent);
 
 	/**
 	 * 초록이냐 빨강이냐. 두 가지뿐이다. (기획서 7-2)
@@ -199,6 +192,8 @@ bool UCWWorkReticleComponent::EnsureDecal()
 
 	ReticleDecal = NewObject<UDecalComponent>(Owner, NAME_None, RF_Transient);
 	ReticleDecal->SetupAttachment(Owner->GetRootComponent());
+	// 반경은 이미 월드 cm이므로 캐릭터의 스케일을 다시 곱하지 않는다.
+	ReticleDecal->SetUsingAbsoluteScale(true);
 	ReticleDecal->SetDecalMaterial(ReticleMaterial);
 	ReticleDecal->SetSortOrder(DecalSortOrder);
 
@@ -322,14 +317,13 @@ void UCWWorkReticleComponent::PrintDebugState(const TCHAR* State, const ACWWorkZ
 
 	// 두 번째 줄 — 그리는 원과 실제 칠해지는 범위가 얼마나 벌어져 있는지.
 	//
-	// 표시 크기를 일부러 붓 범위에서 떼어냈기 때문에(MinReticleRadius) 둘이 다른 것이 정상이다.
-	// 다만 얼마나 다른지는 보이는 편이 낫다. 밸런스를 볼 때 붓 실측값이 필요하다.
+	// 두 반경은 같아야 한다. 스테이지 배율이나 체온이 달라져도 같은 판정값을 쓴다.
 	if (Zone != nullptr)
 	{
 		const FVector ZoneScale = Zone->GetActorScale3D();
 		GEngine->AddOnScreenDebugMessage(
 			(uint64)GetUniqueID() + 1, 0.f, FColor::Cyan,
-			FString::Printf(TEXT("[조준 표시기] 그리는 원 반경=%.1f (지름 %.1f) | 실제 칠해지는 반경=%.1f | 붓(로컬)=%.1f | 존 스케일=(%.2f, %.2f)"),
+			FString::Printf(TEXT("[조준 표시기] 그리는 원 반경=%.1f (지름 %.1f) | 실제 칠해지는 반경=%.1f | 붓(월드)=%.1f | 존 스케일=(%.2f, %.2f)"),
 				Radius,
 				Radius * 2.f,
 				Zone->GetPaintedWorldRadius(WorkerComponent),

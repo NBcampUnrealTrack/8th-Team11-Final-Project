@@ -182,10 +182,14 @@ public:
 	 * 흰 롤러를 든 내내 계속 빛난다.
 	 */
 	virtual ECWZoneHighlightState GetHighlightStateFor(ECWToolType ToolType) const override;
+	virtual bool ShouldDrawDebugHighlightBox() const override { return !IsFillMode() && !bHighlightPaintedCells; }
+
+	/** 연결된 실제 테두리 머티리얼에 이 도색 존의 안내 스타일을 적용한다. */
+	void ApplyPaintHighlightStyle(UMaterialInstanceDynamic* Material) const;
 
 	/**
 	 * 오염 레이어는 Area 박스가 아니라 칠해진 칸을 밝힌다. (기획서 5.6)
-	 * bHighlightPaintedCells 가 꺼져 있으면 부모와 똑같이 박스 데칼을 쓴다.
+	 * 도색은 연결된 BorderSketch의 선 자체를 밝히고, 그 외 존은 박스 데칼을 쓴다.
 	 */
 	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState) override;
 
@@ -231,8 +235,7 @@ public:
 	 *
 	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳"이 같은 값을 써야 해서 함수로 뺐다.
 	 *
-	 * public 인 이유: 조준 표시기(UCWWorkReticleComponent)가 이 값을 그대로 원의 반경으로 쓴다.
-	 * 표시기가 자기 식으로 다시 계산하면 화면의 원과 실제 칠해지는 범위가 어긋난다.
+	 * 월드 cm 단위이며, 칸 크기 보정까지 포함한 프리뷰는 GetPaintedWorldRadius를 쓴다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetEffectiveBrushRadius(const UCWWorkerComponent* Worker) const;
@@ -241,19 +244,8 @@ public:
 	 * 이 붓질이 실제로 칠하는 반경을 **월드 단위(cm)** 로 돌려준다.
 	 * 조준 표시기가 그리는 원의 반경이 이 값이다.
 	 *
-	 * 두 가지가 보정된다.
-	 *
-	 * 1. 칸 반쪽. ForEachCellInRadius 가 "칸의 절반 이상이 덮이면 칠해진 것" 으로 보려고
-	 *    반경에 칸 크기의 절반을 더해서 판정한다.
-	 *
-	 * 2. 액터 스케일. 칸 판정은 Area 컴포넌트의 **로컬(스케일 제외)** 공간에서 돈다.
-	 *    (ToLocalLocation 이 InverseTransformPosition 으로 스케일을 나누고, CachedCellSize 도
-	 *    GetUnscaledBoxExtent 기반이다) 그래서 BrushRadius 는 사실상 로컬 단위이고,
-	 *    월드에서 실제로 칠해지는 넓이는 액터 스케일만큼 달라진다.
-	 *
-	 * X/Y 스케일이 다르면 칠해지는 모양은 타원이지만, 원은 **작은 쪽 축**에 맞춘다.
-	 * 원 안쪽이 안 칠해지는 것과 원 밖이 칠해지는 것 중 전자가 더 눈에 거슬리기 때문이다.
-	 * 이 규칙이면 "원 안쪽은 반드시 칠해진다" 가 보장되고, 긴 축으로 조금 더 칠해질 뿐이다.
+	 * ForEachCellInRadius와 같이 체온을 반영한 붓 반경에 월드 칸 크기의 절반을 더한다.
+	 * 스테이지의 X/Y 배율이 달라도 붓 반경 자체에 배율을 다시 곱하지 않는다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetPaintedWorldRadius(const UCWWorkerComponent* Worker) const;
@@ -389,6 +381,9 @@ private:
 	 */
 	FVector ToLocalLocation(const FVector& WorldLocation) const;
 
+	/** 실제 칸 선택과 프리뷰가 공유하는 월드 반경. 붓 반경에 칸 크기 보정을 더한다. */
+	float GetCellSelectionWorldRadius(float BrushWorldRadius) const;
+
 	/** 붓이 닿는 곳에 이 존의 칸이 하나라도 있는가. 칸 상태는 보지 않는다. (작업 범위 판정) */
 	bool HasAnyCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly) const;
 
@@ -419,7 +414,7 @@ private:
 		// 여기서 쓰는 모든 길이는 월드 cm 다. Radius 가 월드 값이라 그쪽에 기준을 맞춘다.
 		// 로컬 좌표로 재면 액터 스케일이 붓 모양을 축마다 다르게 늘려서, 세로로 그을 때와
 		// 가로로 그을 때 칠해지는 폭이 달라진다. (CachedAreaScale 주석 참고)
-		const float EffectiveRadius = Radius + FMath::Max(CachedCellWorldSize.X, CachedCellWorldSize.Y) * 0.5f;
+		const float EffectiveRadius = GetCellSelectionWorldRadius(Radius);
 		const float RadiusSquared = FMath::Square(EffectiveRadius);
 
 		// 월드 좌표를 존 로컬로 한 번만 옮긴다.
@@ -930,6 +925,18 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
 	bool bHighlightPaintedCells = false;
+
+	/** 미완성 테두리 가이드와 구분하는 도색 작업 안내색. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Painting")
+	FLinearColor PaintHighlightColor = FLinearColor(0.02f, 0.8f, 0.65f, 1.f);
+
+	/** 사선 무늬의 이동 속도. 0이면 멈춘다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Painting", meta = (ClampMin = "0.0"))
+	float PaintHighlightScrollSpeed = 0.65f;
+
+	/** 사선 무늬 밀도. 값이 클수록 촘촘해진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight|Painting", meta = (ClampMin = "0.01"))
+	float PaintHighlightStripeDensity = 0.5f;
 
 	// 붓이 칸을 바꾼 자리에 터질 파티클. 비워 두면 이펙트가 나오지 않는다.
 	//

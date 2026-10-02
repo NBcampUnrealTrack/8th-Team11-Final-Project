@@ -217,6 +217,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work|Highlight")
 	ECWZoneHighlightState GetHighlightState() const { return HighlightState; }
 
+	/** 별도의 선/칸으로 안내하는 존은 임시 박스가 작업 면을 다시 덮지 않게 한다. */
+	virtual bool ShouldDrawDebugHighlightBox() const { return true; }
+
 	/**
 	 * 이 지점에서 이 작업자가 실제로 진행시킬 일이 남아 있는가.
 	 *
@@ -306,6 +309,10 @@ public:
 protected:
 	/** 자식 존이 기존 도색 텍스처를 안내 머티리얼에 연결할 때 사용한다. */
 	UMaterialInstanceDynamic* GetHighlightMaterialInstance() const { return HighlightMID.Get(); }
+
+	/** 데칼과 페인트 마스크가 같은 표시 범위를 사용하도록 한곳에서 계산한다. */
+	FVector2D GetHighlightPlanarExtent() const;
+	float GetHighlightWorldEdgeThickness() const;
 
 	/**
 	 * 진행도를 설정한다. 완료 판정까지 여기서 같이 한다.
@@ -517,9 +524,8 @@ protected:
 	/**
 	 * Pending 일 때 머티리얼에 넘기는 값. Active 는 항상 1 이다.
 	 *
-	 * 색은 C++ 이 정하지 않는다. 여기서 보내는 것은 "지금 어느 상태인가" 하나뿐이고,
-	 * 그걸로 무엇을 그릴지는 머티리얼이 정한다. 연출을 바꿀 때마다 C++ 을 고치고 전원이
-	 * 리빌드하는 것을 피하려는 것이다. 존마다 색을 다르게 줄 일도 없다.
+	 * 공통 구현은 "지금 어느 상태인가"를 전달하고 색은 머티리얼이 정한다.
+	 * 도색 존은 미완성 테두리 안내와 구분하도록 별도의 색과 무늬 설정을 적용한다.
 	 *
 	 * 머티리얼 쪽에서는 이 값으로 두 상태를 가른다. (1 에 가까우면 Active)
 	 * 0 을 주면 안 된다. 머티리얼이 세기로도 쓰고 있으면 Pending 이 통째로 사라진다.
@@ -549,9 +555,14 @@ protected:
 	 *
 	 * 작업 영역이 실제 그림보다 넉넉하게 잡혀 있는 존에서 1 미만으로 낮춘다.
 	 * 1 을 넘기면 그림 바깥까지 테두리가 나간다.
+	 * 도색 안내는 실제 테두리 메시를 사용하므로 이 데칼 설정의 영향을 받지 않는다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "0.05"))
 	FVector2D HighlightSizeScale = FVector2D(1.f, 1.f);
+
+	/** 표시 중심의 Area 로컬 X/Y 오프셋(cm). 존의 회전과 스케일을 따라간다. 작업 판정은 바꾸지 않는다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight")
+	FVector2D HighlightOffset = FVector2D::ZeroVector;
 
 	/**
 	 * 테두리 선의 두께(cm). 월드 기준이다.
@@ -559,6 +570,7 @@ protected:
 	 * 머티리얼이 UV 로 두께를 잡으면 안 되기 때문에 여기서 cm 로 받아 UV 로 환산해 넘긴다.
 	 * 존마다 가로세로 비율이 다른데 UV 두께를 그대로 쓰면 짧은 쪽만 굵어진다.
 	 * 횡단보도 스트라이프는 비율이 극단적이라 테두리가 존을 통째로 덮어버린다.
+	 * 도색 안내의 폭은 실제 테두리 메시의 폭을 그대로 따른다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Highlight", meta = (ClampMin = "0.1"))
 	float HighlightEdgeThickness = 12.f;
