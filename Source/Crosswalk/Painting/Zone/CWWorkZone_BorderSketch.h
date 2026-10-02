@@ -127,6 +127,9 @@ public:
 	bool IsCellPainted(int32 CellIndex) const;
 
 protected:
+	/** 칸별 안내선이 도색 상태를 표시하므로 전체 사각형 데칼은 겹쳐 그리지 않는다. */
+	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState) override;
+
 	/** 퍼센트만으로는 몇 칸이 남았는지 안 보인다. 완료가 안 되는 이유를 가르는 데 그 숫자가 필요하다. */
 	virtual FString GetDebugDetailText() const override;
 

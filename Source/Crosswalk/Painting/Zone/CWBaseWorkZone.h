@@ -304,6 +304,9 @@ public:
 	virtual bool BlocksPaintSpill() const { return bBlocksPaintSpill; }
 
 protected:
+	/** 자식 존이 기존 도색 텍스처를 안내 머티리얼에 연결할 때 사용한다. */
+	UMaterialInstanceDynamic* GetHighlightMaterialInstance() const { return HighlightMID.Get(); }
+
 	/**
 	 * 진행도를 설정한다. 완료 판정까지 여기서 같이 한다.
 	 * 서버에서만 유효하다. 클라이언트는 리플리케이션으로 값을 받는다.

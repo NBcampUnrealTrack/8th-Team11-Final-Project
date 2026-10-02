@@ -927,6 +927,7 @@ void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightS
 	if (!bHighlightPaintedCells)
 	{
 		Super::OnHighlightStateChanged_Implementation(NewState);
+		RefreshHighlightPaintMask();
 		return;
 	}
 
@@ -938,6 +939,35 @@ void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightS
 	 * 칸을 순회하지 않고 스칼라 하나만 바꾸면 된다. 드로우콜도 그대로 1개다.
 	 */
 	RefreshPaintFieldHighlight();
+}
+
+void ACWWorkZone_Cells::RefreshHighlightPaintMask()
+{
+	UMaterialInstanceDynamic* HighlightMaterialInstance = GetHighlightMaterialInstance();
+	if (HighlightMaterialInstance == nullptr)
+	{
+		return;
+	}
+
+	const bool bUseMask = IsFillMode() && !bHighlightPaintedCells && ShouldBuildPaintField() && PaintFieldTexture != nullptr
+		&& FieldTextureSize.X > 2 && FieldTextureSize.Y > 2 && Area != nullptr;
+	HighlightMaterialInstance->SetScalarParameterValue(TEXT("HidePainted"), bUseMask ? 1.f : 0.f);
+	if (!bUseMask)
+	{
+		return;
+	}
+
+	HighlightMaterialInstance->SetTextureParameterValue(TEXT("PaintedCellField"), PaintFieldTexture);
+	const FVector Extent = Area->GetUnscaledBoxExtent();
+	const float FieldSizeX = FMath::Max(FieldTextureSize.X * CachedCellSize.X, KINDA_SMALL_NUMBER);
+	const float FieldSizeY = FMath::Max(FieldTextureSize.Y * CachedCellSize.Y, KINDA_SMALL_NUMBER);
+	// 데칼과 여백 한 칸을 포함한 필드의 크기가 다르므로 중심 기준으로 UV를 맞춘다.
+	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVScale"), FLinearColor(
+		2.f * Extent.X * FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER) / FieldSizeX,
+		2.f * Extent.Y * FMath::Max(HighlightSizeScale.Y, KINDA_SMALL_NUMBER) / FieldSizeY, 0.f, 0.f));
+	// 바깥 테두리도 가장 가까운 실제 칸을 따른다. 항상 빈 패딩 칸은 읽지 않는다.
+	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVInset"),
+		FLinearColor(1.5f / FieldTextureSize.X, 1.5f / FieldTextureSize.Y, 0.f, 0.f));
 }
 
 void ACWWorkZone_Cells::RefreshPaintFieldHighlight()
@@ -1711,6 +1741,7 @@ void ACWWorkZone_Cells::RefreshPaintField()
 	if (!ShouldBuildPaintField())
 	{
 		PaintFieldMesh->SetVisibility(false);
+		RefreshHighlightPaintMask();
 		return;
 	}
 
@@ -1775,6 +1806,7 @@ void ACWWorkZone_Cells::RefreshPaintField()
 	}
 
 	WriteAllFieldTexels();
+	RefreshHighlightPaintMask();
 }
 
 void ACWWorkZone_Cells::RefreshPaintFieldSolidState(float NewProgress)
