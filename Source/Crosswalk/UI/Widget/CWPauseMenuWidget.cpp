@@ -7,6 +7,9 @@
 #include "UI/CWUILog.h"
 #include "UI/Core/CWUISubsystem.h"
 #include "UI/ViewModel/CWSessionViewModel.h"
+#include "UI/Core/CWUIBootstrapComponent.h"
+#include "UI/Widget/CWStageIntroWidget.h"
+#include "GameFramework/PlayerController.h"
 
 UCWPauseMenuWidget::UCWPauseMenuWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -64,6 +67,33 @@ void UCWPauseMenuWidget::OpenSettings()
 		}
 	}
 }
+
+void UCWPauseMenuWidget::OpenGameGuide()
+{
+	UCWUISubsystem* UI = GetUISubsystem();
+	APlayerController* PC = GetOwningPlayer();
+	UCWUIBootstrapComponent* Bootstrap = PC ? PC->FindComponentByClass<UCWUIBootstrapComponent>() : nullptr;
+	if (!UI || !Bootstrap || !bMenuOpen || bLeavingRoom ||
+		UI->GetCurrentPage() != ECWUIPage::None || !Bootstrap->GetStageIntroClass())
+	{
+		return;
+	}
+	// 입장 안내와 같은 클래스를 참조하여 이미지가 교체되어도 두 경로가 일치하도록 함
+	UCWStageIntroWidget* Guide = CreateWidget<UCWStageIntroWidget>(PC, Bootstrap->GetStageIntroClass());
+	if (!Guide || !UI->OpenPopup(Guide))
+	{
+		return;
+	}
+	if (!Guide->BeginIntro(true))
+	{
+		UI->ClosePopup(Guide);
+		RestoreFocus();
+		return;
+	}
+	GameGuide = Guide;
+	SetVisibility(ESlateVisibility::Collapsed);
+}
+
 
 void UCWPauseMenuWidget::ConfirmLeaveRoom()
 {
@@ -131,8 +161,13 @@ void UCWPauseMenuWidget::DismissForClear()
 		{
 			UI->ClosePopup(LeaveConfirmation.Get());
 		}
+		if (GameGuide.IsValid() && GameGuide->GetParent() != nullptr)
+		{
+			UI->ClosePopup(GameGuide.Get());
+		}
 	}
 	LeaveConfirmation.Reset();
+	GameGuide.Reset();
 }
 
 void UCWPauseMenuWidget::SetLeaveConfirmation(UUserWidget* InDialog)
