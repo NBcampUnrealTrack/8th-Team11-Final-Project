@@ -314,6 +314,25 @@ bool ACWBaseWorkZone::EnsureHighlightDecal()
 	return true;
 }
 
+float ACWBaseWorkZone::GetHighlightWorldEdgeThickness() const
+{
+	return FMath::Max(HighlightEdgeThickness, 0.1f);
+}
+
+FVector2D ACWBaseWorkZone::GetHighlightPlanarExtent() const
+{
+	if (Area == nullptr)
+	{
+		return FVector2D::ZeroVector;
+	}
+
+	const FVector Extent = Area->GetUnscaledBoxExtent();
+	const FVector2D ScaledExtent(
+		Extent.X * FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER),
+		Extent.Y * FMath::Max(HighlightSizeScale.Y, KINDA_SMALL_NUMBER));
+	return ScaledExtent;
+}
+
 void ACWBaseWorkZone::ApplyHighlightDecalSize()
 {
 	if (HighlightDecal == nullptr || Area == nullptr)
@@ -321,19 +340,16 @@ void ACWBaseWorkZone::ApplyHighlightDecalSize()
 		return;
 	}
 
-	const FVector2D SafeScale(
-		FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER),
-		FMath::Max(HighlightSizeScale.Y, KINDA_SMALL_NUMBER));
+	const FVector2D PlanarExtent = GetHighlightPlanarExtent();
+	HighlightDecal->SetRelativeLocation(FVector(HighlightOffset.X, HighlightOffset.Y, 0.f));
 
 	// DecalSize 의 X 가 투영 깊이, Y/Z 가 평면 반쪽 크기다.
 	// Pitch -90 을 거치면 로컬 Y 가 존의 Y 로, 로컬 Z 가 존의 X 로 간다.
 	// 스케일은 Area 에 붙어 있어 자동으로 따라오므로 스케일 안 먹은 값을 넣는다.
-	const FVector UnscaledExtent = Area->GetUnscaledBoxExtent();
-
 	HighlightDecal->DecalSize = FVector(
 		HighlightDecalProjectionDepth,
-		UnscaledExtent.Y * SafeScale.Y,
-		UnscaledExtent.X * SafeScale.X);
+		PlanarExtent.Y,
+		PlanarExtent.X);
 
 	HighlightDecal->MarkRenderStateDirty();
 
@@ -357,17 +373,18 @@ void ACWBaseWorkZone::ApplyHighlightDecalSize()
 	 * 스케일 먹은 크기를 써야 한다. Area 스케일이 3배인 존에서 안 먹은 값으로 나누면
 	 * 테두리가 3배로 굵어진다.
 	 */
-	const FVector ScaledExtent = Area->GetScaledBoxExtent();
+	const FVector Scale = Area->GetComponentScale().GetAbs();
+	const float EdgeThickness = GetHighlightWorldEdgeThickness();
 
-	const float WorldSizeX = FMath::Max(ScaledExtent.X * 2.f * SafeScale.X, KINDA_SMALL_NUMBER);
-	const float WorldSizeY = FMath::Max(ScaledExtent.Y * 2.f * SafeScale.Y, KINDA_SMALL_NUMBER);
+	const float WorldSizeX = FMath::Max(PlanarExtent.X * 2.f * Scale.X, KINDA_SMALL_NUMBER);
+	const float WorldSizeY = FMath::Max(PlanarExtent.Y * 2.f * Scale.Y, KINDA_SMALL_NUMBER);
 
 	// 테두리가 존을 다 먹지 않게 절반에서 자른다. 아주 얇은 존에서도 가운데가 남는다.
 	HighlightMID->SetVectorParameterValue(
 		HighlightEdgeWidthParameterName,
 		FLinearColor(
-			FMath::Min(HighlightEdgeThickness / WorldSizeX, 0.5f),
-			FMath::Min(HighlightEdgeThickness / WorldSizeY, 0.5f),
+			FMath::Min(EdgeThickness / WorldSizeX, 0.5f),
+			FMath::Min(EdgeThickness / WorldSizeY, 0.5f),
 			0.f,
 			0.f));
 }
@@ -397,7 +414,7 @@ void ACWBaseWorkZone::OnHighlightStateChanged_Implementation(ECWZoneHighlightSta
 	if (HighlightMID != nullptr)
 	{
 		/**
-		 * 넘기는 것은 상태 하나뿐이다. 색과 밝기는 머티리얼이 정한다.
+		 * 공통 구현은 상태를 넘긴다. 도색 존의 색과 무늬는 자식이 추가로 적용한다.
 		 *
 		 * 연출을 바꿀 때마다 C++ 을 고치면 전원이 리빌드해야 한다. 어떻게 보일지는
 		 * 머티리얼 파라미터로 두는 편이 반복이 훨씬 빠르고, 존마다 다르게 줄 이유도 없다.

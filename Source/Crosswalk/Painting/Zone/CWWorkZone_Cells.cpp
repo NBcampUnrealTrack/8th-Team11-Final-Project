@@ -873,7 +873,8 @@ bool ACWWorkZone_Cells::CanWorkNow(ECWToolType ToolType) const
 
 ECWZoneHighlightState ACWWorkZone_Cells::GetHighlightStateFor(ECWToolType ToolType) const
 {
-	if (!bHighlightable)
+	// 테두리 등 앞 작업이 끝나기 전에는 도색 구역을 작업 대상으로 안내하지 않는다.
+	if (!bHighlightable || (IsFillMode() && IsLocked()))
 	{
 		return ECWZoneHighlightState::None;
 	}
@@ -922,8 +923,25 @@ ECWZoneHighlightState ACWWorkZone_Cells::GetHighlightStateFor(ECWToolType ToolTy
 	return Super::GetHighlightStateFor(ToolType);
 }
 
+void ACWWorkZone_Cells::ApplyPaintHighlightStyle(UMaterialInstanceDynamic* Material) const
+{
+	if (Material != nullptr)
+	{
+		Material->SetVectorParameterValue(TEXT("PaintHighlightColor"), PaintHighlightColor);
+		Material->SetScalarParameterValue(TEXT("PaintHighlightScrollSpeed"), PaintHighlightScrollSpeed);
+		Material->SetScalarParameterValue(TEXT("PaintHighlightStripeDensity"), PaintHighlightStripeDensity);
+	}
+}
+
 void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState)
 {
+	if (IsFillMode() && !bHighlightPaintedCells)
+	{
+		// 도색은 같은 WorkGroup의 BorderSketch가 실제 테두리 자체를 밝힌다.
+		// 도색 박스는 테두리 안쪽 크기라 별도 데칼을 그리면 안쪽 페인트를 가린다.
+		Super::OnHighlightStateChanged_Implementation(ECWZoneHighlightState::None);
+		return;
+	}
 	if (!bHighlightPaintedCells)
 	{
 		Super::OnHighlightStateChanged_Implementation(NewState);
@@ -958,13 +976,16 @@ void ACWWorkZone_Cells::RefreshHighlightPaintMask()
 	}
 
 	HighlightMaterialInstance->SetTextureParameterValue(TEXT("PaintedCellField"), PaintFieldTexture);
-	const FVector Extent = Area->GetUnscaledBoxExtent();
+	const FVector2D HighlightExtent = GetHighlightPlanarExtent();
 	const float FieldSizeX = FMath::Max(FieldTextureSize.X * CachedCellSize.X, KINDA_SMALL_NUMBER);
 	const float FieldSizeY = FMath::Max(FieldTextureSize.Y * CachedCellSize.Y, KINDA_SMALL_NUMBER);
 	// 데칼과 여백 한 칸을 포함한 필드의 크기가 다르므로 중심 기준으로 UV를 맞춘다.
 	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVScale"), FLinearColor(
-		2.f * Extent.X * FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER) / FieldSizeX,
-		2.f * Extent.Y * FMath::Max(HighlightSizeScale.Y, KINDA_SMALL_NUMBER) / FieldSizeY, 0.f, 0.f));
+		2.f * HighlightExtent.X / FieldSizeX,
+		2.f * HighlightExtent.Y / FieldSizeY, 0.f, 0.f));
+	// 표시 위치만 옮겨도 칠한 자리의 마스크는 실제 페인트 위치를 계속 따라야 한다.
+	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVOffset"),
+		FLinearColor(HighlightOffset.X / FieldSizeX, HighlightOffset.Y / FieldSizeY, 0.f, 0.f));
 	// 바깥 테두리도 가장 가까운 실제 칸을 따른다. 항상 빈 패딩 칸은 읽지 않는다.
 	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVInset"),
 		FLinearColor(1.5f / FieldTextureSize.X, 1.5f / FieldTextureSize.Y, 0.f, 0.f));
@@ -1488,20 +1509,12 @@ float ACWWorkZone_Cells::GetEffectiveBrushRadius(const UCWWorkerComponent* Worke
 
 float ACWWorkZone_Cells::GetPaintedWorldRadius(const UCWWorkerComponent* Worker) const
 {
-	// 로컬 반경. ForEachCellInRadius 의 EffectiveRadius 와 같은 식이어야 한다.
-	// 한쪽만 고치면 화면의 원과 실제 칠해지는 범위가 다시 어긋난다.
-	const float LocalRadius = GetEffectiveBrushRadius(Worker)
-		+ FMath::Max(CachedCellSize.X, CachedCellSize.Y) * 0.5f;
+	return GetCellSelectionWorldRadius(GetEffectiveBrushRadius(Worker));
+}
 
-	// Area 컴포넌트의 스케일로 월드 단위로 옮긴다. 존을 액터 스케일로 줄여 배치했다면
-	// 실제로 칠해지는 넓이도 그만큼 줄어 있다.
-	const FVector AreaScale = Area != nullptr
-		? Area->GetComponentTransform().GetScale3D()
-		: FVector::OneVector;
-
-	const float ScaleXY = FMath::Min(FMath::Abs(AreaScale.X), FMath::Abs(AreaScale.Y));
-
-	return LocalRadius * FMath::Max(ScaleXY, KINDA_SMALL_NUMBER);
+float ACWWorkZone_Cells::GetCellSelectionWorldRadius(float BrushWorldRadius) const
+{
+	return BrushWorldRadius + FMath::Max(CachedCellWorldSize.X, CachedCellWorldSize.Y) * 0.5f;
 }
 
 bool ACWWorkZone_Cells::HasAnyCellInRadius(const FVector& WorldCenter, float Radius, bool bSpillOnly) const

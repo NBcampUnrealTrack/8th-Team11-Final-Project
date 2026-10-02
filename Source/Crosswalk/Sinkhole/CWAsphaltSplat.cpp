@@ -5,6 +5,7 @@
 #include "Components/DecalComponent.h"
 #include "Components/SphereComponent.h"
 #include "Painting/Components/CWTemperatureComponent.h"
+#include "Sinkhole/CWSinkholeAudioSubsystem.h"
 
 ACWAsphaltSplat::ACWAsphaltSplat()
 {
@@ -33,6 +34,10 @@ void ACWAsphaltSplat::BeginPlay()
 
 	// 자국마다 조금씩 다르게 보이도록 돌린다. 순수 외형이라 동기화하지 않는다.
 	SplatDecal->SetRelativeRotation(FRotator(-90.f, FMath::FRandRange(0.f, 360.f), 0.f));
+
+	// 서버가 착탄 판정 시각에 스폰해 리플리케이트하므로, 각 화면에서 탄이 바닥에 닿는 순간과 맞는다.
+	// (클라이언트의 궤적 연출과 이 액터 모두 서버 시각 + 편도 지연만큼 늦게 도착한다)
+	UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::MissSplat, GetActorLocation());
 
 	OnSoakStarted(LifeSpanSeconds);
 

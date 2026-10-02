@@ -114,9 +114,11 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Asphalt|Gun")
 	void OnProjectileLaunched(const FVector& StartLocation, const FVector& ImpactLocation, float FlightTime);
 
+	/** 재장전이 시작된 순간. 모든 머신에서 한 번씩 불린다. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Asphalt|Gun")
 	void OnReloadStarted(float Duration);
 
+	/** 재장전이 끝난 순간. 모든 머신에서 한 번씩 불린다. 탄을 쏠 때는 불리지 않는다. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Asphalt|Gun")
 	void OnReloadFinished();
 
@@ -203,6 +205,10 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_AmmoState)
 	bool bReloading = false;
+
+	// 마지막으로 처리한 bReloading. 리플리케이트하지 않는다.
+	// OnRep_AmmoState 가 탄 수 변화에도 불리므로, 재장전이 실제로 뒤집혔는지 각 머신이 직접 가린다.
+	bool bWasReloading = false;
 
 	// 마지막 발사 시각(월드 시간). 연사 간격 검사에 쓴다. 서버에서만 의미가 있다.
 	float LastFireTime = -1000.f;

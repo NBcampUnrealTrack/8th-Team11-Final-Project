@@ -9,6 +9,7 @@ class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
 class UNiagaraSystem;
 class USoundBase;
+class ACWWorkZone_Cells;
 
 /**
  * 테두리 둘레를 이루는 칸 하나. (차징 붓 기획서 2.1)
@@ -126,6 +127,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work|Border")
 	bool IsCellPainted(int32 CellIndex) const;
 
+	virtual ECWZoneHighlightState GetHighlightStateFor(ECWToolType ToolType) const override;
+	virtual bool ShouldDrawDebugHighlightBox() const override { return false; }
+
 protected:
 	/** 칸별 안내선이 도색 상태를 표시하므로 전체 사각형 데칼은 겹쳐 그리지 않는다. */
 	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState) override;
@@ -158,6 +162,9 @@ protected:
 	void OnChargeReleased(int32 ChargeLevel, int32 PaintedCellCount, bool bPaintShort);
 
 private:
+	/** 같은 작업 그룹의 도색 존. 연결이 모호하면 다른 테두리를 밝히지 않는다. */
+	const ACWWorkZone_Cells* FindFillHighlightZone() const;
+
 	/**
 	 * Area 크기에 맞춰 칸 배열과 가이드 인스턴스를 다시 만든다.
 	 *
@@ -591,10 +598,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> ChargingWorker;
 
+	// 테두리 자체에 로컬 도색 안내를 입힌다. 기하와 칸 도색 데이터는 그대로 유지한다.
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> FillHighlightMaterial;
+
 	// 범위 사각형의 머티리얼. 상태 숫자 하나만 넘긴다.
-	//
-	// 칸 쪽(BorderMeshes)에는 MID 가 없다. C++ 이 넣을 값이 없기 때문이다.
-	// 칸의 상태는 per-instance custom data 로 가고, 색은 머티리얼 인스턴스가 갖는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> PreviewBoxMaterial;
 

@@ -14,6 +14,8 @@
 #include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/Components/CWWorkerComponent.h"
+#include "Painting/CWPaintingSubsystem.h"
+#include "Painting/Zone/CWWorkZone_Cells.h"
 #include "Painting/Tools/CWBaseTool.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -103,10 +105,68 @@ ACWWorkZone_BorderSketch::ACWWorkZone_BorderSketch()
 	}
 }
 
+const ACWWorkZone_Cells* ACWWorkZone_BorderSketch::FindFillHighlightZone() const
+{
+	const UCWPaintingSubsystem* Painting = UCWPaintingSubsystem::Get(this);
+	if (Painting == nullptr || GetWorkGroup().IsNone())
+	{
+		return nullptr;
+	}
+	const ACWWorkZone_Cells* Match = nullptr;
+	for (const TWeakObjectPtr<ACWBaseWorkZone>& WeakZone : Painting->GetZones())
+	{
+		const ACWWorkZone_Cells* Fill = Cast<ACWWorkZone_Cells>(WeakZone.Get());
+		if (Fill == nullptr || !Fill->IsFillMode() || Fill->GetWorkGroup() != GetWorkGroup())
+		{
+			continue;
+		}
+		if (Match != nullptr)
+		{
+			return nullptr;
+		}
+		Match = Fill;
+	}
+	return Match;
+}
+
+ECWZoneHighlightState ACWWorkZone_BorderSketch::GetHighlightStateFor(ECWToolType ToolType) const
+{
+	// 라인 도구의 가이드는 기존 칸 머티리얼이 담당한다. 롤러 안내는 앞 작업이 끝나야 켠다.
+	if (!bHighlightable || !IsCompleted() || IsLocked())
+	{
+		return ECWZoneHighlightState::None;
+	}
+	const ACWWorkZone_Cells* Fill = FindFillHighlightZone();
+	// 실제 붓질과 같은 판정으로 AcceptedTools + FillCells 설정도 인식한다.
+	return Fill != nullptr && Fill->CanUseTool(ToolType) && Fill->ResolveFillForTool(ToolType)
+		? Fill->GetHighlightStateFor(ToolType)
+		: ECWZoneHighlightState::None;
+}
+
 void ACWWorkZone_BorderSketch::OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState)
 {
 	// BorderMeshes는 칠한 칸을 흰 선으로 바꾼다. 전체 데칼을 덧그리면 그 위에 안내가 남는다.
 	Super::OnHighlightStateChanged_Implementation(ECWZoneHighlightState::None);
+	const ACWWorkZone_Cells* Fill = FindFillHighlightZone();
+	const bool bShow = NewState == ECWZoneHighlightState::Active && IsCompleted() && !IsLocked()
+		&& Fill != nullptr && !Fill->IsLocked() && !Fill->IsCompleted();
+	if (!bShow)
+	{
+		if (FillHighlightMaterial != nullptr)
+		{
+			FillHighlightMaterial->SetScalarParameterValue(TEXT("PaintHighlight"), 0.f);
+		}
+		return;
+	}
+	if (FillHighlightMaterial == nullptr)
+	{
+		FillHighlightMaterial = BorderMeshes->CreateDynamicMaterialInstance(0);
+	}
+	if (FillHighlightMaterial != nullptr)
+	{
+		Fill->ApplyPaintHighlightStyle(FillHighlightMaterial);
+		FillHighlightMaterial->SetScalarParameterValue(TEXT("PaintHighlight"), 1.f);
+	}
 }
 
 void ACWWorkZone_BorderSketch::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -1335,8 +1395,7 @@ FTransform ACWWorkZone_BorderSketch::MakeBandTransform(const FCWBorderCell& Cell
 
 void ACWWorkZone_BorderSketch::SetupMaterials()
 {
-	// 칸(BorderMeshes)에는 MID 를 만들지 않는다. C++ 이 넣을 값이 없기 때문이다.
-	// 칸의 상태는 per-instance custom data 로 가고, 색은 머티리얼 인스턴스가 가진다.
+	// 테두리 MID는 롤러 안내를 처음 켤 때 만든다. 칸 상태는 custom data를 그대로 쓴다.
 	PreviewBoxMaterial = PreviewBox->CreateAndSetMaterialInstanceDynamic(0);
 	PreviewBandMaterial = PreviewBandMeshes->CreateAndSetMaterialInstanceDynamic(0);
 }

@@ -92,6 +92,9 @@ private:
 	/** 연출 값을 원래대로 되돌린다. 리스폰 시점에 부른다. */
 	void ResetSinkVisual();
 
+	/** 잠금 상태에 맞는 소리(낙하 / 리스폰)를 낸다. OnRep_FallLocked 에서만 부른다. */
+	void PlayFallLockSound() const;
+
 	/** 플레이어 스타트로 옮기고 무적을 건다. 서버에서만 돈다. */
 	void Respawn();
 

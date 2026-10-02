@@ -9,6 +9,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Sinkhole/CWSinkhole.h"
+#include "Sinkhole/CWSinkholeAudioSubsystem.h"
 
 UCWSinkholeFallComponent::UCWSinkholeFallComponent()
 {
@@ -122,7 +123,36 @@ void UCWSinkholeFallComponent::OnRep_FallLocked()
 		ResetSinkVisual();
 	}
 
+	PlayFallLockSound();
+
 	OnFallLockChanged.Broadcast(this, bFallLocked);
+}
+
+void UCWSinkholeFallComponent::PlayFallLockSound() const
+{
+	AActor* Owner = GetOwner();
+	if (Owner == nullptr)
+	{
+		return;
+	}
+
+	// 늦게 접속한 클라이언트가 이미 빠져 있던 플레이어를 처음 받을 때도 OnRep 이 온다.
+	// 그건 지금 일어난 일이 아니므로 울리지 않는다. 초기 OnRep 은 BeginPlay 보다 먼저 온다.
+	if (!Owner->HasAuthority() && !Owner->HasActorBegunPlay())
+	{
+		return;
+	}
+
+	// 몸에 붙여 재생한다.
+	//   낙하: 흡입으로 구멍 중앙까지 끌려가므로 자리에 고정하면 소리만 뒤에 남는다.
+	//   리스폰: 클라이언트에서는 이 OnRep 이 위치 갱신보다 먼저 올 수 있다. 붙여 두면 스타트 지점으로
+	//           옮겨지는 순간 소리도 따라간다. 자리에 고정하면 싱크홀 위치에서 리스폰음이 난다.
+	UCWSinkholeAudioSubsystem::PlayCue(
+		this,
+		bFallLocked ? ECWSinkholeSoundCue::PlayerFell : ECWSinkholeSoundCue::PlayerRespawned,
+		Owner->GetActorLocation(),
+		Owner->GetRootComponent(),
+		Cast<APawn>(Owner));
 }
 
 void UCWSinkholeFallComponent::TickFallSequence(float DeltaTime)

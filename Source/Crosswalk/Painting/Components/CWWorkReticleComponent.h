@@ -20,7 +20,7 @@ class UMaterialInterface;
  *
  * 두 값 모두 다시 계산하지 않고 이미 있는 것을 그대로 읽는다.
  *   중심 = UCWWorkerComponent::GetWorkLocation()
- *   반경 = ACWWorkZone_Cells::GetEffectiveBrushRadius()
+ *   반경 = ACWWorkZone_Cells::GetPaintedWorldRadius()
  * 같은 값을 두 번 계산하면 화면의 원과 실제 결과가 어긋나는데, 그게 이 기능이 없애려는 문제다.
  *
  * 완전히 로컬이다. 리플리케이트하지 않고 RPC 도 없다. 남의 조준은 남의 화면에만 뜬다.
@@ -111,24 +111,6 @@ protected:
 	// 원이 가장 안 보인다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reticle|Shape", meta = (ClampMin = "0.0"))
 	float MinEdgeThickness = 3.f;
-
-	// 화면에 그리는 원의 최소 반경(cm). 실제 붓이 이보다 작아도 원은 이 크기로 그린다.
-	//
-	// 표시 크기를 붓 범위에서 일부러 떼어낸 값이다. 붓 반경은 존 설정과 체온에 따라
-	// 6cm 까지 내려가는데, 그러면 쿼터뷰에서 점으로 보여서 조준을 도와주지 못한다.
-	//
-	// 대신 원 안쪽이 곧 칠해질 범위라는 보장은 사라진다. 원은 "지금 여기를 작업 중" 을
-	// 알리는 표지이지 정확한 붓 자국이 아니다. 정확한 범위 표시로 되돌리려면
-	// 이 값을 0, ReticleRadiusScale 을 1 로 두면 된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reticle|Shape", meta = (ClampMin = "0.0"))
-	float MinReticleRadius = 20.f;
-
-	// 실제 붓 반경에 곱하는 표시 배율. 1 이면 실제 크기 그대로다.
-	//
-	// 붓이 커졌을 때도 원을 키우고 싶으면 올린다. MinReticleRadius 와 함께 적용되며,
-	// 둘 중 큰 쪽이 최종 반경이 된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reticle|Shape", meta = (ClampMin = "0.1"))
-	float ReticleRadiusScale = 1.f;
 
 	// 데칼이 아래로 투영되는 깊이(cm). 도로 요철과 연석을 타넘는 여유다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reticle|Shape", meta = (ClampMin = "1.0"))

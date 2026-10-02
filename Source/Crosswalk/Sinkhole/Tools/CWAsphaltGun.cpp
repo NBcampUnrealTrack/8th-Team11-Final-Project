@@ -8,6 +8,7 @@
 #include "Sinkhole/CWAsphaltProjectileVisual.h"
 #include "Sinkhole/CWAsphaltSplat.h"
 #include "Sinkhole/CWSinkhole.h"
+#include "Sinkhole/CWSinkholeAudioSubsystem.h"
 
 ACWAsphaltGun::ACWAsphaltGun()
 {
@@ -134,13 +135,34 @@ void ACWAsphaltGun::FinishReload()
 
 void ACWAsphaltGun::OnRep_AmmoState()
 {
-	if (bReloading)
+	/**
+	 * 탄 수와 재장전 여부가 같은 OnRep 을 쓴다. 그래서 한 발 쏠 때마다(탄 수만 바뀌어도) 여기로 온다.
+	 * 재장전 연출은 bReloading 이 실제로 뒤집힌 순간에만 낸다. 안 그러면 쏠 때마다 "재장전 완료" 가 난다.
+	 */
+	if (bReloading != bWasReloading)
 	{
-		OnReloadStarted(ReloadDuration);
-	}
-	else
-	{
-		OnReloadFinished();
+		bWasReloading = bReloading;
+
+		// 초기 OnRep 은 BeginPlay 보다 먼저 온다. 재장전 중인 총을 늦게 받은 클라이언트는 울리지 않는다.
+		if (HasAuthority() || HasActorBegunPlay())
+		{
+			// 들고 이동하면서 재장전하므로 총에 붙여 따라가게 한다.
+			UCWSinkholeAudioSubsystem::PlayCue(
+				this,
+				bReloading ? ECWSinkholeSoundCue::GunReloadStarted : ECWSinkholeSoundCue::GunReloadFinished,
+				GetActorLocation(),
+				GetRootComponent(),
+				GetHolder());
+		}
+
+		if (bReloading)
+		{
+			OnReloadStarted(ReloadDuration);
+		}
+		else
+		{
+			OnReloadFinished();
+		}
 	}
 
 	OnAmmoChanged.Broadcast(this, CurrentAmmo, bReloading);
@@ -148,6 +170,8 @@ void ACWAsphaltGun::OnRep_AmmoState()
 
 void ACWAsphaltGun::Multicast_PlayProjectile_Implementation(const FVector& StartLocation, const FVector& ImpactLocation, float FlightTime)
 {
+	UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::GunFired, StartLocation, nullptr, GetHolder());
+
 	OnFired();
 
 	// 데디케이티드 서버에는 볼 사람이 없다. 연출 액터를 만들 이유가 없다.

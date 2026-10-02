@@ -7,6 +7,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
+#include "Sinkhole/CWSinkholeAudioSubsystem.h"
 #include "Sinkhole/Components/CWSinkholeFallComponent.h"
 
 namespace
@@ -106,6 +107,13 @@ void ACWSinkhole::BeginPlay()
 
 	RefreshVisualAndCollision();
 
+	// 스폰은 모든 머신에서 일어나므로 여기서 울리면 전원이 듣는다.
+	// 이미 열린 싱크홀을 늦게 받은 클라이언트는 State 가 Warning 이 아니라 건너뛴다.
+	if (State == ECWSinkholeState::Warning)
+	{
+		UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::Warning, GetActorLocation());
+	}
+
 	if (HasAuthority())
 	{
 		if (WarningDuration > 0.f)
@@ -142,10 +150,9 @@ bool ACWSinkhole::ApplyAsphaltHit()
 
 	if (FillCount >= RequiredFillCount)
 	{
+		// 완료 연출(OnSinkholeFilled, 완료음)은 OnRep_State 가 낸다. 여기서 부르면 서버에서만 난다.
 		State = ECWSinkholeState::Filled;
 		OnRep_State();
-
-		OnSinkholeFilled();
 
 		// 액터를 지우는 것으로 원상복구가 끝난다. 바닥에 흔적을 남기지 않는다.
 		//
@@ -212,6 +219,13 @@ void ACWSinkhole::OnRep_FillCount()
 
 	const float FillRatio = GetFillRatio();
 
+	// 마지막 한 발은 완료음이 대신한다. 둘이 같은 순간에 겹치면 완료가 묻힌다.
+	// OnRep 도착 순서(FillCount 와 State 중 무엇이 먼저 오는지)와 상관없이 FillCount 만 보고 거른다.
+	if (FillCount > 0 && FillCount < RequiredFillCount && ShouldPlayReplicatedSound())
+	{
+		UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::FillProgressed, GetActorLocation());
+	}
+
 	OnFillProgressed(FillCount, FillRatio);
 	OnFillChanged.Broadcast(this, FillCount, FillRatio);
 }
@@ -222,8 +236,31 @@ void ACWSinkhole::OnRep_State()
 
 	if (State == ECWSinkholeState::Active)
 	{
+		if (ShouldPlayReplicatedSound())
+		{
+			UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::Opened, GetActorLocation());
+		}
+
 		OnSinkholeOpened();
 	}
+	else if (State == ECWSinkholeState::Filled)
+	{
+		// 액터가 곧 사라지므로 붙이지 않고 자리에 남긴다. 붙이면 액터와 함께 소리가 잘린다.
+		if (ShouldPlayReplicatedSound())
+		{
+			UCWSinkholeAudioSubsystem::PlayCue(this, ECWSinkholeSoundCue::Filled, GetActorLocation());
+		}
+
+		OnSinkholeFilled();
+	}
+}
+
+bool ACWSinkhole::ShouldPlayReplicatedSound() const
+{
+	// 클라이언트가 이 액터를 처음 받을 때는 OnRep 이 BeginPlay 보다 먼저 온다(UActorChannel::ProcessBunch).
+	// 그때 오는 OnRep 은 "지금 일어난 일" 이 아니라 "이미 그런 상태였다" 는 뜻이다.
+	// 늦게 접속했거나 멀리서 들어온 싱크홀에서 지난 소리가 나지 않게 그 경우만 거른다.
+	return HasAuthority() || HasActorBegunPlay();
 }
 
 void ACWSinkhole::OpenSinkhole()
