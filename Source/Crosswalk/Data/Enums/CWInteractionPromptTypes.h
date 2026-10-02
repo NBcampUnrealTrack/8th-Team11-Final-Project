@@ -33,5 +33,9 @@ enum class ECWInteractionPromptAction : uint8
 	// R - 보급 박스에 페인트 통을 반납한다. (기획서 6-2)
 	ReturnCan			UMETA(DisplayName = "통 반납"),
 	// R - 아스팔트 건을 재장전한다. (싱크홀 기획서 7-5)
-	ReloadAsphaltGun	UMETA(DisplayName = "재장전")
+	ReloadAsphaltGun	UMETA(DisplayName = "재장전"),
+	// E - 휴식구역 의자에서 일어난다. (착석 기획서 4.2)
+	//
+	// 맨 뒤에 붙인다. 중간에 끼우면 이미 저장된 BP/데이터의 열거값이 통째로 한 칸씩 밀린다.
+	StandUp				UMETA(DisplayName = "일어나기")
 };

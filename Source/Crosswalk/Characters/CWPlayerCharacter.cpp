@@ -2022,8 +2022,8 @@ void ACWPlayerCharacter::Move(const FInputActionValue& Value)
 	/**
 	 * 앉아 있으면 이 입력은 이동이 아니라 "일어나기" 다. (착석 기획서 4.2)
 	 *
-	 * 기립 전용 키를 두지 않는 이유: 앉은 상태에서 하고 싶은 일은 사실상 이동뿐이라
-	 * 키를 하나 더 외우게 할 이유가 없다.
+	 * 화면에 띄우는 기립 키는 E 지만, 이동을 시도하는 것도 일어나겠다는 뜻이라 같이 받는다.
+	 * 앉은 채로 WASD 가 아무 반응이 없으면 조작이 고장난 것처럼 보인다.
 	 *
 	 * IsActionLocked 검사보다 반드시 앞에 둔다. 착석이 그 잠금에 포함돼 있어서,
 	 * 뒤에 두면 일어나려고 누른 입력이 잠금에 먹혀 영영 못 일어난다.
@@ -2064,10 +2064,31 @@ FCWInteractionPrompt ACWPlayerCharacter::ResolveInteractPrompt() const
 {
 	FCWInteractionPrompt Prompt;
 
-	// 쓰러졌거나 앉아 있으면 E 는 아무 데도 향하지 않는다. (기획서 6.2 / 착석 기획서 7절)
-	// 착석 중 일어나기는 WASD 가 받으므로 여기서 열어 줄 필요가 없다.
-	if (IsActionLocked())
+	// 쓰러졌거나 싱크홀에 빠져 있으면 E 는 아무 데도 향하지 않는다. (기획서 6.2)
+	if (IsHitLocked() || IsFallLocked())
 	{
+		return Prompt;
+	}
+
+	/**
+	 * 앉아 있으면 E 는 "일어나기" 하나로만 향한다. (착석 기획서 4.2)
+	 *
+	 * 대상을 자기 자신으로 두는 이유: 일어나는 것은 의자가 아니라 본인에 대한 동작이고,
+	 * 앉은 자리를 가리키는 휴식구역 참조는 서버만 들고 있어서 클라이언트에서는 못 쓴다.
+	 * 도구 내려놓기 프롬프트가 손에 든 도구를 가리키는 것과 같은 자리다.
+	 *
+	 * 기립 유예 중에는 아무것도 띄우지 않는다. 눌러도 안 되는 프롬프트를 띄우면
+	 * 입력이 씹힌 것처럼 보인다.
+	 */
+	if (bIsSitting)
+	{
+		if (CanRequestStandUp())
+		{
+			Prompt.Key = ResolvePromptKey(InteractAction);
+			Prompt.TargetActor = const_cast<ACWPlayerCharacter*>(this);
+			Prompt.Action = ECWInteractionPromptAction::StandUp;
+		}
+
 		return Prompt;
 	}
 
@@ -2152,6 +2173,23 @@ FCWInteractionPrompt ACWPlayerCharacter::ResolveInteractPrompt() const
 
 void ACWPlayerCharacter::Interact()
 {
+	/**
+	 * 앉아 있는 동안 E 는 일어나기 외의 어떤 경로로도 새지 않는다. (착석 기획서 4.2)
+	 *
+	 * 아래 스위치로 흘려보내지 않고 여기서 끊는 이유: 기립 유예 중에는 프롬프트가 비어 있어서
+	 * default 로 떨어지는데, 그 경로 끝에 도구 내려놓기가 있다. 앉은 채로 도구를 떨어뜨린다.
+	 * 유예 중에는 E 가 조용히 씹히는 것이 맞다.
+	 */
+	if (bIsSitting)
+	{
+		if (CanRequestStandUp())
+		{
+			Server_RequestStandUp();
+		}
+
+		return;
+	}
+
 	// 판정은 ResolveInteractPrompt 한 곳에서만 한다. 여기서 다시 고르면
 	// 머리 위에 뜬 대상과 실제로 잡히는 대상이 갈린다.
 	const FCWInteractionPrompt Prompt = ResolveInteractPrompt();
