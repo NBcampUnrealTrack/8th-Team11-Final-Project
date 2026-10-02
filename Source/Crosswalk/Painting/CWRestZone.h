@@ -10,6 +10,7 @@
 class ACWRestZone;
 class ACWPlayerCharacter;
 class UBoxComponent;
+class USphereComponent;
 class UCWTemperatureComponent;
 
 /**
@@ -116,6 +117,15 @@ public:
 	FTransform GetSeatTransform() const;
 
 	/**
+	 * 이 지점에서 도구를 내려놓는 것을 막아야 하는가.
+	 *
+	 * 캐릭터가 E 를 누를 때 물어본다. 앉을 수 있는지와 별개로 판단한다. 자리가 차 있거나
+	 * 거리가 모자라 앉기가 거절되는 구간에서도 도구는 여전히 막아야 하기 때문이다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Rest")
+	bool IsWithinToolDropBlockRange(const FVector& Location) const;
+
+	/**
 	 * 자리를 비운다. 서버에서만 유효하다.
 	 *
 	 * 캐릭터가 일어날 때(스스로든, 차에 맞아서든, 소멸하면서든) 여기로 들어온다.
@@ -164,7 +174,7 @@ private:
 
 public:
 	// 프롬프트 표시 영역. 루트 컴포넌트다. 막는 용도가 아니라 겹침만 본다.
-	// 크기는 레벨에서 조절하되 SeatInteractRadius 를 넘기지 않는다.
+	// 크기는 레벨에서 조절하되 SeatRange 를 넘기지 않는다.
 	// 넘기면 "앉기" 가 떠 있는데 E 는 안 먹는 구간이 생긴다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rest")
 	TObjectPtr<UBoxComponent> Area;
@@ -179,11 +189,32 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rest")
 	TObjectPtr<USceneComponent> Seat;
 
-protected:
-	// 의자에서 E 가 먹는 거리(cm). 캐릭터의 InteractRadius 와 별개로, 이 존이 스스로 재는 값이다.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rest", meta = (ClampMin = "0.0"))
-	float SeatInteractRadius = 200.f;
+	/**
+	 * E 가 먹는 범위. 이 안에 들어와야 앉을 수 있다. (초록색 와이어프레임)
+	 *
+	 * 숫자가 아니라 컴포넌트로 둔 이유: 두 범위를 숫자로만 두면 어느 쪽이 더 넓은지
+	 * 플레이해 보기 전에는 알 수 없다. 뷰포트에서 두 구가 같이 보이면 한눈에 비교되고,
+	 * 반지름 핸들을 끌어서 바로 맞출 수 있다.
+	 *
+	 * 콜리전은 없다. 거리 판정은 CanInteract 가 반지름 값을 읽어서 직접 한다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rest")
+	TObjectPtr<USphereComponent> SeatRange;
 
+	/**
+	 * 이 안에서는 E 가 도구를 내려놓지 않는다. (주황색 와이어프레임)
+	 *
+	 * SeatRange 보다 조금 넓어야 한다. 앉을 수 있는 곳에서는 당연히 막혀야 하고,
+	 * 의자에서 반 발짝 벗어나 앉기가 거절되는 구간에서도 여전히 막혀야 하기 때문이다.
+	 * 그 바깥 구간이 바로 도구가 쌓이던 자리다.
+	 *
+	 * 반대로 너무 넓으면 휴식구역 근처 전체에서 도구를 못 내려놓는다. 예전에는 이 판정이
+	 * Area 박스 겹침이라 사실상 4m 가까이 먹었다. 그래서 눈으로 보면서 조절해야 한다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rest")
+	TObjectPtr<USphereComponent> ToolDropBlockRange;
+
+protected:
 	// 서버가 다시 판정할 때 주는 거리 여유 배율.
 	// 클라이언트와 서버의 위치가 핑만큼 어긋나 있어서, 딱 맞게 재면 눌러도 안 앉는 일이 생긴다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rest", meta = (ClampMin = "1.0"))
