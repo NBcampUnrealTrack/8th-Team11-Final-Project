@@ -25,6 +25,7 @@ class CROSSWALK_API UCWUIBootstrapComponent : public UActorComponent
 
 public:
 	UCWUIBootstrapComponent();
+	TSubclassOf<UCWStageIntroWidget> GetStageIntroClass() const { return StageIntroClass; }
 
 #pragma region ActorComponentLifecycle
 

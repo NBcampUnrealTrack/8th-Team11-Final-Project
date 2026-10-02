@@ -247,11 +247,17 @@ void UCWUIBootstrapComponent::BeginPlay()
 	if (InitialPage == ECWUIPage::None)
 	{
 		UISubsystem->ApplyInputMode(InitialInputMode);
-		// 카탈로그의 1-1 맵에서만 안내를 열어 다른 스테이지의 조작을 막지 않음
-		if (StageIntroClass && UGameplayStatics::GetCurrentLevelName(this, true) == TEXT("Stage_01"))
+		const FString IntroStageName = UGameplayStatics::GetCurrentLevelName(this, true);
+		// 입장한 스테이지의 안내만 보여주기 위해 두 안내 목록을 위젯에서 구분함
+		if (StageIntroClass && (IntroStageName == TEXT("Stage_01") || IntroStageName == TEXT("Stage_02")))
 		{
 			UCWStageIntroWidget* Intro = CreateWidget<UCWStageIntroWidget>(OwnerPC, StageIntroClass);
-			if (!IsValid(Intro) || !UISubsystem->OpenPopup(Intro))
+			if (IsValid(Intro) && !Intro->HasConfiguredIntroPages())
+			{
+				// 아직 이미지가 없는 스테이지는 빈 팝업을 열어 조작을 차단하지 않도록 함
+				UE_LOG(LogCWUI, Verbose, TEXT("UIBootstrap: no configured intro for %s."), *IntroStageName);
+			}
+			else if (!IsValid(Intro) || !UISubsystem->OpenPopup(Intro))
 			{
 				UE_LOG(LogCWUI, Error, TEXT("UIBootstrap: failed to open stage intro."));
 			}

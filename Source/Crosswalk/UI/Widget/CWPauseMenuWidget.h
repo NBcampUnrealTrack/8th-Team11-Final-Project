@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
 	void OpenSettings();
 
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
+	void OpenGameGuide();
+
 	// 기존 확인 팝업이 승인된 뒤에만 세션 종료를 요청함
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
 	void ConfirmLeaveRoom();
@@ -59,6 +62,9 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UUserWidget> LeaveConfirmation;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UUserWidget> GameGuide;
 
 	bool bMenuOpen = false;
 	bool bLeavingRoom = false;
