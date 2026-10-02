@@ -106,7 +106,7 @@ protected:
 	void OnFillProgressed(int32 NewFillCount, float NewFillRatio);
 	virtual void OnFillProgressed_Implementation(int32 NewFillCount, float NewFillRatio);
 
-	/** 복구가 끝나 사라지기 직전. BP 에서 흙먼지 한 번 재생하는 자리. */
+	/** 복구가 끝나 사라지기 직전. BP 에서 흙먼지 한 번 재생하는 자리. 서버와 클라이언트 모두에서 불린다. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Sinkhole")
 	void OnSinkholeFilled();
 	virtual void OnSinkholeFilled_Implementation();
@@ -120,6 +120,9 @@ private:
 
 	/** 예고 시간이 끝났을 때. 서버에서만 돈다. */
 	void OpenSinkhole();
+
+	/** OnRep 에서 소리를 내도 되는가. 클라이언트가 처음 받은 초기 상태에서는 false 다. */
+	bool ShouldPlayReplicatedSound() const;
 
 	/** 진행도와 상태에 맞춰 데칼 크기와 콜리전 반경을 다시 맞춘다. 모든 머신이 각자 부른다. */
 	void RefreshVisualAndCollision();
