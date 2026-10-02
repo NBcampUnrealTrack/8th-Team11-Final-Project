@@ -2,6 +2,7 @@
 
 #include "Characters/CWPlayerCharacter.h"
 #include "Components/BoxComponent.h"
+#include "Components/SphereComponent.h"
 #include "GameFramework/PlayerState.h"
 #include "Painting/Components/CWTemperatureComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -31,6 +32,25 @@ ACWRestZone::ACWRestZone()
 
 	Seat = CreateDefaultSubobject<USceneComponent>(TEXT("Seat"));
 	Seat->SetupAttachment(Area);
+
+	// 두 범위는 의자를 기준으로 잰다. Seat 를 옮기면 같이 따라간다.
+	// 둘 다 콜리전이 없다. 뷰포트에서 보여주고 반지름 값을 들고 있는 것이 전부다.
+	SeatRange = CreateDefaultSubobject<USphereComponent>(TEXT("SeatRange"));
+	SeatRange->SetupAttachment(Seat);
+	SeatRange->SetSphereRadius(200.f);
+	SeatRange->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SeatRange->SetGenerateOverlapEvents(false);
+	SeatRange->SetHiddenInGame(true);
+	SeatRange->ShapeColor = FColor(80, 200, 120);
+
+	// SeatRange 보다 조금 넓게 잡아 둔다. 거절 구간까지 덮어야 도구가 안 쌓인다.
+	ToolDropBlockRange = CreateDefaultSubobject<USphereComponent>(TEXT("ToolDropBlockRange"));
+	ToolDropBlockRange->SetupAttachment(Seat);
+	ToolDropBlockRange->SetSphereRadius(250.f);
+	ToolDropBlockRange->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ToolDropBlockRange->SetGenerateOverlapEvents(false);
+	ToolDropBlockRange->SetHiddenInGame(true);
+	ToolDropBlockRange->ShapeColor = FColor(235, 150, 60);
 }
 
 void ACWRestZone::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -47,6 +67,20 @@ void ACWRestZone::BeginPlay()
 	if (bShowDebugArea)
 	{
 		Area->SetHiddenInGame(false);
+		SeatRange->SetHiddenInGame(false);
+		ToolDropBlockRange->SetHiddenInGame(false);
+	}
+
+	/**
+	 * 도구 차단 범위가 착석 범위보다 좁으면, 앉을 수는 있는데 도구는 내려놓이는 구간이 생긴다.
+	 * 바로 그 구간이 도구가 쌓이던 자리라 거꾸로 잡으면 고친 의미가 없다.
+	 */
+	if (SeatRange != nullptr && ToolDropBlockRange != nullptr
+		&& ToolDropBlockRange->GetScaledSphereRadius() < SeatRange->GetScaledSphereRadius())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[%s] ToolDropBlockRange(%.0f)가 SeatRange(%.0f)보다 좁습니다. 앉을 수 있는데 도구가 내려놓이는 구간이 생깁니다."),
+			*GetName(), ToolDropBlockRange->GetScaledSphereRadius(), SeatRange->GetScaledSphereRadius());
 	}
 
 	// 겹침은 모든 머신에서 받는다. 서버가 쓰려는 게 아니라 각 화면의 프롬프트 때문이다.
@@ -129,7 +163,8 @@ bool ACWRestZone::CanInteract_Implementation(APawn* InstigatorPawn) const
 	}
 
 	// 거리는 의자 기준이다. 서버가 다시 판정할 때를 대비해 여유를 준다.
-	const float AllowedRadius = SeatInteractRadius * ServerRangeTolerance;
+	const float SeatRadius = SeatRange != nullptr ? SeatRange->GetScaledSphereRadius() : 0.f;
+	const float AllowedRadius = SeatRadius * ServerRangeTolerance;
 	if (FVector::DistSquared(Player->GetActorLocation(), GetInteractionLocation_Implementation()) > FMath::Square(AllowedRadius))
 	{
 		return false;
@@ -153,6 +188,24 @@ FTransform ACWRestZone::GetSeatTransform() const
 	}
 
 	return Seat->GetComponentTransform();
+}
+
+bool ACWRestZone::IsWithinToolDropBlockRange(const FVector& Location) const
+{
+	if (ToolDropBlockRange == nullptr)
+	{
+		return false;
+	}
+
+	const float Radius = ToolDropBlockRange->GetScaledSphereRadius();
+
+	// 반지름을 0 으로 내리면 이 기능을 끈 것으로 본다. 레벨마다 다르게 쓸 수 있어야 한다.
+	if (Radius <= 0.f)
+	{
+		return false;
+	}
+
+	return FVector::DistSquared(Location, ToolDropBlockRange->GetComponentLocation()) <= FMath::Square(Radius);
 }
 
 void ACWRestZone::ReleaseOccupant(ACWPlayerCharacter* Player)

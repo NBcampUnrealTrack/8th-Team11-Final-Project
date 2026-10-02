@@ -2263,9 +2263,17 @@ AActor* ACWPlayerCharacter::FindNearestInteractable(float& OutDistanceSquared) c
 		 * 그러면 E 가 "상호작용 대상 없음" 으로 떨어져 들고 있던 도구를 내려놓는다.
 		 * 앉으려고 누른 E 가 도구를 휴식구역 바닥에 버리는 결과가 된다.
 		 */
-		if (OverlapActor->IsA<ACWRestZone>())
+		if (const ACWRestZone* RestZone = Cast<ACWRestZone>(OverlapActor))
 		{
-			bLastQueryNearRestZone = true;
+			/**
+			 * 범위는 존이 정한다. 여기서 "겹쳤으면 막는다" 로 두면 프롬프트 박스 크기가
+			 * 그대로 도구 차단 범위가 되어, 앉지도 못하는 먼 거리에서까지 막힌다.
+			 * 실제로 그래서 차단 범위만 4m 가까이 먹고 있었다.
+			 */
+			if (RestZone->IsWithinToolDropBlockRange(GetActorLocation()))
+			{
+				bLastQueryNearRestZone = true;
+			}
 		}
 
 		// 도구는 도구 소지 컴포넌트가 따로 관리한다. 위 함수 주석 참고.
