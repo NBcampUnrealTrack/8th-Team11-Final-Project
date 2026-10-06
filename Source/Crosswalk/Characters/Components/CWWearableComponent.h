@@ -114,6 +114,8 @@ private:
 
 	/** 슬롯 하나를 화면에 반영한다. */
 	void ApplySlot(int32 SlotIndex);
+	void ApplyBodyMaterial(int32 SlotIndex, const UCWWearableItem* Item);
+	void RestoreBodyMaterial(int32 SlotIndex);
 
 	/**
 	 * 슬롯의 메시 컴포넌트를 준비한다. 없으면 만들고, 타입이 안 맞으면 버리고 다시 만든다.
@@ -185,4 +187,10 @@ private:
 	 */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMeshComponent>> SlotComponents;
+
+	/** 좌석 소유자가 바뀔 때 원래 머티리얼로 돌려주기 위한 로컬 상태. */
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<UMaterialInterface>> OriginalBodyMaterials;
+
+	TMap<int32, int32> BodyMaterialSlots;
 };

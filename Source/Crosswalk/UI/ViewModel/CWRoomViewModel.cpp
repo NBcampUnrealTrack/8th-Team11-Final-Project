@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Core/CWPlayerState.h"
 #include "Characters/Components/CWWearableComponent.h"
+#include "Characters/Wearables/CWWearableItem.h"
 #include "Core/Room/CWRoomGameState.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -19,6 +20,17 @@ void UCWRoomViewModel::RequestChangeOutfit()
 	if (IsValid(PlayerState) && IsValid(PlayerState->GetWearableComponent()))
 	{
 		PlayerState->GetWearableComponent()->CycleSlotItem(TEXT("Head"));
+	}
+}
+
+void UCWRoomViewModel::RequestChangeColor()
+{
+	APlayerController* LocalPlayerController = GetOwningPlayerController();
+	ACWPlayerState* PlayerState = IsValid(LocalPlayerController)
+		? LocalPlayerController->GetPlayerState<ACWPlayerState>() : nullptr;
+	if (IsValid(PlayerState) && IsValid(PlayerState->GetWearableComponent()))
+	{
+		PlayerState->GetWearableComponent()->CycleSlotItem(CWWearableSlots::BodyColor);
 	}
 }
 

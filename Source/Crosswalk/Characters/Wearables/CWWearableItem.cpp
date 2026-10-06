@@ -12,10 +12,15 @@ namespace CWWearableSlots
 	const FName Head = TEXT("Head");
 	const FName Torso = TEXT("Torso");
 	const FName Legs = TEXT("Legs");
+	const FName BodyColor = TEXT("BodyColor");
 }
 
 bool UCWWearableItem::HasMesh() const
 {
+	if (AttachMode == ECWWearAttachMode::BodyMaterial)
+	{
+		return false;
+	}
 	// 모드에 따라 보는 칸이 다르다. IsNull 은 로드 없이 경로만 확인하므로 값이 싸다.
 	return (AttachMode == ECWWearAttachMode::Socket)
 		? !StaticMesh.IsNull()
@@ -37,11 +42,19 @@ EDataValidationResult UCWWearableItem::IsDataValid(FDataValidationContext& Conte
 	if (SlotName.IsNone())
 	{
 		Context.AddError(LOCTEXT("MissingSlotName",
-			"SlotName 이 비어 있습니다. Head / Torso / Legs 중 하나를 적으세요."));
+			"SlotName 이 비어 있습니다. 카탈로그에 등록된 슬롯 이름을 적으세요."));
 		Result = EDataValidationResult::Invalid;
 	}
 
-	if (!HasMesh())
+	if (AttachMode == ECWWearAttachMode::BodyMaterial)
+	{
+		if (BodyMaterial.IsNull() || BodyMaterialIndex < 0)
+		{
+			Context.AddError(LOCTEXT("MissingBodyMaterial", "몸 색상에는 머티리얼과 0 이상의 슬롯 번호가 필요합니다."));
+			Result = EDataValidationResult::Invalid;
+		}
+	}
+	else if (!HasMesh())
 	{
 		Context.AddError(FText::Format(
 			LOCTEXT("MissingMesh", "{0} 모드인데 쓸 메시가 비어 있습니다."),

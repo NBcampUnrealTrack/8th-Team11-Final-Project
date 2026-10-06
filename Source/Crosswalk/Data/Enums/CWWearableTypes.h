@@ -22,5 +22,8 @@ enum class ECWWearAttachMode : uint8
 	/**
 	 *리더포즈. 스켈레톤을 몸과 같은 걸 사용한 메시여야 몸과 똑같이 관절 부분이 접힘.
 	 */
-	LeaderPose		UMETA(DisplayName = "리더 포즈")
+	LeaderPose		UMETA(DisplayName = "리더 포즈"),
+
+	/** 메시를 추가하지 않고 몸의 머티리얼을 교체한다. */
+	BodyMaterial	UMETA(DisplayName = "몸 색상")
 };
