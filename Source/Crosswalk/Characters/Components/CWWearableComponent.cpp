@@ -225,6 +225,11 @@ void UCWWearableComponent::SetSlotItemAuthority(int32 SlotIndex, int32 ItemIndex
 	}
 
 	const int8 NewItemIndex = static_cast<int8>(ItemIndex);
+	const FCWWearableSlotDef* SlotDef = Catalog->GetSlotDef(SlotIndex);
+	if (ItemIndex == INDEX_NONE && SlotDef != nullptr && !SlotDef->bAllowEmpty)
+	{
+		return;
+	}
 	if (WornItems[SlotIndex] == NewItemIndex)
 	{
 		return;
@@ -250,7 +255,8 @@ void UCWWearableComponent::CycleSlotItemAuthority(int32 SlotIndex)
 	 * 배열로 만들면 그 보정이 사라지고 "다음 칸으로" 라는 계산만 남는다.
 	 */
 	TArray<int32> Candidates;
-	if (bIncludeEmptyInCycle)
+	const FCWWearableSlotDef* CycleSlotDef = Catalog->GetSlotDef(SlotIndex);
+	if (bIncludeEmptyInCycle && CycleSlotDef != nullptr && CycleSlotDef->bAllowEmpty)
 	{
 		Candidates.Add(INDEX_NONE);
 	}
@@ -329,6 +335,16 @@ void UCWWearableComponent::ApplySlot(int32 SlotIndex)
 	}
 
 	const UCWWearableItem* Item = Catalog->GetItem(WornItems[SlotIndex]);
+	if (Item != nullptr && Item->AttachMode == ECWWearAttachMode::BodyMaterial)
+	{
+		if (UMeshComponent* Existing = SlotComponents[SlotIndex])
+		{
+			Existing->SetVisibility(false);
+		}
+		ApplyBodyMaterial(SlotIndex, Item);
+		return;
+	}
+	RestoreBodyMaterial(SlotIndex);
 
 	if (Item == nullptr)
 	{
@@ -393,6 +409,43 @@ void UCWWearableComponent::ApplySlot(int32 SlotIndex)
 
 	ApplyOverlayToSlot(SlotComponent, Item);
 	SlotComponent->SetVisibility(true);
+}
+
+void UCWWearableComponent::ApplyBodyMaterial(int32 SlotIndex, const UCWWearableItem* Item)
+{
+	USkeletalMeshComponent* Body = GetBodyMesh();
+	if (Body == nullptr || Item == nullptr || Item->BodyMaterialIndex < 0
+		|| Item->BodyMaterialIndex >= Body->GetNumMaterials())
+	{
+		return;
+	}
+	UMaterialInterface* Material = Item->BodyMaterial.LoadSynchronous();
+	if (Material == nullptr)
+	{
+		return;
+	}
+	const int32* PreviousIndex = BodyMaterialSlots.Find(SlotIndex);
+	if (PreviousIndex != nullptr && *PreviousIndex != Item->BodyMaterialIndex)
+	{
+		RestoreBodyMaterial(SlotIndex);
+	}
+	if (!BodyMaterialSlots.Contains(SlotIndex))
+	{
+		OriginalBodyMaterials.Add(SlotIndex, Body->GetMaterial(Item->BodyMaterialIndex));
+		BodyMaterialSlots.Add(SlotIndex, Item->BodyMaterialIndex);
+	}
+	Body->SetMaterial(Item->BodyMaterialIndex, Material);
+}
+
+void UCWWearableComponent::RestoreBodyMaterial(int32 SlotIndex)
+{
+	const int32* MaterialIndex = BodyMaterialSlots.Find(SlotIndex);
+	if (USkeletalMeshComponent* Body = GetBodyMesh(); Body != nullptr && MaterialIndex != nullptr)
+	{
+		Body->SetMaterial(*MaterialIndex, OriginalBodyMaterials.FindRef(SlotIndex));
+	}
+	BodyMaterialSlots.Remove(SlotIndex);
+	OriginalBodyMaterials.Remove(SlotIndex);
 }
 
 UMeshComponent* UCWWearableComponent::EnsureSlotComponent(int32 SlotIndex, const UCWWearableItem* Item)
@@ -618,6 +671,12 @@ bool UCWWearableComponent::CanChangeOutfit() const
 
 void UCWWearableComponent::ClearVisuals()
 {
+	TArray<int32> MaterialSlotKeys;
+	BodyMaterialSlots.GetKeys(MaterialSlotKeys);
+	for (int32 SlotIndex : MaterialSlotKeys)
+	{
+		RestoreBodyMaterial(SlotIndex);
+	}
 	for (UMeshComponent* Component : SlotComponents)
 	{
 		if (IsValid(Component))

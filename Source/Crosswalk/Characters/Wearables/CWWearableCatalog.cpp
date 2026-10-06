@@ -169,6 +169,12 @@ EDataValidationResult UCWWearableCatalog::IsDataValid(FDataValidationContext& Co
 		}
 
 		// 기본 아이템의 슬롯이 이 슬롯과 다르면 입혀지지 않는다. 애셋을 잘못 고른 경우다.
+		if (!SlotDef.bAllowEmpty && SlotDef.DefaultItem == nullptr)
+		{
+			Context.AddError(LOCTEXT("RequiredSlotDefault", "빈 상태를 허용하지 않는 슬롯에는 기본 아이템이 필요합니다."));
+			Result = EDataValidationResult::Invalid;
+		}
+
 		if (SlotDef.DefaultItem != nullptr && SlotDef.DefaultItem->SlotName != SlotDef.SlotName)
 		{
 			Context.AddError(FText::Format(

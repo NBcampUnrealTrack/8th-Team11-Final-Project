@@ -26,6 +26,7 @@ namespace CWWearableSlots
 	extern CROSSWALK_API const FName Head;
 	extern CROSSWALK_API const FName Torso;
 	extern CROSSWALK_API const FName Legs;
+	extern CROSSWALK_API const FName BodyColor;
 }
 
 /**
@@ -59,6 +60,15 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Wearable")
 	ECWWearAttachMode AttachMode = ECWWearAttachMode::Socket;
+
+	/** 몸 색상 프리셋. 선택 인덱스는 기존 WornItems로 함께 복제된다. */
+	UPROPERTY(EditAnywhere, Category = "Wearable|Color",
+		meta = (EditCondition = "AttachMode == ECWWearAttachMode::BodyMaterial", EditConditionHides))
+	TSoftObjectPtr<UMaterialInterface> BodyMaterial;
+
+	UPROPERTY(EditAnywhere, Category = "Wearable|Color",
+		meta = (ClampMin = "0", EditCondition = "AttachMode == ECWWearAttachMode::BodyMaterial", EditConditionHides))
+	int32 BodyMaterialIndex = 0;
 
 	/** Socket 모드에서 쓸 메시. */
 	UPROPERTY(EditAnywhere, Category = "Wearable",

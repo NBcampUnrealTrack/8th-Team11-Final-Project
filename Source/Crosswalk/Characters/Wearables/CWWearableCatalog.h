@@ -49,6 +49,10 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, Category = "Slot")
 	bool bIncludeInToggleAll = true;
+
+	/** 색상처럼 항상 하나를 선택해야 하는 슬롯은 빈 상태를 순환하지 않는다. */
+	UPROPERTY(EditAnywhere, Category = "Slot")
+	bool bAllowEmpty = true;
 };
 
 /**

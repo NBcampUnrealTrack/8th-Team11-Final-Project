@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
 #include "Misc/AutomationTest.h"
+#include "Materials/MaterialInterface.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCWWearableLifecycleTest,
 	"Crosswalk.Wearable.LobbyTravelAndLock",
@@ -38,15 +39,42 @@ bool FCWWearableLifecycleTest::RunTest(const FString& Parameters)
 	Wearable->SetSlotItem(TEXT("Head"), Cone);
 	TestEqual(TEXT("Lobby accepts cone selection"), Wearable->GetSlotItem(TEXT("Head")), Cone);
 
+	UCWWearableItem* InitialColor = Wearable->GetSlotItem(CWWearableSlots::BodyColor);
+	if (!TestNotNull(TEXT("Color slot has a default preset"), InitialColor))
+	{
+		World->DestroyWorld(false);
+		GEngine->DestroyWorldContext(World);
+		return false;
+	}
+	TSet<UCWWearableItem*> Colors;
+	for (int32 Index = 0; Index < 8; ++Index)
+	{
+		UCWWearableItem* Color = Wearable->GetSlotItem(CWWearableSlots::BodyColor);
+		TestNotNull(TEXT("Color cycle never selects an empty slot"), Color);
+		Colors.Add(Color);
+		Wearable->CycleSlotItem(CWWearableSlots::BodyColor);
+	}
+	TestEqual(TEXT("Eight distinct color presets"), Colors.Num(), 8);
+	TestEqual(TEXT("Eight clicks return to initial color"), Wearable->GetSlotItem(CWWearableSlots::BodyColor), InitialColor);
+	TestEqual(TEXT("Color cycle preserves hat selection"), Wearable->GetSlotItem(TEXT("Head")), Cone);
+	Wearable->CycleSlotItem(CWWearableSlots::BodyColor);
+	UCWWearableItem* SelectedColor = Wearable->GetSlotItem(CWWearableSlots::BodyColor);
+	Wearable->ToggleAllSlots();
+	Wearable->SetSlotItem(CWWearableSlots::BodyColor, nullptr);
+	TestEqual(TEXT("Outfit toggle and empty requests preserve color"), Wearable->GetSlotItem(CWWearableSlots::BodyColor), SelectedColor);
+
 	// CopyProperties가 BeginPlay보다 먼저 또는 나중에 호출되는 두 순서를 검사한다.
 	ACWPlayerState* Stage = World->SpawnActor<ACWPlayerState>();
 	Original->SeamlessTravelTo(Stage);
 	Stage->DispatchBeginPlay();
+	TestEqual(TEXT("Travel preserves selected color"), Stage->GetWearableComponent()->GetSlotItem(CWWearableSlots::BodyColor), SelectedColor);
 	TestEqual(TEXT("Travel copy survives destination BeginPlay"),
 		Stage->GetWearableComponent()->GetSlotItem(TEXT("Head")), Cone);
 	World->SetGameState(World->SpawnActor<AGameStateBase>());
 	UCWWearableComponent* StageWearable = Stage->GetWearableComponent();
 	StageWearable->CycleSlotItem(TEXT("Head"));
+	StageWearable->CycleSlotItem(CWWearableSlots::BodyColor);
+	TestEqual(TEXT("Stage locks color changes"), StageWearable->GetSlotItem(CWWearableSlots::BodyColor), SelectedColor);
 	StageWearable->SetSlotItem(TEXT("Head"), nullptr);
 	StageWearable->ToggleAllSlots();
 	// 공개 요청을 우회해 기존 서버 RPC로 직접 들어와도 단계 제한을 적용해야 한다.
@@ -78,7 +106,9 @@ bool FCWWearableLifecycleTest::RunTest(const FString& Parameters)
 	Body->SetSkeletalMeshAsset(LoadObject<USkeletalMesh>(nullptr,
 		TEXT("/Game/CrossWalk/Characters/Player/long_character/CWCharacter_new.CWCharacter_new")));
 	Body->RegisterComponent();
+	UMaterialInterface* OriginalMaterial = Body->GetMaterial(0);
 	Wearable->SetBodyMesh(Body);
+	TestEqual(TEXT("Late body binding applies selected color"), Body->GetMaterial(0), SelectedColor->BodyMaterial.LoadSynchronous());
 	TArray<UStaticMeshComponent*> Visuals;
 	Display->GetComponents(Visuals);
 	TestEqual(TEXT("Late visual binding creates exactly one head mesh"), Visuals.Num(), 1);
@@ -91,6 +121,7 @@ bool FCWWearableLifecycleTest::RunTest(const FString& Parameters)
 	Display->GetComponents(Visuals);
 	TestEqual(TEXT("Repeated seat refresh does not duplicate visuals"), Visuals.Num(), 1);
 	Wearable->ReleaseBodyMesh(Body);
+	TestEqual(TEXT("Releasing seat restores its original material"), Body->GetMaterial(0), OriginalMaterial);
 	Display->GetComponents(Visuals);
 	TestEqual(TEXT("Releasing seat removes old visuals"), Visuals.Num(), 0);
 	World->DestroyWorld(false);

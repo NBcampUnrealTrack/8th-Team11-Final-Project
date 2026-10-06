@@ -22,6 +22,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
 	void RequestChangeOutfit();
 
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
+	void RequestChangeColor();
+
 	// 로컬 플레이어의 준비 상태를 반대로 변경
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Room")
 	void RequestToggleReady();
