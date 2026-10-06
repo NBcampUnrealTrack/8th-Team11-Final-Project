@@ -43,5 +43,7 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 
 private:
+	// 마스크 삽입으로 Slate가 재생성되어도 이미 완료된 붓칠을 다시 시작하지 않기 위함
+	TSharedPtr<float> RevealElapsed;
 	TSharedPtr<SCWHUDPaintSurface> PaintSurface;
 };

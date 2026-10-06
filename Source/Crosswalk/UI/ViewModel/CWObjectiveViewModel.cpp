@@ -4,6 +4,16 @@
 #include "CoreMinimal.h"
 #include "Core/CWGameState.h"
 #include "GameFramework/GameStateBase.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/RetainerBox.h"
+#include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 #pragma region ObjectiveData
 
@@ -11,8 +21,177 @@ void UCWObjectiveViewModel::SetObjectives(
 	const TArray<FCWStageObjective>& InObjectives
 )
 {
-	// 값이 실제로 변경된 경우에만 MVVM 알림 발생
-	UE_MVVM_SET_PROPERTY_VALUE(Objectives, InObjectives);
+	// 서버 완료 조건을 유지하면서 본 작업 이후에만 정리 목표를 안내하기 위함
+	const auto IsCleanupObjective = [](const FCWStageObjective& Objective)
+	{
+		const FString Name = Objective.DisplayName.ToString();
+		return Name == TEXT("페인트 정리") || Name == TEXT("데칼 정리");
+	};
+
+	bool bHasCleanupObjective = false;
+	bool bCleanupIncomplete = false;
+	bool bAllMainObjectivesCompleted = true;
+	for (const FCWStageObjective& Objective : InObjectives)
+	{
+		if (IsCleanupObjective(Objective))
+		{
+			bHasCleanupObjective = true;
+			bCleanupIncomplete |= !Objective.IsCompleted();
+		}
+		else if (!Objective.IsCompleted())
+		{
+			bAllMainObjectivesCompleted = false;
+		}
+	}
+
+	// 이미 정리까지 끝난 경우에는 불필요한 페이지 교체 없이 기존 클리어 흐름을 유지함
+	const bool bShowCleanup = bHasCleanupObjective && bAllMainObjectivesCompleted
+		&& (bCleanupIncomplete || bCleanupVisible);
+	// 표시 중인 정리 항목은 완료 후에도 유지해야 기존 완료 붓칠이 재생될 수 있음
+	TArray<FCWStageObjective> VisibleObjectives;
+	VisibleObjectives.Reserve(InObjectives.Num());
+	for (const FCWStageObjective& Objective : InObjectives)
+	{
+		if (!bHasCleanupObjective
+			|| (!bShowCleanup && !IsCleanupObjective(Objective))
+			|| (bShowCleanup && IsCleanupObjective(Objective)
+				&& (!Objective.IsCompleted()
+					|| Objectives.ContainsByPredicate([&Objective](const FCWStageObjective& Previous)
+					{ return Previous.DisplayName.EqualTo(Objective.DisplayName); })
+					|| PendingObjectives.ContainsByPredicate([&Objective](const FCWStageObjective& Previous)
+					{ return Previous.DisplayName.EqualTo(Objective.DisplayName); }))))
+		{
+			VisibleObjectives.Add(Objective);
+		}
+	}
+
+	if (bTransitioningObjectives && bShowCleanup)
+	{
+		PendingObjectives = VisibleObjectives;
+		if (bTransitionListReplaced)
+		{
+			UE_MVVM_SET_PROPERTY_VALUE(Objectives, VisibleObjectives);
+		}
+		return;
+	}
+
+	const bool bStartTransition = bShowCleanup && !bCleanupVisible && !Objectives.IsEmpty();
+	bCleanupVisible = bShowCleanup;
+	if (bStartTransition && GetBoundWorld() && PrepareObjectiveInkLayer())
+	{
+		// 마지막 본 작업의 완료 붓칠이 지우기 전에 보이도록 최신 완료 값을 먼저 반영함
+		TArray<FCWStageObjective> CompletedMainObjectives;
+		for (const FCWStageObjective& Objective : InObjectives)
+		{
+			if (!IsCleanupObjective(Objective)) CompletedMainObjectives.Add(Objective);
+		}
+		UE_MVVM_SET_PROPERTY_VALUE(Objectives, CompletedMainObjectives);
+		PendingObjectives = VisibleObjectives;
+		bTransitioningObjectives = true;
+		bTransitionListReplaced = false;
+		ObjectiveTransitionStarted = GetBoundWorld()->GetTimeSeconds();
+		GetBoundWorld()->GetTimerManager().SetTimer(ObjectiveTransitionTimer,
+			this, &UCWObjectiveViewModel::UpdateObjectiveTransition, 1.f / 60.f, true);
+		return;
+	}
+	StopObjectiveTransition();
+	UE_MVVM_SET_PROPERTY_VALUE(Objectives, VisibleObjectives);
+}
+
+bool UCWObjectiveViewModel::PrepareObjectiveInkLayer()
+{
+	if (ObjectiveInkLayer.IsValid()) return true;
+	TArray<UUserWidget*> Widgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(GetBoundWorld(), Widgets, UUserWidget::StaticClass(), false);
+	for (UUserWidget* Widget : Widgets)
+	{
+		if (!Widget || Widget->GetOwningPlayer() != GetOwningPlayerController() || !Widget->WidgetTree) continue;
+		UVerticalBox* Entries = Cast<UVerticalBox>(Widget->WidgetTree->FindWidget(TEXT("VerticalBox_Objectives")));
+		UVerticalBox* Parent = Entries ? Cast<UVerticalBox>(Entries->GetParent()) : nullptr;
+		// 다른 형제의 순서를 바꾸지 않도록 확인된 단일 목록 컨테이너에만 마스크를 삽입함
+		if (!Parent || Parent->GetChildrenCount() != 1) continue;
+		UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/CrossWalk/UI/Clipboard/Materials/M_UI_PaperInkWipe.M_UI_PaperInkWipe"));
+		if (!Material) return false;
+		UVerticalBoxSlot* PreviousSlot = Cast<UVerticalBoxSlot>(Entries->Slot);
+		if (!PreviousSlot) continue;
+		const FMargin Padding = PreviousSlot->GetPadding();
+		const FSlateChildSize Size = PreviousSlot->GetSize();
+		const EHorizontalAlignment HAlign = PreviousSlot->GetHorizontalAlignment();
+		const EVerticalAlignment VAlign = PreviousSlot->GetVerticalAlignment();
+		const FVector2D OriginalExtent = Entries->GetCachedGeometry().GetLocalSize();
+		if (OriginalExtent.X <= 0.f || OriginalExtent.Y <= 0.f) continue;
+		URetainerBox* Layer = Widget->WidgetTree->ConstructWidget<URetainerBox>(URetainerBox::StaticClass());
+		Layer->SetRenderingPhase(0, 1);
+		Layer->SetTextureParameter(TEXT("Texture"));
+		Layer->SetEffectMaterial(Material);
+		// 목표가 한 줄로 줄어도 ScaleBox의 기준 크기가 바뀌어 글씨와 게이지가 축소되지 않도록 고정함
+		USizeBox* StableBounds = Widget->WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		StableBounds->SetWidthOverride(OriginalExtent.X);
+		StableBounds->SetHeightOverride(OriginalExtent.Y);
+		Entries->RemoveFromParent();
+		USizeBoxSlot* ContentSlot = Cast<USizeBoxSlot>(StableBounds->AddChild(Entries));
+		ContentSlot->SetHorizontalAlignment(HAlign_Fill);
+		ContentSlot->SetVerticalAlignment(VAlign_Top);
+		Layer->SetContent(StableBounds);
+		UVerticalBoxSlot* NewSlot = Parent->AddChildToVerticalBox(Layer);
+		NewSlot->SetPadding(Padding);
+		NewSlot->SetSize(Size);
+		NewSlot->SetHorizontalAlignment(HAlign);
+		NewSlot->SetVerticalAlignment(VAlign);
+		Layer->SetRetainRendering(false);
+		ObjectiveInkLayer = Layer;
+		return true;
+	}
+	return false;
+}
+
+void UCWObjectiveViewModel::UpdateObjectiveTransition()
+{
+	UWorld* World = GetBoundWorld();
+	URetainerBox* Layer = ObjectiveInkLayer.Get();
+	if (!World || !Layer)
+	{
+		UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+		StopObjectiveTransition();
+		return;
+	}
+	const float Elapsed = World->GetTimeSeconds() - ObjectiveTransitionStarted;
+	if (Elapsed < 0.65f) return;
+	Layer->SetRetainRendering(true);
+	UMaterialInstanceDynamic* Mask = Layer->GetEffectMaterial();
+	if (!Mask)
+	{
+		UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+		StopObjectiveTransition();
+		return;
+	}
+	if (Elapsed < 1.25f)
+	{
+		Mask->SetScalarParameterValue(TEXT("Reveal"), 0.f);
+		Mask->SetScalarParameterValue(TEXT("Progress"), FMath::SmoothStep(0.f, 1.f, (Elapsed - 0.65f) / 0.6f));
+	}
+	else
+	{
+		Mask->SetScalarParameterValue(TEXT("Reveal"), 1.f);
+		Mask->SetScalarParameterValue(TEXT("Progress"), FMath::SmoothStep(0.f, 1.f, (Elapsed - 1.25f) / 0.8f));
+		if (!bTransitionListReplaced)
+		{
+			bTransitionListReplaced = true;
+			UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+		}
+	}
+	Layer->RequestRender();
+	if (Elapsed >= 2.05f) StopObjectiveTransition();
+}
+
+void UCWObjectiveViewModel::StopObjectiveTransition()
+{
+	if (UWorld* World = GetBoundWorld()) World->GetTimerManager().ClearTimer(ObjectiveTransitionTimer);
+	if (URetainerBox* Layer = ObjectiveInkLayer.Get()) Layer->SetRetainRendering(false);
+	bTransitioningObjectives = false;
+	bTransitionListReplaced = false;
+	PendingObjectives.Reset();
 }
 
 void UCWObjectiveViewModel::SetIsStageCleared(
@@ -64,6 +243,7 @@ void UCWObjectiveViewModel::UnsubscribeFromGameState(
 	AGameStateBase* InGameState
 )
 {
+	StopObjectiveTransition();
 	ACWGameState* GameState =
 		Cast<ACWGameState>(InGameState);
 
@@ -100,6 +280,9 @@ void UCWObjectiveViewModel::RefreshFromGameState()
 
 void UCWObjectiveViewModel::ResetViewModelState()
 {
+	StopObjectiveTransition();
+	ObjectiveInkLayer.Reset();
+	bCleanupVisible = false;
 	// 이전 월드의 목표가 다음 월드에 남지 않도록 초기화
 	SetObjectives(TArray<FCWStageObjective>());
 
