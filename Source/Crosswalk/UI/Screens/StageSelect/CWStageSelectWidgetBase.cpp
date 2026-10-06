@@ -7,18 +7,65 @@
 #include "UI/Clipboard/CWClipboardPresenterSubsystem.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "UI/Room/CWRoomScreenWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/ListViewBase.h"
+#include "UI/ViewModel/CWStageEntryViewModel.h"
+#include "GameFramework/PlayerController.h"
 
 #pragma region UserWidgetOverrides
+
+FReply UCWStageSelectWidgetBase::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	// 관전자 화면 밝기를 유지하면서 키보드로 선택하는 경로를 차단하기 위함
+	const APlayerController* Player = GetOwningPlayer();
+	if (!Player || !Player->IsLocalController() || !Player->HasAuthority()) return FReply::Handled();
+	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
+void UCWStageSelectWidgetBase::ApplyStageEntryLock(UUserWidget& EntryWidget)
+{
+	for (const TWeakObjectPtr<UListViewBase>& List : StageLists)
+	{
+		if (!List.IsValid()) continue;
+		if (const UCWStageEntryViewModel* Entry = Cast<UCWStageEntryViewModel>(List->GetListObjectFromEntry(EntryWidget)))
+		{
+			EntryWidget.SetIsEnabled(Entry->GetIsUnlocked());
+			EntryWidget.SetRenderOpacity(Entry->GetIsUnlocked() ? 1.f : 0.45f);
+			return;
+		}
+	}
+}
 
 void UCWStageSelectWidgetBase::NativeConstruct()
 {
 	Super::NativeConstruct();
+	// 풀링된 목록 행이 만들어질 때마다 잠금 표시를 재적용하기 위함
+	if (WidgetTree)
+	{
+		TArray<UWidget*> Widgets;
+		WidgetTree->GetAllWidgets(Widgets);
+		for (UWidget* Widget : Widgets)
+		{
+			if (UListViewBase* List = Cast<UListViewBase>(Widget))
+			{
+				List->OnEntryWidgetGenerated().RemoveAll(this);
+				List->OnEntryWidgetGenerated().AddUObject(this, &UCWStageSelectWidgetBase::ApplyStageEntryLock);
+				StageLists.AddUnique(List);
+				for (UUserWidget* Entry : List->GetDisplayedEntryWidgets()) ApplyStageEntryLock(*Entry);
+			}
+		}
+	}
 
 	BeginOpenStageSelect();
 }
 
 void UCWStageSelectWidgetBase::NativeDestruct()
 {
+	for (const TWeakObjectPtr<UListViewBase>& List : StageLists)
+	{
+		if (List.IsValid()) List->OnEntryWidgetGenerated().RemoveAll(this);
+	}
+	StageLists.Reset();
 	if (IsValid(ClipboardPresenter))
 	{
 		// Destruct 중 발생하는 완료 이벤트를 이 위젯이 다시 받지 않도록
@@ -43,6 +90,9 @@ void UCWStageSelectWidgetBase::NativeDestruct()
 FReply UCWStageSelectWidgetBase::NativeOnMouseButtonDown(
 	const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	// 클립보드 프롭으로 우회 전달되는 클릭도 호스트만 허용하기 위함
+	const APlayerController* Player = GetOwningPlayer();
+	if (!Player || !Player->IsLocalController() || !Player->HasAuthority()) return FReply::Handled();
 	if (PaperActor.IsValid() && PaperActor->IsPaperOwner(this))
 	{
 		if (PaperActor->PressPaperPointer(InMouseEvent.GetEffectingButton()))
@@ -228,7 +278,7 @@ void UCWStageSelectWidgetBase::SetInteractionEnabled(bool bEnabled)
 {
 	if (PaperActor.IsValid() && PaperActor->IsPaperOwner(this))
 	{
-		PaperActor->SetPaperInteractionEnabled(bEnabled);
+		PaperActor->SetPaperInteractionEnabled(bEnabled && GetOwningPlayer() && GetOwningPlayer()->IsLocalController() && GetOwningPlayer()->HasAuthority());
 	}
 
 	if (!IsValid(Panel_StageSelectInteraction))
@@ -237,10 +287,12 @@ void UCWStageSelectWidgetBase::SetInteractionEnabled(bool bEnabled)
 	}
 
 	Panel_StageSelectInteraction->SetVisibility(
-		bEnabled
+		bEnabled && GetOwningPlayer() && GetOwningPlayer()->IsLocalController() && GetOwningPlayer()->HasAuthority()
 		? OriginalInteractionVisibility
 		: ESlateVisibility::HitTestInvisible
 	);
+	// Disabled 효과가 자식 전체를 흐리게 만들지 않도록 입력 허용과 표시 상태를 분리함
+	Panel_StageSelectInteraction->SetIsEnabled(true);
 }
 
 void UCWStageSelectWidgetBase::AttachPaperContent()

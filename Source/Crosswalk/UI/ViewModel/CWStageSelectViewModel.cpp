@@ -4,11 +4,13 @@
 #include "Data/Assets/CWStageCatalog.h"
 #include "Data/Structs/CWStageInfo.h"
 #include "UI/ViewModel/CWStageEntryViewModel.h"
+#include "UI/Progress/CWLocalStageProgress.h"
 
 void UCWStageSelectViewModel::Initialize(UCWStageCatalog* Catalog)
 {
 	// 재초기화 대비 목록을 새로 구성
 	TArray<TObjectPtr<UCWStageEntryViewModel>> NewEntries;
+	UCWLocalStageProgressSave* Progress = FCWLocalStageProgress::Load();
 
 	if (IsValid(Catalog))
 	{
@@ -23,6 +25,7 @@ void UCWStageSelectViewModel::Initialize(UCWStageCatalog* Catalog)
 				NewObject<UCWStageEntryViewModel>(this);
 
 			Entry->SetStageInfo(Stage);
+			Entry->SetIsUnlocked(FCWLocalStageProgress::IsUnlocked(Catalog, NewEntries.Num(), Progress));
 
 			NewEntries.Add(Entry);
 		}
@@ -32,6 +35,11 @@ void UCWStageSelectViewModel::Initialize(UCWStageCatalog* Catalog)
 
 	// 항목이 있으면 첫 스테이지를 기본 선택, 없으면 선택 없음
 	SelectedIndex = NewEntries.Num() > 0 ? 0 : INDEX_NONE;
+	// 다시 열 때 가장 최근에 해금된 작업으로 바로 이동하기 위함
+	for (int32 Index = 0; Index < NewEntries.Num(); ++Index)
+	{
+		if (NewEntries[Index]->GetIsUnlocked()) SelectedIndex = Index;
+	}
 	UE_MVVM_SET_PROPERTY_VALUE(SelectedDisplayName,
 		HasSelection() ? StageEntries[SelectedIndex]->GetDisplayName() : FText::GetEmpty());
 
@@ -44,7 +52,7 @@ void UCWStageSelectViewModel::Initialize(UCWStageCatalog* Catalog)
 bool UCWStageSelectViewModel::RequestSelectByIndex(int32 Index)
 {
 	// 범위 밖 인덱스는 무시 (유효한 선택만 허용)
-	if (!StageEntries.IsValidIndex(Index))
+	if (!StageEntries.IsValidIndex(Index) || !StageEntries[Index]->GetIsUnlocked())
 	{
 		return false;
 	}
@@ -65,7 +73,7 @@ bool UCWStageSelectViewModel::ConfirmSelection()
 	const FName StageId = GetSelectedStageId();
 
 	// 유효한 선택이 없으면 확정 불가
-	if (StageId.IsNone())
+	if (StageId.IsNone() || !GetSelectedEntry()->GetIsUnlocked())
 	{
 		return false;
 	}

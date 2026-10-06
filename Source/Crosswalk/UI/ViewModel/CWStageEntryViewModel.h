@@ -36,6 +36,8 @@ public:
 
 public:
 	const FText& GetDisplayName() const { return DisplayName; }
+	bool GetIsUnlocked() const { return bIsUnlocked; }
+	void SetIsUnlocked(bool bInUnlocked);
 
 	// 설명 유무 (위젯 설명 영역 표시 분기 — 비면 숨김)
 	UFUNCTION(BlueprintPure, FieldNotify, Category = "CW|UI|Stage")
@@ -52,6 +54,9 @@ public:
 	}
 
 private:
+	UPROPERTY(BlueprintReadOnly, FieldNotify, Category = "CW|UI|Stage", meta = (AllowPrivateAccess = "true"))
+	bool bIsUnlocked = true;
+
 	// 선택 확정에만 쓰는 안정 식별자 (표시용 아님 → FieldNotify 아님)
 	FName StageId = NAME_None;
 
