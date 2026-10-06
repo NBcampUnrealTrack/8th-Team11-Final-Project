@@ -6,6 +6,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
 #include "Sinkhole/CWSinkholeAudioSubsystem.h"
 #include "Sinkhole/Components/CWSinkholeFallComponent.h"
@@ -27,7 +28,9 @@ namespace
 
 ACWSinkhole::ACWSinkhole()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 예고 동안 균열을 키울 때만 돈다. 평소에는 꺼 둔다.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	bReplicates = true;
 
@@ -105,7 +108,33 @@ void ACWSinkhole::BeginPlay()
 	// 첫 프레임에 한 번이라도 뜬 높이로 그려지면 그게 눈에 띈다.
 	AlignVoidPlaneToVisibleGround();
 
+	// 메울 때 균열을 줄이는 기준. RefreshVisualAndCollision 보다 먼저 잡아야 첫 호출부터 축소가 맞는다.
+	if (CrackDecal != nullptr)
+	{
+		CrackFullRelativeScale = CrackDecal->GetRelativeScale3D();
+		bCrackScaleCaptured = true;
+	}
+
 	RefreshVisualAndCollision();
+
+	// 균열이 번지는 연출. 스폰은 모든 머신에서 일어나므로 각자 여기서 시작한다. 새 동기화는 필요 없다.
+	if (CrackDecal != nullptr && GetNetMode() != NM_DedicatedServer)
+	{
+		CrackMID = CrackDecal->CreateDynamicMaterialInstance();
+	}
+
+	if (State == ECWSinkholeState::Warning && WarningDuration > 0.f && CrackMID != nullptr)
+	{
+		BuildCrackBurstTimes();
+		CrackGrowElapsed = 0.f;
+		ApplyCrackReveal(EvaluateCrackReveal(0.f));
+		SetActorTickEnabled(true);
+	}
+	else
+	{
+		// 이미 열린 싱크홀을 늦게 받았거나, 볼 사람이 없는 데디케이티드 서버.
+		FinishCrackGrowth();
+	}
 
 	// 스폰은 모든 머신에서 일어나므로 여기서 울리면 전원이 듣는다.
 	// 이미 열린 싱크홀을 늦게 받은 클라이언트는 State 가 Warning 이 아니라 건너뛴다.
@@ -130,6 +159,82 @@ void ACWSinkhole::BeginPlay()
 			OpenSinkhole();
 		}
 	}
+}
+
+void ACWSinkhole::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	CrackGrowElapsed += DeltaSeconds;
+
+	// 마지막 "쩌적" 이 끝나면 1 에서 멈춘다. 클라이언트는 구멍이 열렸다는 OnRep 이 올 때까지 그대로 기다린다.
+	ApplyCrackReveal(EvaluateCrackReveal(CrackGrowElapsed));
+}
+
+void ACWSinkhole::BuildCrackBurstTimes()
+{
+	CrackBurstStartTimes.Reset(CrackBurstCount);
+
+	const float BurstDuration = FMath::Min(CrackBurstDuration, WarningDuration);
+
+	float PreviousEnd = 0.f;
+	for (int32 Index = 1; Index <= CrackBurstCount; ++Index)
+	{
+		// i 번째가 끝나는 시각 = 예고 시간 × √(i/N). 뒤로 갈수록 간격이 좁아진다(가속).
+		// 마지막(i = N)은 정확히 예고 시간에 끝나서 구멍이 열리는 순간과 맞물린다.
+		float BurstEnd = WarningDuration * FMath::Sqrt(static_cast<float>(Index) / CrackBurstCount);
+
+		// 마지막을 뺀 나머지는 앞 간격의 일부만큼 흔든다. 박자가 일정하면 기계적으로 보인다.
+		if (Index < CrackBurstCount)
+		{
+			const float Gap = BurstEnd - PreviousEnd;
+			BurstEnd += FMath::FRandRange(-CrackBurstJitter, CrackBurstJitter) * Gap;
+		}
+
+		// 앞의 "쩌적" 과 겹치지 않게 최소 간격을 둔다.
+		BurstEnd = FMath::Max(BurstEnd, PreviousEnd + BurstDuration);
+
+		CrackBurstStartTimes.Add(BurstEnd - BurstDuration);
+		PreviousEnd = BurstEnd;
+	}
+}
+
+float ACWSinkhole::EvaluateCrackReveal(float Elapsed) const
+{
+	if (CrackBurstStartTimes.Num() == 0)
+	{
+		return 1.f;
+	}
+
+	const float BurstDuration = FMath::Max(FMath::Min(CrackBurstDuration, WarningDuration), KINDA_SMALL_NUMBER);
+
+	// 각 "쩌적" 이 한 칸씩 반경을 늘린다. 진행 중인 칸은 빠르게 튀어나갔다 멎는 감쇠(ease-out)로 민다.
+	float Progress = 0.f;
+	for (const float StartTime : CrackBurstStartTimes)
+	{
+		const float Local = FMath::Clamp((Elapsed - StartTime) / BurstDuration, 0.f, 1.f);
+		Progress += 1.f - FMath::Square(1.f - Local);
+	}
+
+	Progress /= CrackBurstStartTimes.Num();
+
+	return FMath::Lerp(CrackStartReveal, 1.f, Progress);
+}
+
+void ACWSinkhole::ApplyCrackReveal(float Reveal)
+{
+	if (CrackMID != nullptr)
+	{
+		CrackMID->SetScalarParameterValue(CrackRevealParameterName, Reveal);
+	}
+}
+
+void ACWSinkhole::FinishCrackGrowth()
+{
+	SetActorTickEnabled(false);
+
+	// 번짐은 끝까지 드러낸다. 메운 만큼 줄이는 것은 RefreshVisualAndCollision 이 데칼 스케일로 맡는다.
+	ApplyCrackReveal(1.f);
 }
 
 bool ACWSinkhole::ApplyAsphaltHit()
@@ -234,6 +339,16 @@ void ACWSinkhole::OnRep_State()
 {
 	RefreshVisualAndCollision();
 
+	// 예고가 끝났다. 클라이언트는 스폰을 늦게 받아 균열이 덜 자랐을 수 있으니 여기서 맞춘다.
+	//
+	// BeginPlay 전에는 건너뛴다. 이미 열린 싱크홀을 처음 받으면 이 OnRep 이 BeginPlay 보다 먼저
+	// 오는데(UActorChannel::ProcessBunch), 그때는 균열 머티리얼(CrackMID)을 아직 만들지 않았다.
+	// 그 경우는 BeginPlay 가 State 를 보고 다 드러난 상태로 맞춘다.
+	if (State != ECWSinkholeState::Warning && HasActorBegunPlay())
+	{
+		FinishCrackGrowth();
+	}
+
 	if (State == ECWSinkholeState::Active)
 	{
 		if (ShouldPlayReplicatedSound())
@@ -307,8 +422,37 @@ void ACWSinkhole::RefreshVisualAndCollision()
 		HoleDecal->SetVisibility(IsFallActive());
 	}
 
-	// 균열은 구멍이 줄어도 그대로 둔다. 실제로 갈라진 자국이 아스팔트로 덮인다고
-	// 보기는 어렵고, 균열까지 같이 줄면 진행도가 이중으로 표현되어 산만해진다.
+	// 균열도 구멍과 같은 단계로 줄인다. 구멍만 줄고 균열이 그대로면 메운 만큼 땅이 나아지는 게 안 보인다.
+	//
+	// 마스크(CrackReveal)를 좁혀서 줄이지 않고 데칼 자체를 축소한다. 마스크로 줄였더니
+	// 조금 줄이면 균열이 없는 바깥 여백만 깎여 변화가 안 보이고, 많이 줄이면 선이 작은 원 모양으로
+	// 뚝 잘렸다. 데칼을 축소하면 균열 모양이 그대로 유지된 채 구멍과 같은 비율로 작아진다.
+	//
+	// BeginPlay 에서 원래 스케일을 잡기 전에는 건드리지 않는다. 이미 열린 싱크홀을 처음 받으면
+	// OnRep 이 BeginPlay 보다 먼저 와서 이 함수가 불리는데, 그때 줄이면 BP 의 원래 크기를 잃는다.
+	if (CrackDecal != nullptr && bCrackScaleCaptured)
+	{
+		const float FillScale = State == ECWSinkholeState::Warning ? 1.f : GetCrackScaleForFill();
+
+		CrackDecal->SetRelativeScale3D(FVector(
+			CrackFullRelativeScale.X,
+			CrackFullRelativeScale.Y * FillScale,
+			CrackFullRelativeScale.Z * FillScale));
+	}
+
+	// 복구가 끝나는 순간에는 구멍과 함께 사라져야 한다. 액터는 마지막 연출을 전하려고
+	// FilledDestroyDelay 만큼 더 남아 있는데, 그동안 균열만 홀로 남으면 싱크홀이 덜 메워진 것처럼 보인다.
+	if (CrackDecal != nullptr)
+	{
+		CrackDecal->SetVisibility(State != ECWSinkholeState::Filled);
+	}
+}
+
+float ACWSinkhole::GetCrackScaleForFill() const
+{
+	// 구멍 반지름과 같은 비율(1 - 진행도)로 줄이되, 마지막 발 직전에도 CrackMinScaleOnFill 은 남긴다.
+	// 구멍이 거의 메워졌을 때 균열까지 점처럼 작아지면 상처 자국이 아니라 얼룩으로 보인다.
+	return FMath::Lerp(CrackMinScaleOnFill, 1.f, 1.f - GetFillRatio());
 }
 
 void ACWSinkhole::AlignVoidPlaneToVisibleGround()

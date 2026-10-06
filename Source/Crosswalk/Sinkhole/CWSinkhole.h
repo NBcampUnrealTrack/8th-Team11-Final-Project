@@ -8,6 +8,7 @@
 #include "CWSinkhole.generated.h"
 
 class ACWSinkhole;
+class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
 class UDecalComponent;
 class USphereComponent;
@@ -54,6 +55,9 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	virtual void BeginPlay() override;
+
+	/** 예고 동안 균열을 키운다. 예고 중에만 켜지고, 구멍이 열리면 꺼진다. */
+	virtual void Tick(float DeltaSeconds) override;
 
 	/**
 	 * 아스팔트 한 발이 명중했다. 서버에서만 유효하다.
@@ -127,6 +131,21 @@ private:
 	/** 진행도와 상태에 맞춰 데칼 크기와 콜리전 반경을 다시 맞춘다. 모든 머신이 각자 부른다. */
 	void RefreshVisualAndCollision();
 
+	/** "쩌적" 시점들을 뽑는다. 간격이 점점 좁아지고, 마지막은 구멍이 열리는 순간에 끝난다. */
+	void BuildCrackBurstTimes();
+
+	/** 지금까지 흐른 시간에 맞는 드러남 비율(0~1)을 계산한다. */
+	float EvaluateCrackReveal(float Elapsed) const;
+
+	/** 균열 드러남 비율을 머티리얼에 넣는다. */
+	void ApplyCrackReveal(float Reveal);
+
+	/** 균열 번짐을 끝내고 틱을 끈다. 구멍이 열렸거나 이미 열린 채로 받았을 때. */
+	void FinishCrackGrowth();
+
+	/** 구멍이 열린 뒤 균열 데칼의 축소 비율. 메운 만큼 구멍과 같은 단계로 줄어든다. */
+	float GetCrackScaleForFill() const;
+
 	/**
 	 * 구멍 평면을 "화면에 보이는" 지면 높이에 맞춘다. 모든 머신이 각자 부른다.
 	 *
@@ -185,9 +204,47 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole", meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float FallRadiusRatio = 0.85f;
 
-	// 균열이 번지고 나서 구멍이 열리기까지의 시간(초). (기획서 3-2)
+	// 균열이 번지기 시작해서 구멍이 열리기까지의 시간(초). (기획서 3-2)
+	//
+	// 1.2초였을 때는 균열이 생기자마자 구멍이 열려 예고로 읽히지 않았다. 균열이 자라는 게
+	// 눈에 보이고 "곧 꺼지겠다" 를 판단해 비킬 시간이 필요해서 3.5초로 늘렸다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole", meta = (ClampMin = "0.0"))
-	float WarningDuration = 1.2f;
+	float WarningDuration = 3.5f;
+
+	// ---- 균열 연출 ----
+	// 데칼을 키우지 않고, 균열 텍스처를 중심에서 바깥으로 "드러낸다".
+	//
+	// 크기를 키우면 선 굵기까지 같이 커져서 땅이 갈라지는 게 아니라 그림이 확대되는 것처럼 보인다.
+	// 그래서 데칼은 처음부터 다 번진 크기로 두고, 머티리얼의 원형 마스크 반경(CrackRevealParameterName)만
+	// 0~1 로 민다. 마스크 안쪽 균열만 보이므로 선이 바깥으로 뻗어 나가는 그림이 된다.
+	//
+	// 반경은 연속으로 늘지 않고 CrackBurstCount 번에 나눠 "쩌적" 하고 짧게 튄다.
+	// 터지는 간격은 점점 좁아진다(가속). 무너지기 직전에 몰아쳐야 긴장이 생기고 구멍이 열리는 순간과 이어진다.
+
+	// 처음 나타날 때 드러나 있는 비율. 0 이면 첫 "쩌적" 전까지 아무것도 안 보여 예고 시간을 깎아 먹는다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CrackStartReveal = 0.15f;
+
+	// 예고 동안 균열이 "쩌적" 하고 번지는 횟수.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack", meta = (ClampMin = "1", ClampMax = "20"))
+	int32 CrackBurstCount = 6;
+
+	// 한 번 번질 때 걸리는 시간(초). 짧을수록 "쩍" 하고 갈라지는 느낌이 난다. 길면 스르륵 번진다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack", meta = (ClampMin = "0.01"))
+	float CrackBurstDuration = 0.08f;
+
+	// 번지는 시점을 얼마나 흔들지(0~0.5). 매번 같은 박자로 터지면 기계적으로 보인다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float CrackBurstJitter = 0.3f;
+
+	// 메울 때 균열 데칼이 줄어드는 하한(원래 크기 대비). 1 이면 메워도 균열 크기가 그대로다.
+	// 0 이면 구멍과 완전히 같은 비율로 줄어 마지막 발 직전엔 점처럼 작아진다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CrackMinScaleOnFill = 0.2f;
+
+	// 균열 머티리얼의 원형 마스크 반경 파라미터 이름. 머티리얼에 이 스칼라 파라미터가 있어야 연출이 보인다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sinkhole|Crack")
+	FName CrackRevealParameterName = TEXT("CrackReveal");
 
 	// 구멍 평면을 보이는 지면에서 얼마나 띄울지(cm).
 	//
@@ -222,6 +279,24 @@ private:
 
 	// 예고 → 활성 전환 타이머. 서버에서만 돈다.
 	FTimerHandle WarningTimerHandle;
+
+	// 균열이 번진 시간. 리플리케이트하지 않는다.
+	// 각 머신이 스폰을 받은 순간부터 자기 시계로 센다. 클라이언트는 편도 지연만큼 늦게 시작하지만,
+	// 구멍이 열리는 OnRep 에서 다 드러난 상태로 맞추므로 끝이 어긋나지 않는다.
+	float CrackGrowElapsed = 0.f;
+
+	// 각 "쩌적" 이 시작되는 시각(초). BeginPlay 에서 한 번 뽑는다. 순수 외형이라 머신마다 달라도 된다.
+	TArray<float> CrackBurstStartTimes;
+
+	// BP 에서 잡아 둔 균열 데칼의 원래 스케일. 메울 때 줄이는 기준이다.
+	FVector CrackFullRelativeScale = FVector::OneVector;
+
+	// 위 스케일을 잡았는지. BeginPlay 전에 오는 OnRep 이 원래 크기를 덮어쓰지 않게 막는다.
+	bool bCrackScaleCaptured = false;
+
+	// 균열 데칼의 동적 머티리얼. 반경 파라미터를 여기에 넣는다.
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> CrackMID;
 
 	// 델리게이트는 최하단에 배치
 public:
