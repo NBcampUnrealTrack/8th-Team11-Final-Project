@@ -21,6 +21,7 @@
 #include "Components/TextBlock.h"
 #include "UI/Widget/CWInteractionPromptWidget.h"
 #include "UI/Widget/CWStageIntroWidget.h"
+#include "UI/Widget/CWRemotePaintWidget.h"
 #include "Kismet/GameplayStatics.h"
 
 UCWUIBootstrapComponent::UCWUIBootstrapComponent()
@@ -200,6 +201,12 @@ void UCWUIBootstrapComponent::BeginPlay()
 	// 프런트엔드에는 생성하지 않고 HUD 전용 월드의 로컬 플레이어에게만 붙임
 	if (InitialPage == ECWUIPage::None)
 	{
+		// 인게임 HUD 레이어에만 붙여 맵 이동과 메뉴의 표시 정책을 함께 따르게 함
+		UCWRemotePaintWidget* RemotePaint = CreateWidget<UCWRemotePaintWidget>(OwnerPC, UCWRemotePaintWidget::StaticClass());
+		if (!IsValid(RemotePaint) || !UISubsystem->AddHUDWidget(RemotePaint))
+		{
+			UE_LOG(LogCWUI, Error, TEXT("UIBootstrap: failed to add remote paint gauges."));
+		}
 		if (!InteractionPromptClass)
 		{
 			// 애셋을 옮기거나 바꿀 때 C++ 을 다시 빌드하지 않도록 BP 에서 지정함

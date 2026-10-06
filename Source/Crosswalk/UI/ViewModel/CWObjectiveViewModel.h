@@ -10,6 +10,7 @@
 
 class ACWGameState;
 class AGameStateBase;
+class URetainerBox;
 
 UCLASS(BlueprintType)
 class CROSSWALK_API UCWObjectiveViewModel : public UCWBaseGameStateViewModel
@@ -29,6 +30,21 @@ public:
 private:
 	// 목표 목록을 갱신하고 FieldNotify를 발생
 	void SetObjectives(const TArray<FCWStageObjective>& InObjectives);
+	void UpdateObjectiveTransition();
+	bool PrepareObjectiveInkLayer();
+	void StopObjectiveTransition();
+
+	UPROPERTY(Transient)
+	TArray<FCWStageObjective> PendingObjectives;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<URetainerBox> ObjectiveInkLayer;
+
+	FTimerHandle ObjectiveTransitionTimer;
+	float ObjectiveTransitionStarted = 0.f;
+	bool bTransitioningObjectives = false;
+	bool bTransitionListReplaced = false;
+	bool bCleanupVisible = false;
 
 	// 스테이지 클리어 여부를 갱신하고 FieldNotify를 발생
 	void SetIsStageCleared(bool bInIsStageCleared);

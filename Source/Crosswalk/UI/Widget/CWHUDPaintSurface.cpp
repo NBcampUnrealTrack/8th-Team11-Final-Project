@@ -8,9 +8,14 @@ class SCWHUDPaintSurface : public SLeafWidget
 {
 public:
 	SLATE_BEGIN_ARGS(SCWHUDPaintSurface) {}
+		SLATE_ARGUMENT(TSharedPtr<float>, ElapsedState)
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs) { SetCanTick(true); }
+	void Construct(const FArguments& InArgs)
+	{
+		ElapsedState = InArgs._ElapsedState;
+		SetCanTick(true);
+	}
 
 	void Configure(const FLinearColor& InColor, float InGrain, float InEdge, int32 InSeed, FVector2D InSize, bool bInAnimate, float InDuration)
 	{
@@ -29,9 +34,9 @@ public:
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override
 	{
 		// 숨겨진 완료 덧칠은 실제로 처음 그려진 뒤부터 시간을 계산함
-		if (bAnimate && bHasPainted && Elapsed < Duration)
+		if (bAnimate && bHasPainted && *ElapsedState < Duration)
 		{
-			Elapsed = FMath::Min(Duration, Elapsed + InDeltaTime);
+			*ElapsedState = FMath::Min(Duration, *ElapsedState + InDeltaTime);
 			Invalidate(EInvalidateWidgetReason::Paint);
 		}
 	}
@@ -48,7 +53,7 @@ public:
 
 		const FSlateBrush* Brush = FCoreStyle::Get().GetBrush("WhiteBrush");
 		bHasPainted = true;
-		const float Progress = bAnimate ? FMath::Clamp(Elapsed / Duration, 0.f, 1.f) : 1.f;
+		const float Progress = bAnimate ? FMath::Clamp(*ElapsedState / Duration, 0.f, 1.f) : 1.f;
 		const FLinearColor Tint = Color * Style.GetColorAndOpacityTint();
 		const float Roughness = FMath::Min(Edge, FMath::Min(Extent.X, Extent.Y) * 0.08f);
 		FRandomStream Random(Seed);
@@ -103,13 +108,14 @@ private:
 	int32 Seed = 17;
 	bool bAnimate = false;
 	mutable bool bHasPainted = false;
-	float Elapsed = 0.f;
+	TSharedPtr<float> ElapsedState;
 	float Duration = 0.55f;
 };
 
 TSharedRef<SWidget> UCWHUDPaintSurface::RebuildWidget()
 {
-	PaintSurface = SNew(SCWHUDPaintSurface);
+	if (!RevealElapsed.IsValid()) RevealElapsed = MakeShared<float>(0.f);
+	PaintSurface = SNew(SCWHUDPaintSurface).ElapsedState(RevealElapsed);
 	PaintSurface->Configure(PaintColor, GrainStrength, EdgeRoughness, StrokeSeed, DesiredSize, bAnimateReveal, RevealDuration);
 	return PaintSurface.ToSharedRef();
 }
