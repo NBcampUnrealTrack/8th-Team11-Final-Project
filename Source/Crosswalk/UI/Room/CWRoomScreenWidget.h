@@ -7,6 +7,7 @@
 class UBorder;
 class UCanvasPanel;
 class UTextBlock;
+class UTexture2D;
 
 // 접속 순서 대신 서버 좌석 소유자를 따라가므로 중도 퇴장에도 이름표가 유지됨
 UCLASS(Abstract, Blueprintable)
@@ -14,10 +15,16 @@ class CROSSWALK_API UCWRoomScreenWidget : public UCWUIScreenWidget
 {
 	GENERATED_BODY()
 
+public:
+	UCWRoomScreenWidget(const FObjectInitializer& ObjectInitializer);
+
 protected:
 	// 크기 조정마다 네이티브 재빌드가 필요하지 않도록 BP 기본값으로 노출함
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CW|Room|Ready Check", meta = (ClampMin = "8", ClampMax = "100", UIMin = "8", UIMax = "100", DisplayName = "Ready Check Font Size"))
 	int32 ReadyCheckFontSize = 50;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "CW|Room|Nameplate")
+	TObjectPtr<UTexture2D> NameplatePaper;
 
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -38,6 +45,9 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextBlock>> SeatChecks;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBorder>> SeatReadyStamps;
 
 	TWeakObjectPtr<AActor> Presentation;
 	float SearchCooldown = 0.f;
