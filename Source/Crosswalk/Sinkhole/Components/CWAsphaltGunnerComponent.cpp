@@ -7,6 +7,17 @@
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Sinkhole/Tools/CWAsphaltGun.h"
 
+namespace
+{
+	/**
+	 * 아스팔트건 조준 전용 트레이스 채널. DefaultEngine.ini 의 "AimGround" 와 같은 슬롯이다.
+	 *
+	 * 기본 응답이 Ignore 라서, 콜리전 프로필을 CWGround 로 둔 바닥 메시(도로·인도·바닥 타일)만 이 채널을 막는다.
+	 * 슬롯 번호를 바꾸면 ini 의 Channel=ECC_GameTraceChannel1 도 같이 바꿔야 한다.
+	 */
+	constexpr ECollisionChannel AimGroundChannel = ECC_GameTraceChannel1;
+}
+
 UCWAsphaltGunnerComponent::UCWAsphaltGunnerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -103,8 +114,20 @@ bool UCWAsphaltGunnerComponent::GetAimLocationUnderCursor(FVector& OutAimLocatio
 		return false;
 	}
 
-	// 지면(Visibility)을 직접 맞힌다. 쿼터뷰라 커서 아래에 항상 도로가 있다.
+	// 바닥만 막는 채널로 맞힌다. Visibility 로 맞히면 커서 아래 첫 물체(건물 벽·지붕, 가로등, 차)에 박혔다.
+	// 건물 위를 가리켜도 그 너머의 바닥에 맞고, 경사로는 실제 바닥 표면을 따라간다.
 	FHitResult HitResult;
+	if (PlayerController->GetHitResultUnderCursor(AimGroundChannel, false, HitResult))
+	{
+		OutAimLocation = HitResult.ImpactPoint;
+		return true;
+	}
+
+	// TODO(임시): 모든 스테이지의 바닥 메시를 CWGround 프로필로 바꾸면 이 대체 경로를 지운다.
+	//
+	// 바닥 표시는 레벨 담당과 맞춰 맵마다 순차로 진행한다. 그 전까지 AimGround 만 쓰면 표시 안 된 맵에서
+	// 아스팔트건이 아예 발사되지 않는다. 그래서 바닥을 못 찾으면 예전처럼 커서 아래 첫 물체(Visibility)를 쓴다.
+	// 표시가 끝난 맵에서는 바닥이 항상 먼저 잡히므로 이 경로로 내려오지 않는다.
 	if (PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, HitResult))
 	{
 		OutAimLocation = HitResult.ImpactPoint;
