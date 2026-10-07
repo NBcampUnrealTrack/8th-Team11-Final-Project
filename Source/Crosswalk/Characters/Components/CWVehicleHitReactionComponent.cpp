@@ -6,6 +6,20 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
+namespace
+{
+	/**
+	 * SetTimer 는 0 이하를 받으면 타이머를 걸지 않고 조용히 지운다.
+	 *
+	 * 잠금 시간 세 개는 ClampMin 0 이라 BP 에서 0 을 넣을 수 있다. 그러면 다음 단계가 영영
+	 * 안 불려서 플레이어가 잠긴 채로 남는다. 0 은 "기다리지 않는다" 로 읽고 다음 틱에 넘긴다.
+	 */
+	float HitReactionTimerRate(float Seconds)
+	{
+		return FMath::Max(Seconds, KINDA_SMALL_NUMBER);
+	}
+}
+
 UCWVehicleHitReactionComponent::UCWVehicleHitReactionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -110,7 +124,7 @@ void UCWVehicleHitReactionComponent::StartHitReaction(const FCWVehicleHitContext
 			LandingWaitTimerHandle,
 			this,
 			&UCWVehicleHitReactionComponent::StartHitLockCountdown,
-			MaxLandingWait,
+			HitReactionTimerRate(MaxLandingWait),
 			false
 		);
 	}
@@ -127,7 +141,7 @@ void UCWVehicleHitReactionComponent::StartHitLockCountdown()
 			HitLockTimerHandle,
 			this,
 			&UCWVehicleHitReactionComponent::RequestGetUp,
-			HitLockDuration,
+			HitReactionTimerRate(HitLockDuration),
 			false
 		);
 	}
@@ -165,7 +179,7 @@ void UCWVehicleHitReactionComponent::RequestGetUp()
 			GetUpWaitTimerHandle,
 			this,
 			&UCWVehicleHitReactionComponent::FinishHitReaction,
-			MaxGetUpWait,
+			HitReactionTimerRate(MaxGetUpWait),
 			false
 		);
 	}

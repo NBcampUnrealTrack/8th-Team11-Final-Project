@@ -778,6 +778,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry", meta = (ClampMin = "0.0"))
 	float ThreatLateralTolerance = 120.f;
 
+	/** 패링 가능 차종인지. 트럭·긴급차량 BP 가 끈다. 읽는 쪽은 CanBeParried() 주석 참고. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Parry")
 	bool bCanBeParried = true;
 

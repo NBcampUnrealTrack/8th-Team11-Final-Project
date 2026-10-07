@@ -320,7 +320,7 @@ void ACWTrafficDirector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(StepTimerHandle);
-		for (FRuleRuntimeState& RuleState : RuleStates)
+		for (FCWRuleRuntimeState& RuleState : RuleStates)
 		{
 			World->GetTimerManager().ClearTimer(RuleState.TimerHandle);
 		}

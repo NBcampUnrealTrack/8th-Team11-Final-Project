@@ -115,8 +115,6 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 		return;
 	}
 
-	CurrentStepIndex = StepIndex;
-
 	const FCWTrafficDifficultyStep& Step = Steps[StepIndex];
 	const TArray<ACWTrafficVehicleSpawner*> Targets = ResolveSpawners();
 
@@ -125,6 +123,9 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 		UE_LOG(LogCWTraffic, Warning, TEXT("[%s] 대상 스포너를 찾지 못해 단계 '%s' 를 적용하지 못했다."), *GetName(), *Step.StepName.ToString());
 		return;
 	}
+
+	// 적용에 성공한 뒤에 기록한다. 먼저 기록하면 실패한 단계를 다음 진행도 알림에서 다시 시도하지 않는다.
+	CurrentStepIndex = StepIndex;
 
 	for (ACWTrafficVehicleSpawner* Spawner : Targets)
 	{
