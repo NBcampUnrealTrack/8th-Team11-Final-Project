@@ -17,6 +17,7 @@
 #include "Types/MVVMViewModelContext.h"
 #include "UI/ViewModel/CWSessionViewModel.h"
 #include "UI/Widget/CWPauseMenuWidget.h"
+#include "UI/Widget/CWStageIntroWidget.h"
 #include "CWUIRootWidget.h"
 #include "CWUIScreenWidget.h"
 #include "Widgets/SWidget.h"
@@ -846,6 +847,20 @@ void UCWUISubsystem::SetPauseMenuBlocked(bool bBlocked)
 	bPauseMenuBlocked = bBlocked;
 }
 
+void UCWUISubsystem::DismissOverlaysForClear()
+{
+	if (UCWPauseMenuWidget* Menu = PauseMenu.Get(); IsValid(Menu))
+	{
+		Menu->DismissForClear();
+	}
+
+	// 메뉴가 연 안내는 위에서 닫혔으므로 남은 것은 입장 안내뿐이며, 확인창 등 다른 팝업은 건드리지 않음
+	if (UCWStageIntroWidget* Intro = Cast<UCWStageIntroWidget>(CurrentPopup.Get()); IsValid(Intro))
+	{
+		ClosePopup(Intro);
+	}
+}
+
 bool UCWUISubsystem::OpenPauseMenu()
 {
 	// 어느 조건에서 걸렸는지 남김. 거절도 결과이므로 항상 기록함
@@ -1069,6 +1084,47 @@ bool UCWUISubsystem::CanShowInteractionPrompts() const
 	return bIsHUDVisible && !bIsTransitioning && !bPauseMenuBlocked && !CurrentPopup.IsValid()
 		&& CurrentPage == ECWUIPage::None && CurrentInputMode != ECWUIInputMode::UIOnly
 		&& !(IsValid(Menu) && Menu->IsMenuOpen());
+}
+
+void UCWUISubsystem::SetClearSummary(float ElapsedSeconds, int32 StarCount)
+{
+	bClearSummaryValid = true;
+	ClearSummaryMap = UGameplayStatics::GetCurrentLevelName(GetWorld(), true);
+	ClearSummaryElapsedSeconds = FMath::Max(ElapsedSeconds, 0.f);
+	ClearSummaryStarCount = FMath::Clamp(StarCount, 0, 3);
+	UE_LOG(LogCWUI, Log, TEXT("[ClearSummary] set. Map=%s Elapsed=%.1f Stars=%d"), *ClearSummaryMap, ClearSummaryElapsedSeconds, ClearSummaryStarCount);
+}
+
+bool UCWUISubsystem::TryGetClearSummary(float& OutElapsedSeconds, int32& OutStarCount) const
+{
+	OutElapsedSeconds = 0.f;
+	OutStarCount = 0;
+
+	if (!bClearSummaryValid)
+	{
+		UE_LOG(LogCWUI, Warning, TEXT("[ClearSummary] requested but nothing was recorded."));
+		return false;
+	}
+
+	// 맵 이동 뒤에도 서브시스템이 남으므로 다른 스테이지에서 기록한 값은 쓰지 않음
+	const FString CurrentMap = UGameplayStatics::GetCurrentLevelName(GetWorld(), true);
+	if (ClearSummaryMap != CurrentMap)
+	{
+		UE_LOG(LogCWUI, Warning, TEXT("[ClearSummary] stale. Recorded=%s Current=%s"), *ClearSummaryMap, *CurrentMap);
+		return false;
+	}
+
+	OutElapsedSeconds = ClearSummaryElapsedSeconds;
+	OutStarCount = ClearSummaryStarCount;
+	return true;
+}
+
+void UCWUISubsystem::ClearClearSummary()
+{
+	bClearSummaryValid = false;
+	ClearSummaryMap.Reset();
+	ClearSummaryElapsedSeconds = 0.f;
+	ClearSummaryStarCount = 0;
 }
 
 void UCWUISubsystem::SetHUDVisible(bool bVisible)
