@@ -1,5 +1,6 @@
 ﻿#include "CWPauseMenuWidget.h"
 
+#include "Components/PanelWidget.h"
 #include "Engine/LocalPlayer.h"
 #include "Input/Reply.h"
 #include "InputCoreTypes.h"
@@ -23,6 +24,42 @@ UCWUISubsystem* UCWPauseMenuWidget::GetUISubsystem() const
 	return IsValid(LocalPlayer) ? LocalPlayer->GetSubsystem<UCWUISubsystem>() : nullptr;
 }
 
+void UCWPauseMenuWidget::SetOtherHUDHidden(bool bHidden)
+{
+	if (!bHidden)
+	{
+		for (const FHiddenHUDState& State : HiddenHUD)
+		{
+			if (UWidget* Target = State.Widget.Get())
+			{
+				Target->SetRenderOpacity(State.Opacity);
+				Target->SetIsEnabled(State.bEnabled);
+			}
+		}
+		HiddenHUD.Reset();
+		return;
+	}
+
+	// 투명도만 낮추면 보이지 않는 버튼이 눌릴 수 있어 입력도 함께 끔
+	// 메뉴 자신은 같은 부모의 자식이라 제외함
+	const UPanelWidget* HUDRoot = GetParent();
+	if (!HUDRoot || !HiddenHUD.IsEmpty())
+	{
+		return;
+	}
+	for (int32 Index = 0; Index < HUDRoot->GetChildrenCount(); ++Index)
+	{
+		UWidget* Child = HUDRoot->GetChildAt(Index);
+		if (!Child || Child == this)
+		{
+			continue;
+		}
+		HiddenHUD.Add({ Child, Child->GetRenderOpacity(), Child->GetIsEnabled() });
+		Child->SetRenderOpacity(0.f);
+		Child->SetIsEnabled(false);
+	}
+}
+
 bool UCWPauseMenuWidget::OpenMenu()
 {
 	UCWUISubsystem* UI = GetUISubsystem();
@@ -32,6 +69,7 @@ bool UCWPauseMenuWidget::OpenMenu()
 	}
 
 	bMenuOpen = true;
+	SetOtherHUDHidden(true);
 	SetVisibility(ESlateVisibility::Visible);
 	UI->ApplyInputMode(ECWUIInputMode::UIOnly);
 	RestoreFocus();
@@ -151,6 +189,7 @@ void UCWPauseMenuWidget::HandleSessionCompleted(ECWSessionOperation Operation, b
 void UCWPauseMenuWidget::DismissForClear()
 {
 	bMenuOpen = false;
+	SetOtherHUDHidden(false);
 	SetVisibility(ESlateVisibility::Collapsed);
 	if (UCWUISubsystem* UI = GetUISubsystem(); IsValid(UI))
 	{

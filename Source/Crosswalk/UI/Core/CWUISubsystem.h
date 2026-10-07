@@ -16,6 +16,13 @@ class UUserWidget;
 class UWorld;
 class UCWPauseMenuWidget;
 
+// 페이지가 바뀐 뒤 확정된 값만 전달하며 열기·닫기 도중의 중간 상태는 내보내지 않음
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FCWPageChangedSignature,
+	ECWUIPage, OldPage,
+	ECWUIPage, NewPage
+);
+
 UCLASS()
 class CROSSWALK_API UCWUISubsystem : public ULocalPlayerSubsystem
 {
@@ -74,6 +81,17 @@ private:
 	// 화면의 페이지 전환 요청을 처리
 	UFUNCTION()
 	void HandleRequestOpenPage(ECWUIPage TargetPage);
+
+	// 공개 작업의 시작~끝을 묶어 끝난 시점의 확정 페이지만 OnPageChanged 로 통보
+	// 열기 중 CloseCurrentPage 가 만드는 중간 None 이 구독자에게 보이지 않게 하고,
+	// 중첩 호출(OpenPage 안의 EnsureUIRoot)은 가장 바깥 작업이 한 번만 통보함
+	struct FPageChangeScope
+	{
+		explicit FPageChangeScope(UCWUISubsystem& InOwner);
+		~FPageChangeScope();
+
+		UCWUISubsystem& Owner;
+	};
 
 #pragma endregion
 
@@ -249,6 +267,10 @@ private:
 	// 닫은 뒤에도 값을 남겨 둠 - 복귀 지점을 고르는 쪽이 ClosePage 뒤에 읽기 때문임
 	ECWUIPage PageBeforeCurrentPage = ECWUIPage::None;
 
+	// 페이지 통보 범위의 중첩 깊이와 가장 바깥 작업이 시작될 때의 페이지
+	int32 PageChangeDepth = 0;
+	ECWUIPage PageAtOperationStart = ECWUIPage::None;
+
 	// 팝업을 닫은 뒤 복원할 입력 모드
 	ECWUIInputMode PopupReturnInputMode = ECWUIInputMode::UIOnly;
 
@@ -276,6 +298,12 @@ private:
 
 #pragma endregion
 
+#pragma region Event
 
+public:
+	// 페이지가 바뀐 뒤 1회 호출 (구독 직후 현재 값은 GetCurrentPage 로 직접 읽을 것)
+	UPROPERTY(BlueprintAssignable, Category = "CW|UI")
+	FCWPageChangedSignature OnPageChanged;
 
+#pragma endregion
 };

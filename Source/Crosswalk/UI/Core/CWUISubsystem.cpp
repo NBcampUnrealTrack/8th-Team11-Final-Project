@@ -322,6 +322,8 @@ void UCWUISubsystem::InitializeUI(
 
 bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 {
+	FPageChangeScope PageScope(*this);
+
 	// 전환 중이거나 같은 페이지 요청이면 무시
 	if (bIsTransitioning || TargetPage == CurrentPage)
 	{
@@ -500,6 +502,8 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 
 bool UCWUISubsystem::ClosePage()
 {
+	FPageChangeScope PageScope(*this);
+
 	// 전환 중이거나 열린 페이지가 없으면 닫기 요청을 무시
 	if (
 		bIsTransitioning ||
@@ -573,6 +577,30 @@ void UCWUISubsystem::CloseCurrentPage()
 	CurrentPage = ECWUIPage::None;
 }
 
+UCWUISubsystem::FPageChangeScope::FPageChangeScope(UCWUISubsystem& InOwner)
+	: Owner(InOwner)
+{
+	if (Owner.PageChangeDepth++ == 0)
+	{
+		Owner.PageAtOperationStart = Owner.CurrentPage;
+	}
+}
+
+UCWUISubsystem::FPageChangeScope::~FPageChangeScope()
+{
+	// 깊이를 먼저 내려 구독자가 다시 페이지를 열어도 새 범위로 동작하게 함
+	if (--Owner.PageChangeDepth > 0)
+	{
+		return;
+	}
+
+	const ECWUIPage OldPage = Owner.PageAtOperationStart;
+	if (Owner.CurrentPage != OldPage)
+	{
+		Owner.OnPageChanged.Broadcast(OldPage, Owner.CurrentPage);
+	}
+}
+
 ECWUIPage UCWUISubsystem::GetCurrentPage() const
 {
 	// 현재 Screen Layer에 표시 중인 페이지 반환
@@ -591,6 +619,9 @@ void UCWUISubsystem::HandleRequestOpenPage(ECWUIPage TargetPage)
 
 bool UCWUISubsystem::EnsureUIRoot()
 {
+	// 월드 전환 초기화가 페이지를 None 으로 되돌리므로 통보 범위에 포함
+	FPageChangeScope PageScope(*this);
+
 	// 현재 저장된 UI Root 확인
 	UCWUIRootWidget* RootWidget = UIRoot.Get();
 

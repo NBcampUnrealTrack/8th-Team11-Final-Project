@@ -6,6 +6,7 @@
 #include "CWPauseMenuWidget.generated.h"
 
 class UCWSessionViewModel;
+class UWidget;
 class UCWUISubsystem;
 
 UCLASS(Abstract, Blueprintable)
@@ -51,6 +52,9 @@ protected:
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 private:
+	// 메뉴가 열린 동안 같은 레이어의 다른 HUD 를 숨기고 닫히면 원래 값으로 복원
+	void SetOtherHUDHidden(bool bHidden);
+
 	UCWUISubsystem* GetUISubsystem() const;
 	void UnbindSession();
 
@@ -65,6 +69,15 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UUserWidget> GameGuide;
+
+	// 숨기기 전의 값 - 메뉴가 열린 사이 다른 코드가 바꾼 값을 덮지 않도록 변경한 위젯만 기록함
+	struct FHiddenHUDState
+	{
+		TWeakObjectPtr<UWidget> Widget;
+		float Opacity = 1.f;
+		bool bEnabled = true;
+	};
+	TArray<FHiddenHUDState> HiddenHUD;
 
 	bool bMenuOpen = false;
 	bool bLeavingRoom = false;
