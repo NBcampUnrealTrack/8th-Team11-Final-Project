@@ -1677,6 +1677,18 @@ bool ACWPlayerCharacter::IsActionLocked() const
 	return IsHitLocked() || IsFallLocked() || bIsSitting;
 }
 
+bool ACWPlayerCharacter::CanParry() const
+{
+	if (IsActionLocked())
+	{
+		return false;
+	}
+
+	// 통을 든 채로는 패링할 수 없다. (기획서 6-5) 클라이언트 Parry() 가 거르는 규칙을
+	// 서버가 다시 거른다. 서버가 아는 값(CarriedCount)이라 고쳐진 클라이언트가 통과시킬 수 없다.
+	return !IsValid(SupplyCarrierComponent) || !SupplyCarrierComponent->IsCarrying();
+}
+
 void ACWPlayerCharacter::BeginSitting(ACWRestZone* Zone)
 {
 	if (!HasAuthority() || bIsSitting || Zone == nullptr)

@@ -5,6 +5,7 @@
 #include "Data/Structs/CWParrySyncData.h"
 #include "GameFramework/Character.h"
 #include "InputCoreTypes.h"
+#include "Traffic/Interfaces/Interface_ParryGate.h"
 #include "Traffic/Interfaces/Interface_VehicleHitReceiver.h"
 #include "CWPlayerCharacter.generated.h"
 
@@ -56,7 +57,7 @@ class UMaterialInstanceDynamic;
  * 메쉬도 마네킹 플레이스홀더를 생성자에서 직접 물린다. BP 를 만들지 않아도 바로 플레이된다.
  */
 UCLASS()
-class CROSSWALK_API ACWPlayerCharacter : public ACharacter, public IInterface_VehicleHitReceiver
+class CROSSWALK_API ACWPlayerCharacter : public ACharacter, public IInterface_VehicleHitReceiver, public IInterface_ParryGate
 {
 	GENERATED_BODY()
 
@@ -160,6 +161,14 @@ public:
 	 * 넉백 물리와 행동 잠금 시작은 여기서, 잠금 해제와 시간 관리는 피격 반응 컴포넌트가 한다.
 	 */
 	virtual void ReceiveVehicleHit_Implementation(const FCWVehicleHitContext& HitContext) override;
+
+	/**
+	 * 서버 패링 판정이 요청을 받기 전에 묻는다. (Interface_ParryGate)
+	 *
+	 * 클라이언트 Parry() 의 검사 중 서버가 스스로 아는 상태만 옮겼다. 피격·낙하·착석 잠금과
+	 * 통 소지다. 작업 중 차징(IsParryBlocked)은 누르고 있는 기계에만 있는 상태라 여기 없다.
+	 */
+	virtual bool CanParry() const override;
 
 protected:
 	/** WASD 8방향 이동. 카메라가 고정돼 있으므로 화면 기준 방향이 그대로 이동 방향이 된다. */
