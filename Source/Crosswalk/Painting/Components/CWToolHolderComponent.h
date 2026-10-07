@@ -7,11 +7,7 @@
 
 class ACWBaseTool;
 class UCWSupplyCarrierComponent;
-class UCWToolHolderComponent;
 class UCWWorkerComponent;
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnFocusedToolChangedSignature, UCWToolHolderComponent*, HolderComponent, ACWBaseTool*, FocusedTool);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnHeldToolChangedSignature, UCWToolHolderComponent*, HolderComponent, ACWBaseTool*, HeldTool);
 
 /**
  * 플레이어 캐릭터에 붙이는 도구 소지 컴포넌트. (기획서 3.1 "상호작용 / 도구 집기 (E)")
@@ -147,11 +143,4 @@ private:
 	// 통을 들고 있으면 도구를 집을 수 없다. (기획서 6-6) 없어도 동작한다.
 	UPROPERTY(Transient)
 	TObjectPtr<UCWSupplyCarrierComponent> SupplyCarrierComponent;
-
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Tool")
-	FCWOnFocusedToolChangedSignature OnFocusedToolChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Tool")
-	FCWOnHeldToolChangedSignature OnHeldToolChanged;
 };

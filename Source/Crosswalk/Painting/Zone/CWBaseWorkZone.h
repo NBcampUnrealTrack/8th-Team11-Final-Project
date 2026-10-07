@@ -15,7 +15,6 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnWorkProgressSignature, ACWBaseWorkZone*, Zone, float, Progress);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkCompletedSignature, ACWBaseWorkZone*, Zone);
 
 /**
  * 소지한 도구를 기준으로 이 존을 화면에 어떻게 표시할 것인가. (작업존 하이라이트 기획서 5.2)
@@ -40,7 +39,7 @@ enum class ECWZoneHighlightState : uint8
  *
  * 이 클래스가 하는 일은 딱 3개다.
  *   1. 진행도(0~1)를 들고 있는다
- *   2. 진행도가 1이 되면 완료 처리하고 알린다
+ *   2. 진행도가 완료 기준에 닿으면 완료 처리한다
  *   3. 선행 단계가 안 끝났으면 잠가둔다 (3단계는 2단계 완료 후)
  *
  * "어떻게 진행도를 올리는지"는 자식 클래스가 ApplyWork 를 오버라이드해서 정한다.
@@ -63,7 +62,7 @@ public:
 	 * 플레이어가 작업 키를 누르고 있는 동안 매 프레임 호출된다.
 	 *
 	 * 도구 종류만 받지 않고 작업자 컴포넌트를 받는 이유:
-	 * 미니게임이 있는 존은 "누가" 작업 중인지 알아야 그 플레이어 화면에만 UI 를 띄울 수 있다.
+	 * 차징처럼 플레이어 개인의 상태를 들고 있는 존은 "누가" 작업 중인지 알아야 그 플레이어의 입력과 연출만 다룰 수 있다.
 	 *
 	 * @param Worker        작업 중인 플레이어의 컴포넌트. 도구는 Worker->GetHeldTool() 로 얻는다.
 	 * @param WorldLocation 커서가 가리키는 도로 위 지점 (커서가 허공이면 캐릭터 위치)
@@ -74,7 +73,7 @@ public:
 	/**
 	 * 이동 입력(WASD)을 이 존이 가져다 쓰는가.
 	 *
-	 * 미니게임이 있는 존만 오버라이드한다. true 를 돌려주면 캐릭터는 그 프레임에 움직이지 않는다.
+	 * 차징(테두리 스케치)처럼 작업 중 이동을 막아야 하는 존만 오버라이드한다. true 를 돌려주면 캐릭터는 그 프레임에 움직이지 않는다.
 	 * @return 입력을 소비했으면 true
 	 */
 	virtual bool ConsumeDirectionInput(const FVector2D& MoveInput) { return false; }
@@ -82,12 +81,11 @@ public:
 	/**
 	 * 이 존에서 작업하는 동안 패링을 막는가.
 	 *
-	 * 미니게임처럼 화면과 입력을 붙잡는 존만 true 를 돌려준다.
-	 * 미니게임 중에는 이미 WASD 가 선 방향 전환에 묶여 캐릭터가 움직이지 않는데,
-	 * 패링만 되면 "못 피하는 대신 튕겨내면 된다" 가 되어 미니게임의 위험 부담이 사라진다.
-	 * 차가 오면 취소 키로 빠져나오는 것이 이 존의 정해진 대응이다.
+	 * 차징처럼 캐릭터를 제자리에 붙잡는 존만 true 를 돌려준다.
+	 * 차징 중에는 이미 이동이 막혀 있는데, 패링만 되면 "못 피하는 대신 튕겨내면 된다" 가
+	 * 되어 차징의 위험 부담이 사라진다. 차가 오면 키를 떼고 피하는 것이 이 존의 정해진 대응이다.
 	 *
-	 * 게이지나 칸을 칠하는 존은 캐릭터가 자유롭게 움직이므로 막지 않는다.
+	 * 칸을 칠하는 존은 캐릭터가 자유롭게 움직이므로 막지 않는다.
 	 */
 	virtual bool BlocksParry() const { return false; }
 
@@ -101,51 +99,17 @@ public:
 	 * 이동 잠금과 달리 별도 훅이 필요한 이유: 이동은 ConsumeDirectionInput 으로 입력을
 	 * 삼켜서 막지만, 커서 회전은 입력이 아니라 매 프레임 도는 연출이라 삼킬 것이 없다.
 	 *
-	 * 게이지나 칸을 칠하는 존은 조준이 곧 붓 위치라 막으면 안 된다.
+	 * 칸을 칠하는 존은 조준이 곧 붓 위치라 막으면 안 된다.
 	 */
 	virtual bool BlocksAiming() const { return false; }
 
 	/**
-	 * 지금 차징 단계. 0 이면 차징 중이 아니거나 아직 최소 홀드를 못 채웠다.
-	 *
-	 * 애니메이션이 자세를 고르는 데 쓴다. 차징 개념이 없는 존은 그대로 두면 된다.
-	 * 차징 상태는 누르는 본인 기계에만 있으므로 이 값도 그 기계에서만 의미가 있다.
-	 */
-	virtual int32 GetChargeLevel() const { return 0; }
-
-	/** 게이지 채움용 0~1. 풀차징 시간 대비 얼마나 눌렀는가. */
-	virtual float GetChargeRatio() const { return 0.f; }
-
-	/**
-	 * 이 존이 체온 상승을 스스로 보고하는가.
-	 *
-	 * 기본은 false 다. 작업 컴포넌트가 ApplyWork 에 넘긴 시간만큼 체온을 올려준다.
-	 *
-	 * 미니게임처럼 진행이 자기 Tick 에서 도는 존만 true 로 바꾼다. 그런 존은 작업 키를 누른
-	 * 프레임에만 ApplyWork 가 오기 때문에, 작업 컴포넌트에 맡기면 키를 누른 동안만 더워진다.
-	 * true 를 돌려주면 작업 컴포넌트는 손을 떼고, 존이 UCWWorkerComponent::SubmitWorkHeat 로
-	 * 직접 보고한다.
-	 *
-	 * 클래스 단위로 고정한 값이어야 한다. 미니게임이 도는 중인지 같은 로컬 상태로 판단하면,
-	 * 그 상태를 모르는 서버와 판단이 갈려 체온이 두 번 오르거나 아예 안 오른다.
-	 */
-	virtual bool DrivesOwnWorkHeat() const { return false; }
-
-	/**
 	 * 플레이어가 작업을 그만두겠다고 알렸을 때. (취소 키)
 	 *
-	 * 미니게임처럼 입력을 붙잡고 있는 존만 오버라이드하면 된다.
-	 * 게이지나 칸 채우기 존은 작업 키를 떼는 것으로 충분해서 할 일이 없다.
+	 * 차징처럼 입력을 붙잡고 있는 존만 오버라이드하면 된다.
+	 * 칸 채우기 존은 작업 키를 떼는 것으로 충분해서 할 일이 없다.
 	 */
 	virtual void CancelWork() {}
-
-	/**
-	 * 로컬에서 진행하는 존이 올려보낸 진행도를 서버가 받는다.
-	 *
-	 * 되돌아가지 않게 최대값만 취한다. 패킷이 순서 없이 도착해도 진행도가 튀지 않는다.
-	 * 프로토타입이라 값 자체는 검증하지 않는다. 협동 PvE 이고 서로 속일 이유가 없다.
-	 */
-	void ReceiveReportedProgress(UCWWorkerComponent* Worker, float NewProgress);
 
 	/**
 	 * 소유 클라이언트가 자기 기계에서 확정한 붓질 하나를 서버가 받는다.
@@ -160,7 +124,7 @@ public:
 	 * 생기는데 그때마다 RPC 를 보내면 커넥션마다 초당 수백 개가 쌓인다.
 	 * 보내는 쪽이 일정 간격으로 모아서 한 번에 올린다.
 	 *
-	 * 칸을 칠하는 존만 오버라이드한다. 게이지 존은 좌표가 필요 없다.
+	 * 칸을 칠하는 존만 오버라이드한다. 좌표가 필요 없는 존은 받을 일이 없다.
 	 */
 	virtual void ReceiveBrushStrokes(UCWWorkerComponent* Worker, const TArray<FCWBrushStroke>& Strokes) {}
 
@@ -228,7 +192,7 @@ public:
 	 * 도색 존 위에 겹쳐 놓으면 그게 바로 문제가 된다. 검은색 롤러를 들고 횡단보도에 서면
 	 * 지울 것이 없는 쪽이 붓을 붙잡아서, 발밑의 페인트가 안 지워지고 체온만 오른다.
 	 *
-	 * 기본은 true 다. 지점 개념이 없는 존(게이지·미니게임)은 그대로 두면 된다.
+	 * 기본은 true 다. 지점 개념이 없는 존은 그대로 두면 된다.
 	 */
 	virtual bool HasWorkAt(const UCWWorkerComponent* Worker, const FVector& WorldLocation) const { return true; }
 
@@ -276,7 +240,7 @@ public:
 	/**
 	 * 이 작업자가 지금 이 존에서 작업할 수 있는 위치에 있는가.
 	 *
-	 * 기본은 Area 박스까지의 거리로 본다. 게이지 존이나 테두리 미니게임처럼
+	 * 기본은 Area 박스까지의 거리로 본다. 테두리 스케치처럼
 	 * "존 옆에 서서 키를 누른다" 는 작업은 이 기준이 맞다.
 	 *
 	 * 칸을 칠하는 존은 이걸 오버라이드해서 "붓이 닿는 곳에 이 존의 칸이 있는가" 로 바꾼다.
@@ -284,8 +248,6 @@ public:
 	 * 격자가 Area 박스보다 넓게 뻗어 있어서(바깥 고리) 박스 거리로는 판단할 수가 없다.
 	 */
 	virtual bool IsWorkerInRange(const UCWWorkerComponent* Worker, const FVector& WorkLocation) const;
-
-	float GetWorkRange() const { return WorkRange; }
 
 	/**
 	 * 이 지점이 이 존의 영역(Area 박스) 안인가.
@@ -306,11 +268,12 @@ public:
 	 */
 	virtual bool BlocksPaintSpill() const { return bBlocksPaintSpill; }
 
-protected:
-	/** 자식 존이 기존 도색 텍스처를 안내 머티리얼에 연결할 때 사용한다. */
-	UMaterialInstanceDynamic* GetHighlightMaterialInstance() const { return HighlightMID.Get(); }
+	/** 이 도구가 칸이나 자국을 지우는 도구인가. (검은색 롤러) */
+	UFUNCTION(BlueprintPure, Category = "Work")
+	bool IsCleanupTool(ECWToolType ToolType) const;
 
-	/** 데칼과 페인트 마스크가 같은 표시 범위를 사용하도록 한곳에서 계산한다. */
+protected:
+	/** 데칼의 표시 범위를 한곳에서 계산한다. */
 	FVector2D GetHighlightPlanarExtent() const;
 	float GetHighlightWorldEdgeThickness() const;
 
@@ -333,10 +296,8 @@ protected:
 	 * 표시 상태가 바뀔 때 호출. 연출을 붙이는 자리다.
 	 *
 	 * ACWBaseTool::OnFocusChanged 와 같은 패턴이다. 상태는 C++ 이 정하고, 그걸로 무엇을
-	 * 그릴지는 자식이나 BP 가 정한다. 기본 구현은 아무것도 하지 않는다.
-	 *
-	 * 3단계에서 여기에 바닥 데칼 토글이 들어간다. 그때까지는 하이라이트 컴포넌트가
-	 * 디버그 박스로 그리고 있어서 화면이 비지 않는다.
+	 * 그릴지는 자식이나 BP 가 정한다. 기본 구현은 HighlightMaterial 데칼의 표시와 세기를
+	 * 상태에 맞춰 바꾼다.
 	 */
 	UFUNCTION(BlueprintNativeEvent, Category = "Work|Highlight")
 	void OnHighlightStateChanged(ECWZoneHighlightState NewState);
@@ -420,9 +381,9 @@ private:
 	/**
 	 * 앞 순서 존의 진행도가 바뀔 때마다 잠금을 다시 계산한다.
 	 *
-	 * OnWorkCompleted 가 아니라 OnWorkProgress 에 붙는 이유:
+	 * 완료 여부가 아니라 진행도 변화를 보는 이유:
 	 * 완료는 풀릴 수도 있다. 차량이 페인트를 또 밟으면 끝났던 존이 다시 미완료가 되고,
-	 * 그러면 뒤 단계는 다시 잠겨야 한다. 완료 델리게이트만 봐서는 그 순간을 잡을 수 없다.
+	 * 그러면 뒤 단계는 다시 잠겨야 한다. 완료되는 순간만 봐서는 그 되돌림을 잡을 수 없다.
 	 */
 	UFUNCTION()
 	void HandleWatchedZoneProgress(ACWBaseWorkZone* Zone, float Progress);
@@ -443,6 +404,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	TArray<ECWToolType> AcceptedTools;
 
+	// 칸이나 자국을 지우는 도구. (검은색 롤러)
+	//
+	// 칸 존이면 바깥 고리가 있을 때 고리 칸만, 없으면 격자 전체를 지운다. 완성된 횡단보도까지
+	// 지워지면 안 되기 때문이다. 자국 존이면 자국을 지우는 도구다.
+	//
+	// 이 도구는 AcceptedTools 에 없어도 존에 들어올 수 있고, 존이 완료된 뒤에도 계속 쓸 수 있다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
+	TArray<ECWToolType> CleanupTools;
+
 	// 작업 순서. 값이 작을수록 먼저 한다.
 	//
 	// 같은 WorkGroup 안에서 이 값보다 작은 존이 하나라도 안 끝났으면 잠긴다.
@@ -460,11 +430,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Order")
 	FName WorkGroup;
 
-	// 순서와 별개로 반드시 먼저 끝나야 하는 존. WorkOrder 로 표현하기 어려운
-	// 예외적인 의존이 생겼을 때만 쓴다. 보통은 비워두고 WorkOrder 만 쓰면 된다.
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Work|Order")
-	TObjectPtr<ACWBaseWorkZone> PrerequisiteZone;
-
 	// 캐릭터가 Area 박스에서 이 거리보다 멀면 작업할 수 없다. (cm)
 	// 박스 표면 기준이라 150 정도면 "존 옆에 붙어 서 있다" 는 감각과 맞는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
@@ -474,8 +439,8 @@ protected:
 	 * 이 존을 처음부터 끝까지 완주하는 데 드는 페인트 총량. (기획서 5-3)
 	 *
 	 * 존 크기나 진행 방식이 달라도 밸런싱 창구는 이 값 하나다. 구역별 배율을 따로 두지 않는다.
-	 *   - 게이지·미니게임 존 : 진행도 1% 당 PaintCostFull/100 을 쓴다
-	 *   - 칸 존             : 칸 1개당 PaintCostFull/점수영역 칸 수 를 쓴다
+	 *   - 테두리 스케치 존 : 칸 1개당 PaintCostFull/칸 수 를 쓴다 (ConsumePaintForProgress)
+	 *   - 칸 존           : 면적에 비례해 쓴다 (GetPaintCostPerArea)
 	 *
 	 * 기본값 100 은 도구 최대 잔량(ACWBaseTool::MaxPaintAmount)과 같은 값이다.
 	 * 그래서 안쪽만 정확히 칠하면 가득 찬 도구 하나로 존 하나가 딱 끝나고,
@@ -586,7 +551,7 @@ protected:
 	// 진행도가 이 값을 넘으면 완료 처리하고, 그 뒤로는 작업 입력을 받지 않는다.
 	//
 	// 기본값이 1 보다 낮은 이유는 칸 채우기 존 때문이다. 격자 구석 칸까지 전부 칠하기가
-	// 까다로워서 살짝 여유를 준다. 게이지가 차오르는 존(Hold)은 100% 까지 채워야 자연스러우므로
+	// 까다로워서 살짝 여유를 준다. 이런 여유가 필요 없는 존(BorderSketch, PaintDecalField)은
 	// 자식 생성자에서 1.0 으로 올린다.
 	//
 	// 남는 칸은 완료 판정이 난 뒤 칸 존이 알아서 채운다. (ACWWorkZone_Cells::TryAutoCompleteCounted)
@@ -647,7 +612,4 @@ private:
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Work")
 	FCWOnWorkProgressSignature OnWorkProgress;
-
-	UPROPERTY(BlueprintAssignable, Category = "Work")
-	FCWOnWorkCompletedSignature OnWorkCompleted;
 };

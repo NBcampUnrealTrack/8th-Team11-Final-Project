@@ -14,7 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneRegisteredSignature, AC
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneUnregisteredSignature, ACWBaseWorkZone*, Zone);
 
 /**
- * 살아 있는 작업 존과 작업자 목록을 들고 있는 조회 창구. (UCWTrafficSubsystem 과 같은 구조)
+ * 살아 있는 작업 존 목록을 들고 있는 조회 창구. (UCWTrafficSubsystem 과 같은 구조)
  *
  * 왜 필요한가
  *   TActorIterator 는 "그 클래스만 모아둔 목록" 을 도는 게 아니다. 월드의 모든 레벨 액터
@@ -22,7 +22,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnWorkZoneUnregisteredSignature, 
  *   똑같이 "레벨 액터 총 개수" 에 비례한다. 매 프레임 도는 자리에서는 그대로 낭비가 된다.
  *
  *   Dev 맵은 액터가 적어서 티가 안 나지만, 도심 레벨이 올라오면 선형으로 나빠진다.
- *   폰을 찾을 때는 더 나쁘다. 액터를 훑는 것도 모자라 폰마다 컴포넌트 배열을 또 훑는다.
  *
  * 등록은 권한과 무관하게 모든 머신에서 한다
  *   붓 자취를 찍는 존은 서버뿐 아니라 각 클라이언트에서도 목록을 봐야 한다.
@@ -44,9 +43,6 @@ public:
 
 	void RegisterZone(ACWBaseWorkZone* Zone);
 	void UnregisterZone(ACWBaseWorkZone* Zone);
-
-	void RegisterWorker(UCWWorkerComponent* Worker);
-	void UnregisterWorker(UCWWorkerComponent* Worker);
 
 	/**
 	 * 붓질 하나를 겹치는 다른 칸 존들에게도 전달한다.
@@ -82,12 +78,8 @@ public:
 	 */
 	const TArray<TWeakObjectPtr<ACWBaseWorkZone>>& GetZones() const { return ActiveZones; }
 
-	const TArray<TWeakObjectPtr<UCWWorkerComponent>>& GetWorkers() const { return ActiveWorkers; }
-
 private:
 	TArray<TWeakObjectPtr<ACWBaseWorkZone>> ActiveZones;
-
-	TArray<TWeakObjectPtr<UCWWorkerComponent>> ActiveWorkers;
 
 	// 델리게이트는 최하단에 배치
 public:

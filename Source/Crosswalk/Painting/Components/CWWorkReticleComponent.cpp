@@ -80,8 +80,8 @@ void UCWWorkReticleComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	 * HasWorkAt 은 "이 붓질이 뒤집을 칸이 하나라도 있는가" 를 ApplyWork 와 똑같은 기준으로 답한다.
 	 * 그래서 덧칠 판정을 여기서 새로 만들 필요가 없고, 원이 초록인데 안 칠해지는 일도 없다.
 	 *
-	 * 페인트는 IsPaintDepleted 가 아니라 HasPaintForWork 를 본다. 전자는 "작업 키를 눌렀는데
-	 * 페인트가 없었다" 라서 키를 누르기 전에는 항상 false 다. 조준 표시기는 누르기 전에
+	 * 페인트는 소진 상태(bPaintDepleted)가 아니라 HasPaintForWork 를 본다. 전자는 "작업 키를
+	 * 눌렀는데 페인트가 없었다" 라서 키를 누르기 전에는 항상 false 다. 조준 표시기는 누르기 전에
 	 * 알려주는 것이 목적이라 잔량 자체를 봐야 한다.
 	 */
 	const bool bWorkable = Zone->HasWorkAt(WorkerComponent, BrushCenter) && WorkerComponent->HasPaintForWork();
@@ -102,7 +102,7 @@ ACWWorkZone_Cells* UCWWorkReticleComponent::FindReticleZone() const
 	/**
 	 * 1순위 — 작업 컴포넌트가 고른 존.
 	 *
-	 * 칸을 칠하는 존만 대상이다. 게이지 존과 테두리 미니게임은 조준할 "지점" 자체가 없다.
+	 * 칸을 칠하는 존만 대상이다. 테두리 존은 조준할 "지점" 자체가 없다.
 	 * 도구는 따로 보지 않는다. TargetZone 은 FindTargetZone 이 CanWorkNow(HeldTool) 로 이미 걸렀다.
 	 */
 	if (ACWWorkZone_Cells* Zone = Cast<ACWWorkZone_Cells>(WorkerComponent->GetTargetZone()))

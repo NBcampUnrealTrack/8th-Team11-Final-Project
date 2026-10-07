@@ -144,8 +144,6 @@ bool UCWToolHolderComponent::PickUpTool(ACWBaseTool* Tool)
 	SetFocusedTool(nullptr);
 	NotifyWorkerComponent();
 
-	OnHeldToolChanged.Broadcast(this, HeldTool);
-
 	return true;
 }
 
@@ -172,17 +170,12 @@ void UCWToolHolderComponent::DropHeldToolAt(const FVector& DropLocation)
 
 	DroppedTool->Drop(DropLocation);
 	NotifyWorkerComponent();
-
-	OnHeldToolChanged.Broadcast(this, nullptr);
 }
 
 void UCWToolHolderComponent::OnRep_HeldTool()
 {
 	// 소지 도구가 바뀐 걸 클라이언트에도 반영한다.
-	// 작업 컴포넌트의 HeldTool 은 따로 리플리케이트되지만, HUD 델리게이트는 여기서 쏴야 한다.
 	NotifyWorkerComponent();
-
-	OnHeldToolChanged.Broadcast(this, HeldTool);
 }
 
 ECWToolType UCWToolHolderComponent::GetHeldToolType() const
@@ -359,8 +352,6 @@ void UCWToolHolderComponent::SetFocusedTool(ACWBaseTool* NewTool)
 	{
 		FocusedTool->SetFocused(true);
 	}
-
-	OnFocusedToolChanged.Broadcast(this, FocusedTool);
 }
 
 void UCWToolHolderComponent::NotifyWorkerComponent()

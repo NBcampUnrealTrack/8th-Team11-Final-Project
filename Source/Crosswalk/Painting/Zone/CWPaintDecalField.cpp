@@ -12,16 +12,10 @@
 
 ACWPaintDecalField::ACWPaintDecalField()
 {
-	PrimaryActorTick.bCanEverTick = false;
-
 	// 자국이 생길 수 있는 범위. 레벨에서 오염 레이어와 비슷하게 잡는다.
 	Area->SetBoxExtent(FVector(1000.f, 1000.f, 100.f));
 
-	// 자국을 남기는 것은 사고다. 앞 단계를 기다릴 이유가 없다.
-	// WorkOrder 가 0 이면 자기보다 앞선 존이 없어서 잠기지 않는다.
-	WorkOrder = 0;
-
-	// 자국이 하나라도 남아 있으면 완료가 아니다. 칸 존의 기본값(0.98)은
+	// 자국이 하나라도 남아 있으면 완료가 아니다. 부모 기본값(0.985)은
 	// 격자 구석까지 칠하기 어려운 도색 작업을 위한 여유라 여기와는 맞지 않는다.
 	CompleteThreshold = 1.f;
 
@@ -57,11 +51,6 @@ void ACWPaintDecalField::BeginPlay()
 	}
 
 	RefreshDecalComponents();
-}
-
-bool ACWPaintDecalField::IsCleanupTool(ECWToolType ToolType) const
-{
-	return ToolType != ECWToolType::None && CleanupTools.Contains(ToolType);
 }
 
 bool ACWPaintDecalField::CanWorkNow(ECWToolType ToolType) const

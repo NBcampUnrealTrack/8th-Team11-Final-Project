@@ -11,7 +11,7 @@ namespace
 {
 	/**
 	 * M_DustGround 와의 계약이다. 이름이 어긋나면 값이 조용히 버려지고,
-	 * "게이지는 오르는데 겉모습이 안 바뀐다" 가 된다. BeginPlay 에서 한 번 검사한다.
+	 * "진행도는 오르는데 겉모습이 안 바뀐다" 가 된다. 패치 머티리얼을 만들 때(CreatePatchMaterials) 한 번 검사한다.
 	 */
 	const FName DustClearedParameterName(TEXT("ClearedPct"));
 	const FName DustPatchFadeParameterName(TEXT("PatchFade"));
@@ -22,14 +22,6 @@ namespace
 
 ACWWorkZone_Dust::ACWWorkZone_Dust()
 {
-	/**
-	 * 틱이 필요 없다. 겉모습은 진행도가 바뀔 때만 갱신하면 된다.
-	 *
-	 * 예전에는 붓 자취를 매 프레임 렌더 타깃에 찍느라 켜 두었다. 그 방식은 존 개수만큼,
-	 * 모든 머신에서, 청소가 끝날 때까지 계속 도는 비용이었다.
-	 */
-	PrimaryActorTick.bCanEverTick = false;
-
 	Area->SetBoxExtent(FVector(100.f, 50.f, 20.f));
 
 	/**
@@ -39,7 +31,7 @@ ACWWorkZone_Dust::ACWWorkZone_Dust()
 	 * 여기 닿는 순간 마지막 패치까지 정확히 사라진다. 남은 0.05 를 더 쓸게 하면 이미 깨끗한
 	 * 바닥을 계속 쓸어야 하고, "다 쓸었는데 왜 안 끝나지" 로 헤매게 된다.
 	 *
-	 * 부모 기본값(0.98)은 격자 칸 존을 위한 값이라 그대로 쓰지 않는다.
+	 * 부모 기본값(0.985)은 격자 칸 존을 위한 값이라 그대로 쓰지 않는다.
 	 */
 	CompleteThreshold = 0.95f;
 
@@ -71,9 +63,6 @@ void ACWWorkZone_Dust::BeginPlay()
 	BuildPatches();
 
 	ApplyProgressToPatches();
-
-	// 여기까지가 시작 상태다. 이 뒤로 걷히는 패치만 연출을 탄다.
-	bPatchStateInitialized = true;
 }
 
 void ACWWorkZone_Dust::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
@@ -89,7 +78,7 @@ void ACWWorkZone_Dust::ApplyWork(UCWWorkerComponent* Worker, const FVector& Worl
 	/**
 	 * 완료 임계값을 넘으면 남은 진행도를 건너뛰고 100% 로 올린다.
 	 *
-	 * 임계값에서 완료 처리만 하면 진행도가 그 값에 그대로 굳어서 HUD 게이지가 95% 에서
+	 * 임계값에서 완료 처리만 하면 진행도가 그 값에 그대로 굳어서 HUD 진행도가 95% 에서
 	 * 멈춘 채로 "완료" 가 된다.
 	 */
 	SetProgress(NextProgress >= CompleteThreshold ? 1.f : NextProgress);
@@ -101,11 +90,6 @@ void ACWWorkZone_Dust::OnProgressChanged(float NewProgress)
 
 	// 부모가 서버와 클라이언트 양쪽에서 이걸 불러주므로 겉모습 갱신을 여기 두면 된다.
 	ApplyProgressToPatches();
-}
-
-void ACWWorkZone_Dust::OnDustPatchCleared_Implementation(int32 PatchIndex, const FVector& PatchLocation)
-{
-	// 네이티브에서는 아무것도 하지 않는다. BP 에서 흙먼지와 사운드를 붙이는 자리다.
 }
 
 void ACWWorkZone_Dust::BuildPatches()
@@ -127,7 +111,7 @@ void ACWWorkZone_Dust::BuildPatches()
 	 * 레벨 로드 중이라 넷 드라이버가 아직 안 붙었을 수 있고, 그러면 NM_Standalone 이 돌아와
 	 * 서버에서도 데칼을 만들어 버린다. 프로세스 자체를 묻는 쪽이 이 시점에 확실하다.
 	 */
-	if (IsRunningDedicatedServer() || Area == nullptr)
+	if (IsRunningDedicatedServer())
 	{
 		return;
 	}
@@ -318,7 +302,6 @@ void ACWWorkZone_Dust::ApplyProgressToPatches()
 			continue;
 		}
 
-		const float PreviousFade = Patch.Fade;
 		Patch.Fade = ComputePatchFade(Patch.ClearSlot, CurrentProgress);
 
 		if (Patch.Material != nullptr)
@@ -332,12 +315,6 @@ void ACWWorkZone_Dust::ApplyProgressToPatches()
 		if (Patch.Decal->IsVisible() != bVisible)
 		{
 			Patch.Decal->SetVisibility(bVisible);
-		}
-
-		// 방금 걷힌 패치만 연출을 태운다. 이미 사라져 있던 패치는 해당 없다.
-		if (bPatchStateInitialized && PreviousFade > KINDA_SMALL_NUMBER && !bVisible)
-		{
-			OnDustPatchCleared(Index, Patch.Decal->GetComponentLocation());
 		}
 	}
 }

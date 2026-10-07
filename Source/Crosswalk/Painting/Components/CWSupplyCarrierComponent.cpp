@@ -8,7 +8,6 @@
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "Painting/CWPaintSupplyBox.h"
 #include "Painting/CWPaintingSubsystem.h"
@@ -226,19 +225,15 @@ void UCWSupplyCarrierComponent::ChargeOrReturn()
 
 	switch (ResolveChargeOrReturnTarget(Target))
 	{
-	case ECWInteractionPromptAction::ChargeTool:
-		// 대상을 다시 고르게 두지만 같은 함수가 같은 프레임에 다시 도는 것이라 답이 갈리지 않는다.
-		// 거절 이유 발행과 서버 요청 경로를 한 곳에 두려고 기존 함수를 그대로 쓴다.
-		ChargeNearestTool();
-		break;
-
 	case ECWInteractionPromptAction::ReturnCan:
 		DropCan();
 		break;
 
 	default:
-		// 잡을 대상이 없다. 왜 없는지는 기존 경로가 그대로 발행한다.
-		// 통이 없으면 NoCans, 다운/미니게임 중이면 Busy, 그 외에는 NoTargetTool 이다.
+		// 충전 대상이 있는 경우와 잡을 대상이 없는 경우를 같은 경로로 보낸다.
+		// 대상을 다시 고르게 두지만 같은 함수가 같은 프레임에 다시 도는 것이라 답이 갈리지 않는다.
+		// 대상이 없을 때 왜 없는지는 이 경로가 그대로 발행한다.
+		// 통이 없으면 NoCans, 다운/차징 중이면 Busy, 그 외에는 NoTargetTool 이다.
 		ChargeNearestTool();
 		break;
 	}
@@ -312,8 +307,6 @@ void UCWSupplyCarrierComponent::PerformPickUp(ACWPaintSupplyBox* RequestedBox)
 	}
 
 	SetCarriedCount(CarriedCount + 1);
-
-	RequestedBox->NotifyCanDispensed();
 }
 
 void UCWSupplyCarrierComponent::PerformDrop()
@@ -427,7 +420,7 @@ ACWPaintSupplyBox* UCWSupplyCarrierComponent::FindNearestBox(float RadiusScale) 
 	return NearestBox;
 }
 
-ACWBaseTool* UCWSupplyCarrierComponent::FindNearestChargeableTool(float RadiusScale) const
+ACWBaseTool* UCWSupplyCarrierComponent::FindNearestChargeableTool() const
 {
 	const AActor* Owner = GetOwner();
 	if (Owner == nullptr)
@@ -436,7 +429,7 @@ ACWBaseTool* UCWSupplyCarrierComponent::FindNearestChargeableTool(float RadiusSc
 	}
 
 	TArray<FOverlapResult> Overlaps;
-	OverlapNearbyActors(*Owner, ChargeRadius * RadiusScale, Overlaps);
+	OverlapNearbyActors(*Owner, ChargeRadius, Overlaps);
 
 	ACWBaseTool* NearestTool = nullptr;
 	float NearestDistanceSquared = TNumericLimits<float>::Max();
@@ -498,7 +491,7 @@ bool UCWSupplyCarrierComponent::IsSupplyInputBlocked() const
 		}
 	}
 
-	// 미니게임처럼 입력을 붙잡는 작업 중에도 받지 않는다. (기획서 6-7)
+	// 테두리 차징처럼 입력을 붙잡는 작업 중에도 받지 않는다. (기획서 6-7)
 	// 패링을 막는 조건과 같다. 둘 다 "지금은 이 작업이 화면과 입력을 쥐고 있다" 는 뜻이다.
 	return WorkerComponent != nullptr && WorkerComponent->IsParryBlocked();
 }
@@ -530,14 +523,6 @@ void UCWSupplyCarrierComponent::BreakCansAndSpill(const FVector& SpillLocation)
 	{
 		DecalField->AddBurst(GroundLocation, BrokenCount, GetOwner());
 	}
-
-	// 파티클처럼 한 번 터지고 마는 연출은 따로 뿌린다. 자국은 위에서 이미 전파됐다.
-	Multicast_PlayCanBurst(GroundLocation, BrokenCount);
-}
-
-void UCWSupplyCarrierComponent::Multicast_PlayCanBurst_Implementation(FVector_NetQuantize BurstLocation, int32 BrokenCount)
-{
-	OnCansBurst.Broadcast(this, BurstLocation, BrokenCount);
 }
 
 void UCWSupplyCarrierComponent::Multicast_PlayChargeSound_Implementation()
@@ -607,7 +592,7 @@ void UCWSupplyCarrierComponent::NotifyActionRejected(ECWSupplyRejectReason Reaso
 		return;
 	}
 
-	// UI 가 붙기 전까지는 이 로그가 유일한 확인 수단이다.
+	// UI 는 OnSupplyActionRejected 로 받으므로 이 로그는 디버그용이다.
 	// 거절은 정상 동작이라 Verbose 로 둔다. 확인하려면 `Log LogTemp Verbose` 로 켠다.
 	UE_LOG(LogTemp, Verbose, TEXT("[Supply] 입력이 무시되었습니다. 이유=%s"),
 		*StaticEnum<ECWSupplyRejectReason>()->GetDisplayNameTextByValue(static_cast<int64>(Reason)).ToString());
@@ -656,8 +641,6 @@ void UCWSupplyCarrierComponent::HandleCarriedCountChanged()
 			FColor::Yellow,
 			FString::Printf(TEXT("Cans %d / %d"), CarriedCount, MaxCarriedCount));
 	}
-
-	OnCarriedCanCountChanged.Broadcast(this, CarriedCount);
 }
 
 bool UCWSupplyCarrierComponent::IsLocallyControlled() const

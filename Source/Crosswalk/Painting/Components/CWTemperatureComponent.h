@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Painting/Data/CWTemperatureTypes.h"
 #include "CWTemperatureComponent.generated.h"
 
 class UCWSupplyCarrierComponent;
@@ -18,16 +17,6 @@ class UCharacterMovementComponent;
  * 머티리얼 스칼라 파라미터에 그대로 넣으면 된다. Temperature 는 화면에 숫자로 띄울 때 쓴다.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnTemperatureChangedSignature, UCWTemperatureComponent*, TemperatureComponent, float, Temperature, float, HeatRatio);
-
-/**
- * 체온 구간이 바뀐 순간에만 발행된다. 1회성 연출(플래시, 사운드, 경고음)이 붙는 자리다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnHeatStageChangedSignature, UCWTemperatureComponent*, TemperatureComponent, ECWHeatStage, NewStage);
-
-/**
- * 휴식구역 점유 상태가 바뀔 때. 회복 중임을 알리는 연출이 붙는 자리다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnRestingChangedSignature, UCWTemperatureComponent*, TemperatureComponent, bool, bResting);
 
 /**
  * 플레이어 캐릭터에 붙이는 체온 컴포넌트. (체온 관리 시스템 기획서)
@@ -127,9 +116,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Temperature")
 	float GetWorkSpeedFactor() const;
 
-	UFUNCTION(BlueprintPure, Category = "Temperature")
-	ECWHeatStage GetHeatStage() const { return HeatStage; }
-
 	/**
 	 * 상한에 닿아 있는가.
 	 *
@@ -138,10 +124,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Temperature")
 	bool IsAtMaxTemperature() const { return CurrentTemperature >= MaxTemperature - KINDA_SMALL_NUMBER; }
-
-	/** 지금 휴식구역 점유자인가. 회복 연출을 켜고 끄는 기준이다. */
-	UFUNCTION(BlueprintPure, Category = "Temperature")
-	bool IsResting() const { return bResting; }
 
 	/**
 	 * 체온과 무관한 외부 요인으로 이동속도에 하한을 건다. 서버에서만 유효하다.
@@ -158,9 +140,6 @@ public:
 	 * @param Duration   지속시간(초)
 	 */
 	void ApplyExternalSlow(float SlowFactor, float Duration);
-
-	UFUNCTION(BlueprintPure, Category = "Temperature")
-	bool IsExternallySlowed() const { return bExternallySlowed; }
 
 	/** 최저 이속 계수. 외부 슬로우가 "최저 이속"을 걸 때 이 값을 넘겨받는다. */
 	UFUNCTION(BlueprintPure, Category = "Temperature")
@@ -199,10 +178,7 @@ private:
 	/** 값이 실제로 바뀌었을 때만 델리게이트를 발행한다. 모든 머신이 각자 부른다. */
 	void BroadcastIfChanged();
 
-	/** 지금 체온이 어느 구간인지. 구간이 바뀐 순간을 잡는 데만 쓴다. */
-	ECWHeatStage ResolveHeatStage() const;
-
-	/** 체온과 계수를 화면에 띄운다. UI 가 붙기 전까지 프로토타입 확인용. */
+	/** 체온과 계수를 화면에 띄운다. 디버그 확인용. */
 	void ShowDebugTemperature() const;
 
 	/** 정규화 구간의 폭. 0 으로 나누는 것을 막는다. */
@@ -402,21 +378,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Temperature", meta = (ClampMin = "1.0"))
 	float MaxWorkSpeedFactor = 1.2f;
 
-	// 과열 주의 구간에 들어서는 체온(도). 연출 신호용이고 패널티 계산과는 무관하다.
-	//
-	// 절대 온도라 상승률을 올려도 값 자체는 그대로 두면 되지만, 도달이 그만큼 빨라진다.
-	// 현재 기본값 기준 작업 시작 7.7초면 여기 들어오고 28.5초에 과열이다.
-	// 더 빠르게 튜닝하면 "주의" 가 사실상 기본 상태가 되므로 그때는 이 값도 같이 올린다.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Temperature|Stage")
-	float CautionTemperature = 50.f;
-
-	// 과열 구간에 들어서는 체온(도). 균형점보다 낮게 잡아야 경고가 의미를 갖는다.
-	//
-	// 작업 균형점은 게이지 끝(70도)이고 운반은 상한에 붙으므로, 양쪽 다 이 값을 넘어간다.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Temperature|Stage")
-	float OverheatTemperature = 65.f;
-
-	// 체온과 계수를 화면 좌상단에 띄운다. 체온 UI 가 생기면 끄면 된다.
+	// 체온과 계수를 화면 좌상단에 띄운다. 디버그 확인용이며 체온 게이지 위젯과는 별개다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Temperature|Debug")
 	bool bShowDebugTemperature = false;
 
@@ -425,7 +387,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Temperature")
 	float CurrentTemperature = 36.5f;
 
-	// 휴식구역 점유자인가. 회복 연출을 남의 화면에서도 켜야 해서 리플리케이트한다.
+	// 휴식구역 점유자인가. 남의 화면 디버그 표시에서도 읽어서 리플리케이트한다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category = "Temperature")
 	bool bResting = false;
 
@@ -459,18 +421,8 @@ private:
 	// 마지막으로 발행한 값. 이것과 다를 때만 델리게이트가 나간다.
 	float LastBroadcastTemperature = -1000.f;
 
-	ECWHeatStage HeatStage = ECWHeatStage::Normal;
-
-	bool bLastBroadcastResting = false;
-
 	// 델리게이트는 최하단에 배치
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Temperature")
 	FCWOnTemperatureChangedSignature OnTemperatureChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Temperature")
-	FCWOnHeatStageChangedSignature OnHeatStageChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Temperature")
-	FCWOnRestingChangedSignature OnRestingChanged;
 };

@@ -1,7 +1,6 @@
 #include "Painting/CWPaintingSubsystem.h"
 
 #include "Engine/World.h"
-#include "Painting/Components/CWWorkerComponent.h"
 #include "Painting/Zone/CWBaseWorkZone.h"
 #include "Painting/Zone/CWWorkZone_Cells.h"
 
@@ -46,24 +45,6 @@ void UCWPaintingSubsystem::UnregisterZone(ACWBaseWorkZone* Zone)
 	if (ActiveZones.RemoveSingleSwap(Zone) > 0)
 	{
 		OnWorkZoneUnregistered.Broadcast(Zone);
-	}
-}
-
-void UCWPaintingSubsystem::RegisterWorker(UCWWorkerComponent* Worker)
-{
-	if (Worker == nullptr || ActiveWorkers.Contains(Worker))
-	{
-		return;
-	}
-
-	ActiveWorkers.Add(Worker);
-}
-
-void UCWPaintingSubsystem::UnregisterWorker(UCWWorkerComponent* Worker)
-{
-	if (Worker != nullptr)
-	{
-		ActiveWorkers.RemoveSingleSwap(Worker);
 	}
 }
 

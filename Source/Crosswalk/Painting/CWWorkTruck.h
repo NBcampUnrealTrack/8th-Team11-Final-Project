@@ -9,11 +9,7 @@
 #include "CWWorkTruck.generated.h"
 
 class ACWBaseTool;
-class ACWWorkTruck;
-class UBoxComponent;
 class UStaticMeshComponent;
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnStoredToolsChangedSignature, ACWWorkTruck*, WorkTruck, int32, StoredToolCount);
 
 /**
  * 스테이지 시작 지점에 놓는 작업차량. (작업차량 기획서 3절)
@@ -40,7 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnStoredToolsChangedSignature, A
  *
  * 네트워크
  *   꺼내기/반납 판정은 전부 서버에서 한다. 클라이언트는 캐릭터의 상호작용 RPC 를 거쳐 들어온다.
- *   보관 목록은 리플리케이트해서 "트렁크에 몇 개 남았는지" 를 HUD 가 볼 수 있게 한다.
+ *   보관 목록은 리플리케이트해서 클라이언트의 CanInteract 가 "꺼낼 도구가 남았는가" 를 판정할 수 있게 한다.
  */
 UCLASS()
 class CROSSWALK_API ACWWorkTruck : public AActor, public IInterface_Interactable
@@ -82,54 +78,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "WorkTruck")
 	bool TakeOutTool(APawn* InstigatorPawn);
 
-	/**
-	 * 특정 종류의 도구를 꺼낸다. 서버에서만 유효하다.
-	 * 트렁크 UI 가 생기면 이쪽을 쓴다. 지금은 TakeOutTool 이 보관 순서대로 꺼낸다.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "WorkTruck")
-	bool TakeOutToolOfType(APawn* InstigatorPawn, ECWToolType ToolType);
-
-	UFUNCTION(BlueprintPure, Category = "WorkTruck")
-	int32 GetStoredToolCount() const { return StoredTools.Num(); }
-
-	/** 스테이지에 존재하는 도구 수. 시작 시점에 트렁크가 들고 있던 개수다. */
-	UFUNCTION(BlueprintPure, Category = "WorkTruck")
-	int32 GetTotalToolCount() const { return TotalToolCount; }
-
-	/**
-	 * 도구가 전부 반납됐는가. 클리어 조건의 "도구 정리" 를 되살릴 때 이 값을 보면 된다.
-	 * (기획서 5절 - 지금은 클리어 조건에 걸지 않았다)
-	 */
-	UFUNCTION(BlueprintPure, Category = "WorkTruck")
-	bool AreAllToolsStored() const { return TotalToolCount > 0 && StoredTools.Num() >= TotalToolCount; }
-
 	/** 도구를 꺼내고 넣는 지점. 트렁크 문 앞이다. */
 	UFUNCTION(BlueprintPure, Category = "WorkTruck")
 	FVector GetTrunkLocation() const;
 
-protected:
-	/** 도구를 꺼냈을 때. BP 자식에서 트렁크 문 여는 연출을 붙이는 자리. 모든 머신에서 호출된다. */
-	UFUNCTION(BlueprintNativeEvent, Category = "WorkTruck")
-	void OnToolTakenOut(ACWBaseTool* Tool);
-	virtual void OnToolTakenOut_Implementation(ACWBaseTool* Tool) {}
-
-	/** 도구를 반납했을 때. */
-	UFUNCTION(BlueprintNativeEvent, Category = "WorkTruck")
-	void OnToolStored(ACWBaseTool* Tool);
-	virtual void OnToolStored_Implementation(ACWBaseTool* Tool) {}
-
 private:
-	/** 레벨에 놓인 도구를 전부 트렁크에 넣고, ToolClasses 에 적힌 도구를 추가로 만든다. 서버에서만. */
+	/** 레벨에 놓인 도구를 전부 트렁크에 넣는다. 서버에서만. */
 	void CollectStageTools();
-
-	/** 도구에 보관 상태를 알린다. 숨김과 집기 차단은 도구가 알아서 한다. */
-	static void ApplyStoredState(ACWBaseTool* Tool, bool bStored);
 
 	/** 꺼내기 공통 처리. 도구를 트렁크 앞에 꺼내 놓고 홀더에 넘긴다. */
 	bool GiveToolToPawn(ACWBaseTool* Tool, APawn* InstigatorPawn);
-
-	UFUNCTION()
-	void OnRep_StoredTools();
 
 public:
 	// 차량 몸체. 루트 컴포넌트다.
@@ -146,13 +104,9 @@ protected:
 	// 스테이지 시작 시 레벨에 놓여 있던 도구를 전부 트렁크에 넣을 것인가.
 	//
 	// 켜두면 기존처럼 레벨에 도구를 배치해도 시작할 때 트렁크로 들어간다.
-	// 배치를 정리하고 ToolClasses 로만 관리하게 되면 꺼도 된다.
+	// 트렁크에 넣을 도구를 레벨에 배치하지 않게 되면 꺼도 된다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "WorkTruck")
 	bool bCollectExistingTools = true;
-
-	// 시작할 때 트렁크에 만들어 넣을 도구들. 레벨에 실물을 놓지 않아도 된다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "WorkTruck")
-	TArray<TSubclassOf<ACWBaseTool>> ToolClasses;
 
 	// 이 거리 안에서만 트렁크를 쓸 수 있다. (cm) TrunkPoint 기준이다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "WorkTruck", meta = (ClampMin = "0.0"))
@@ -165,15 +119,6 @@ protected:
 
 private:
 	// 트렁크에 들어 있는 도구들. 서버가 정하고 전원에게 전파된다.
-	UPROPERTY(ReplicatedUsing = OnRep_StoredTools)
-	TArray<TObjectPtr<ACWBaseTool>> StoredTools;
-
-	// 시작 시점의 도구 총 개수. "전부 반납했는가" 의 분모다.
 	UPROPERTY(Replicated)
-	int32 TotalToolCount = 0;
-
-	// 델리게이트는 최하단에 배치
-public:
-	UPROPERTY(BlueprintAssignable, Category = "WorkTruck")
-	FCWOnStoredToolsChangedSignature OnStoredToolsChanged;
+	TArray<TObjectPtr<ACWBaseTool>> StoredTools;
 };

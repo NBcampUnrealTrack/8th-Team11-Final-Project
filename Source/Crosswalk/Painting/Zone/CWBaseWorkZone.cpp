@@ -29,6 +29,11 @@ ACWBaseWorkZone::ACWBaseWorkZone()
 	Area->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
+bool ACWBaseWorkZone::IsCleanupTool(ECWToolType ToolType) const
+{
+	return ToolType != ECWToolType::None && CleanupTools.Contains(ToolType);
+}
+
 float ACWBaseWorkZone::GetSquaredDistanceToPoint(const FVector& Point) const
 {
 	return Area->Bounds.GetBox().ComputeSquaredDistanceToPoint(Point);
@@ -36,11 +41,6 @@ float ACWBaseWorkZone::GetSquaredDistanceToPoint(const FVector& Point) const
 
 bool ACWBaseWorkZone::ContainsAreaPoint(const FVector& WorldLocation) const
 {
-	if (Area == nullptr)
-	{
-		return false;
-	}
-
 	const FVector LocalPoint = Area->GetComponentTransform().InverseTransformPosition(WorldLocation);
 	const FVector Extent = Area->GetUnscaledBoxExtent();
 
@@ -103,7 +103,7 @@ void ACWBaseWorkZone::BeginPlay()
 	//
 	// 감시 대상을 아직 모으지 않았으므로 개수 대신 설정값으로 판단한다. 앞 존이 실제로
 	// 없더라도 다음 틱에 풀리므로, 한 프레임 더 잠겨 있는 쪽이 열려 있는 쪽보다 안전하다.
-	bLocked = (WorkOrder > 0 || PrerequisiteZone != nullptr);
+	bLocked = (WorkOrder > 0);
 
 	// 전원의 BeginPlay 가 끝난 뒤에 감시 대상을 모으고 제대로 판정한다.
 	// 존의 시작 진행도는 각자의 BeginPlay 에서 정해지는데(칸 존의 BuildGrid) 액터의
@@ -136,12 +136,6 @@ void ACWBaseWorkZone::InitializeLockWatch()
 void ACWBaseWorkZone::CollectWatchedZones()
 {
 	WatchedZones.Reset();
-
-	// WorkOrder 로 표현 못 하는 예외 의존. 순서와 무관하게 항상 기다린다.
-	if (PrerequisiteZone != nullptr && PrerequisiteZone != this)
-	{
-		WatchedZones.Add(PrerequisiteZone);
-	}
 
 	// 0 이면 아무것도 기다리지 않는다. 순서를 안 쓰는 존은 여기서 끝난다.
 	if (WorkOrder <= 0)
@@ -272,7 +266,7 @@ bool ACWBaseWorkZone::EnsureHighlightDecal()
 		return true;
 	}
 
-	if (bHighlightDecalSetupFailed || Area == nullptr)
+	if (bHighlightDecalSetupFailed)
 	{
 		return false;
 	}
@@ -321,11 +315,6 @@ float ACWBaseWorkZone::GetHighlightWorldEdgeThickness() const
 
 FVector2D ACWBaseWorkZone::GetHighlightPlanarExtent() const
 {
-	if (Area == nullptr)
-	{
-		return FVector2D::ZeroVector;
-	}
-
 	const FVector Extent = Area->GetUnscaledBoxExtent();
 	const FVector2D ScaledExtent(
 		Extent.X * FMath::Max(HighlightSizeScale.X, KINDA_SMALL_NUMBER),
@@ -335,7 +324,7 @@ FVector2D ACWBaseWorkZone::GetHighlightPlanarExtent() const
 
 void ACWBaseWorkZone::ApplyHighlightDecalSize()
 {
-	if (HighlightDecal == nullptr || Area == nullptr)
+	if (HighlightDecal == nullptr)
 	{
 		return;
 	}
@@ -449,31 +438,9 @@ void ACWBaseWorkZone::SetProgress(float NewProgress)
 	// 그 뒤로는 진행도가 안 바뀌어 다시 그릴 일이 없으니 영영 그 색으로 남는다.
 	//
 	// 완료가 풀릴 수도 있다. 차량이 페인트를 또 밟으면 "정리" 목표가 다시 열린다.
-	const bool bWasCompleted = bCompleted;
 	bCompleted = (Progress >= CompleteThreshold);
 
 	HandleProgressChanged();
-
-	if (bCompleted && !bWasCompleted)
-	{
-		OnWorkCompleted.Broadcast(this);
-	}
-}
-
-void ACWBaseWorkZone::ReceiveReportedProgress(UCWWorkerComponent* Worker, float NewProgress)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	// 실제로 오른 만큼만 페인트를 뺀다. 이미 지나온 진행도가 다시 올라와도 소모는 0 이다.
-	// (되돌아가지 않게 Max 를 취하므로, 늦게 도착한 패킷은 진행도도 페인트도 건드리지 않는다)
-	const float Before = Progress;
-
-	SetProgress(FMath::Max(Progress, NewProgress));
-
-	ConsumePaintForProgress(Worker, Progress - Before);
 }
 
 void ACWBaseWorkZone::ConsumePaintForProgress(UCWWorkerComponent* Worker, float ProgressDelta) const
@@ -502,12 +469,6 @@ void ACWBaseWorkZone::OnRep_Progress()
 
 void ACWBaseWorkZone::OnRep_Completed()
 {
-	// HUD 체크리스트가 클라이언트에서도 갱신되도록 완료를 알린다.
-	if (bCompleted)
-	{
-		OnWorkCompleted.Broadcast(this);
-	}
-
 	ShowDebugProgress();
 }
 

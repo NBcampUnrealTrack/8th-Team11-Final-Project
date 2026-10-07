@@ -59,17 +59,6 @@ public:
 protected:
 	virtual void OnProgressChanged(float NewProgress) override;
 
-	/**
-	 * 패치 하나가 완전히 걷힌 순간. BP 에서 흙먼지를 한 번 터뜨리는 자리다.
-	 *
-	 * 이 연출이 없으면 패치가 조용히 사라져서 무슨 일이 일어났는지 안 보인다.
-	 * "단계별로 줄어든다" 를 눈에 각인시키는 건 사실상 이 한 방이다.
-	 * (ACWSinkhole::OnFillProgressed 와 같은 자리)
-	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "Dust")
-	void OnDustPatchCleared(int32 PatchIndex, const FVector& PatchLocation);
-	virtual void OnDustPatchCleared_Implementation(int32 PatchIndex, const FVector& PatchLocation);
-
 private:
 	/** Area 안에 패치 데칼을 흩뿌린다. 에디터에서도 돌아서 배치를 눈으로 보고 잡을 수 있다. */
 	void BuildPatches();
@@ -199,12 +188,4 @@ protected:
 private:
 	UPROPERTY(Transient)
 	TArray<FCWDustPatch> DustPatches;
-
-	/**
-	 * 첫 진행도 반영이 끝났는가.
-	 *
-	 * 시작부터 진행도가 올라가 있는 존은 처음 계산할 때 여러 패치가 한꺼번에 0 이 된다.
-	 * 그때 걷힘 연출을 그대로 태우면 레벨을 켜자마자 흙먼지가 무더기로 터진다.
-	 */
-	bool bPatchStateInitialized = false;
 };

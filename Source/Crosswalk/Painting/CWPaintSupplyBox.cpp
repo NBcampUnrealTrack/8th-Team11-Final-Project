@@ -9,7 +9,7 @@ ACWPaintSupplyBox::ACWPaintSupplyBox()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	// 리플리케이트할 상태는 없지만 멀티캐스트 RPC 를 받으려면 켜야 한다.
+	// 리플리케이트할 상태는 없지만 클라이언트가 이 박스를 서버 RPC 인자로 지정해 보내므로 켜 둔다.
 	bReplicates = true;
 
 	BoxMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BoxMesh"));
@@ -25,19 +25,4 @@ ACWPaintSupplyBox::ACWPaintSupplyBox()
 	BoxMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	BoxMesh->SetCollisionResponseToAllChannels(ECR_Overlap);
 	BoxMesh->SetGenerateOverlapEvents(false);
-}
-
-void ACWPaintSupplyBox::NotifyCanDispensed()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	Multicast_PlayDispense();
-}
-
-void ACWPaintSupplyBox::Multicast_PlayDispense_Implementation()
-{
-	OnCanDispensed(ShakeDuration);
 }

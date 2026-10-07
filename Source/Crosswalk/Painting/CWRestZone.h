@@ -7,36 +7,10 @@
 #include "Interfaces/Interface_Interactable.h"
 #include "CWRestZone.generated.h"
 
-class ACWRestZone;
 class ACWPlayerCharacter;
 class UBoxComponent;
 class USphereComponent;
 class UCWTemperatureComponent;
-
-/**
- * 프롬프트 표시 상태. (착석 기획서 10절)
- *
- * 판단은 각 머신이 자기 화면의 로컬 플레이어를 기준으로 한다. Occupant 가 이미
- * 리플리케이트되고 있어서 추가 통신이 필요 없다.
- */
-UENUM(BlueprintType)
-enum class ECWRestPromptState : uint8
-{
-	// 박스 밖이거나, 본인이 이미 앉아 있다.
-	Hidden,
-
-	// 자리가 비어 있다. "E - 앉기"
-	Available,
-
-	// 다른 사람이 앉아 있다. "사용 중"
-	//
-	// 아무것도 띄우지 않으면 왜 E 가 안 먹는지 화면에 설명되지 않는다.
-	Occupied
-};
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnRestZoneOccupantChangedSignature, ACWRestZone*, RestZone, ACWPlayerCharacter*, Occupant);
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnRestPromptChangedSignature, ACWRestZone*, RestZone, ECWRestPromptState, PromptState);
 
 /**
  * 작업차량 앞에 놓는 1인용 휴식구역. (체온 기획서 5절 + 착석 기획서)
@@ -62,7 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnRestPromptChangedSignature, AC
  *   겹침이 끊기는 것과 자리를 잃는 것이 더 이상 같은 일이 아니기 때문이다.
  *
  * Area 박스의 역할
- *   회복 판정이 아니라 "E 로 앉기" 프롬프트를 띄우는 범위다. 막지 않고 겹침만 본다.
+ *   회복 판정이 아니라 플레이어의 상호작용 후보 탐색이 겹침으로 찾는 범위다. 막지 않고 겹침만 본다.
  *   물리적으로 좁히는 것은 레벨에 놓는 차량과 구조물이 한다.
  *
  * 네트워크
@@ -97,16 +71,9 @@ public:
 	// 의자에서 멀리 떨어져 있어도 E 가 먹는다. (작업차량이 트렁크 위치를 쓰는 것과 같은 이유)
 	virtual FVector GetInteractionLocation_Implementation() const override;
 
-	UFUNCTION(BlueprintPure, Category = "Rest")
-	ACWPlayerCharacter* GetOccupant() const { return Occupant; }
-
 	/** 지금 이 존을 쓰는 사람이 있는가. 바닥 데칼의 비어있음/사용중 표시에 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Rest")
 	bool IsOccupied() const { return Occupant != nullptr; }
-
-	/** 내 화면에 지금 무엇을 띄워야 하는가. 위젯이 이 값을 읽는다. */
-	UFUNCTION(BlueprintPure, Category = "Rest")
-	ECWRestPromptState GetPromptState() const { return PromptState; }
 
 	/**
 	 * 앉을 자리의 월드 트랜스폼. 캡슐 원점이 놓일 지점과 바라볼 방향이다.
@@ -139,29 +106,13 @@ protected:
 	void OnOccupantChanged(ACWPlayerCharacter* NewOccupant);
 	virtual void OnOccupantChanged_Implementation(ACWPlayerCharacter* NewOccupant) {}
 
-	/** 내 화면의 프롬프트 표시가 바뀐 직후. BP 에서 위젯을 붙이는 자리다. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Rest")
-	void OnPromptStateChanged(ECWRestPromptState NewPromptState);
-	virtual void OnPromptStateChanged_Implementation(ECWRestPromptState NewPromptState) {}
-
 private:
-	UFUNCTION()
-	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
-		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
-
-	UFUNCTION()
-	void HandleEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
-		int32 OtherBodyIndex);
-
 	void SetOccupant(ACWPlayerCharacter* NewOccupant);
 
 	/** 점유 상태를 체온 컴포넌트에 반영한다. 서버에서만 유효하다. */
 	void ApplyRestingState(ACWPlayerCharacter* Player, bool bNewResting);
 
-	/** 프롬프트 상태를 다시 계산한다. 바뀐 경우에만 알린다. */
-	void RefreshPromptState();
-
-	/** 점유 상태를 화면에 띄운다. 연출이 붙기 전까지 프로토타입 확인용. */
+	/** 점유 상태를 화면에 띄운다. 디버그 확인용. */
 	void ShowDebugOccupant() const;
 
 	UFUNCTION()
@@ -173,9 +124,9 @@ private:
 	static FString ResolvePlayerLabel(const APawn* Player);
 
 public:
-	// 프롬프트 표시 영역. 루트 컴포넌트다. 막는 용도가 아니라 겹침만 본다.
+	// 상호작용 후보를 찾는 영역. 루트 컴포넌트다. 막는 용도가 아니라 겹침만 본다.
 	// 크기는 레벨에서 조절하되 SeatRange 를 넘기지 않는다.
-	// 넘기면 "앉기" 가 떠 있는데 E 는 안 먹는 구간이 생긴다.
+	// 넘기면 앉기 후보로 잡히는데 E 는 안 먹는 구간이 생긴다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rest")
 	TObjectPtr<UBoxComponent> Area;
 
@@ -218,9 +169,9 @@ protected:
 	// 서버가 다시 판정할 때 주는 거리 여유 배율.
 	// 클라이언트와 서버의 위치가 핑만큼 어긋나 있어서, 딱 맞게 재면 눌러도 안 앉는 일이 생긴다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rest", meta = (ClampMin = "1.0"))
-	float ServerRangeTolerance = 1.5f;
+	float ServerRangeTolerance = 1.6f;
 
-	// 프롬프트 영역을 플레이 중에도 보이게 한다. 위젯이 붙기 전까지 범위 확인용.
+	// Area 와 두 범위를 플레이 중에도 보이게 한다. 범위 확인용.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rest|Debug")
 	bool bShowDebugArea = false;
 
@@ -232,18 +183,4 @@ private:
 	// 지금 앉아 있는 1명. 서버가 정하고 전원에게 전파된다.
 	UPROPERTY(ReplicatedUsing = OnRep_Occupant)
 	TObjectPtr<ACWPlayerCharacter> Occupant;
-
-	// 내 화면의 로컬 플레이어가 프롬프트 영역 안에 있는가. 머신마다 따로 굴러간다.
-	bool bLocalPlayerInside = false;
-
-	// 지금 내 화면에 띄우고 있는 것. 바뀐 순간에만 알리려고 들고 있는다.
-	ECWRestPromptState PromptState = ECWRestPromptState::Hidden;
-
-	// 델리게이트는 최하단에 배치
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Rest")
-	FCWOnRestZoneOccupantChangedSignature OnOccupantChangedDelegate;
-
-	UPROPERTY(BlueprintAssignable, Category = "Rest")
-	FCWOnRestPromptChangedSignature OnPromptChangedDelegate;
 };

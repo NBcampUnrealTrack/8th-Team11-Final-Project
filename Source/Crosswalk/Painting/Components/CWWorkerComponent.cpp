@@ -40,23 +40,6 @@ void UCWWorkerComponent::BeginPlay()
 	{
 		TemperatureComponent = Owner->FindComponentByClass<UCWTemperatureComponent>();
 	}
-
-	// 등록은 권한과 무관하게 모든 머신에서 한다.
-	// 먼지 존이 "지금 쓸고 있는 사람" 을 각 머신에서 찾아야 원격 화면에도 붓 자취가 남는다.
-	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
-	{
-		PaintingSubsystem->RegisterWorker(this);
-	}
-}
-
-void UCWWorkerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	if (UCWPaintingSubsystem* PaintingSubsystem = UCWPaintingSubsystem::Get(this))
-	{
-		PaintingSubsystem->UnregisterWorker(this);
-	}
-
-	Super::EndPlay(EndPlayReason);
 }
 
 void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -88,7 +71,7 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	CurrentWorkLocation = WorkLocation;
 
 	// 커서 지점은 소유 클라이언트만 알 수 있으므로 작업 중에는 서버로 올려보낸다.
-	// (게이지/미니게임 존은 이 값을 쓰지 않지만, 칸을 칠하는 존은 이게 붓 중심이 된다)
+	// (지점이 필요 없는 존은 이 값을 쓰지 않지만, 칸을 칠하는 존은 이게 붓 중심이 된다)
 	if (bIsLocalWorker && !bIsServer && bWorking)
 	{
 		const float Now = World->GetTimeSeconds();
@@ -99,10 +82,6 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		}
 	}
 
-	// 존이 스스로 보고한 체온 상승분을 흘려보낸다.
-	// 작업 키를 누르고 있지 않아도(미니게임이 혼자 도는 동안) 나가야 하므로 아래 조기 반환보다 위에 둔다.
-	FlushPendingWorkHeat();
-
 	// 페인트가 없으면 작업이 진행되지 않는다. (기획서 5-1)
 	//
 	// 작업하려 했는데 페인트가 없는 경우만 잡는다. 작업 키를 놓거나 다운되면 저절로 풀린다.
@@ -110,16 +89,7 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	// 머리 위에 "페인트가 부족합니다!" 가 뜨면 안 된다.
 	const bool bWantsToWork = bWorking && !bWorkBlocked && FoundZone != nullptr;
 
-	// 미니게임 존은 작업 키를 떼도 선이 계속 나아가므로, 소진으로 멈춘 것을 존이 따로 알려준다.
-	// (NotifyZonePaintDepleted) 그 보고는 여기서 푼다. 페인트가 채워졌거나, 존을 벗어났거나,
-	// 다운됐으면 더 이상 "페인트가 없어 막혀 있다" 가 아니다.
-	// 도구를 내려놓은 경우도 HasPaintForWork 가 true 라 여기서 같이 풀린다. (맨손은 언제나 true)
-	if (bZoneReportedDepleted && (FoundZone == nullptr || bWorkBlocked || HasPaintForWork()))
-	{
-		bZoneReportedDepleted = false;
-	}
-
-	SetPaintDepleted((bWantsToWork || bZoneReportedDepleted) && !HasPaintForWork());
+	SetPaintDepleted(bWantsToWork && !HasPaintForWork());
 
 	// 작업 애니메이션이 보는 값. 아래 조기 반환 앞에 둬야 작업이 끝난 프레임에도 false 로 내려간다.
 	// 여기까지 오는 것은 서버와 소유 클라이언트뿐이다. (위쪽 조기 반환)
@@ -128,20 +98,20 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	ShowDebugPaint();
 
 	// 진행도를 실제로 올리는 것은 서버뿐이다.
-	if (!bWantsToWork || bPaintDepleted)
+	if (!bWorkEffective)
 	{
 		return;
 	}
 
 	// 여기서 서버/클라이언트를 가르지 않는다. 권위 모델은 존마다 다르기 때문이다.
-	//   게이지·칸·먼지 존 : 서버가 진행도를 올린다 (다 같이 작업하는 대상)
-	//   테두리 미니게임   : 그리는 본인 기계에서만 돌고 결과만 서버에 올린다
+	//   칸·먼지 존  : 서버가 진행도를 올린다 (다 같이 작업하는 대상)
+	//   테두리 존   : 그리는 본인 기계에서 칸을 확정하고 결과만 서버에 올린다
 	// 어느 쪽인지는 각 존의 ApplyWork 가 스스로 판단한다.
 
 	// 체온이 높을수록 작업이 느려진다. (체온 기획서 4.2)
 	//
-	// 존마다 따로 처리하지 않고 넘겨주는 시간을 줄여서 한 번에 적용한다. 게이지 존이든
-	// 테두리 미니게임이든 "흐른 시간" 으로 진행하므로, 시간을 줄이면 그대로 느려진다.
+	// 존마다 따로 처리하지 않고 넘겨주는 시간을 줄여서 한 번에 적용한다. 시간으로 진행하는
+	// 존은 "흐른 시간" 으로 진행하므로, 시간을 줄이면 그대로 느려진다.
 	const float WorkSpeedFactor = GetWorkSpeedFactor();
 	const float EffectiveDeltaTime = DeltaTime * WorkSpeedFactor;
 
@@ -151,96 +121,24 @@ void UCWWorkerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	// 상승량과 하락량이 같아지는 지점에서 저절로 멈춘다. 상한값을 박아둘 필요가 없다.
 	// 여기에 DeltaTime 을 그대로 넣으면 균형점이 사라져 체온이 무한정 올라간다.
 	//
-	// 진행이 자기 Tick 에서 도는 존은 제외한다. 그런 존은 작업 키를 누른 프레임에만 여기로 오므로
-	// 여기서 올리면 부스트할 때만 더워진다. 대신 존이 SubmitWorkHeat 로 직접 보고한다.
-	//
 	// 작업이 실제로 진행된 프레임에만, 그때까지 쌓인 작업 시간을 체온으로 넘긴다.
 	//
 	// 존을 찾았다는 것만으로 올리면 이미 칠한 자리에 붓을 대고 있어도 체온만 오른다.
 	// 칸을 칠하는 존은 HasWorkAt 으로 "지금 이 붓질이 뒤집을 칸이 있는가" 를 답한다.
-	// 지점 개념이 없는 존(게이지, 먼지)은 기본값 true 라 매 프레임 그대로 넘어간다.
+	// 지점 개념이 없는 존(먼지)은 기본값 true 라 매 프레임 그대로 넘어간다.
 	//
 	// 쌓았다가 넘기는 이유는 MaxUnheatedWorkSeconds 주석 참고. 진행이 이어지는 한 흐른 시간이
 	// 전부 반영되므로 상승량은 예전과 같고, 덧칠만 할 때만 멈춘다.
 	UnheatedWorkSeconds = FMath::Min(UnheatedWorkSeconds + EffectiveDeltaTime, MaxUnheatedWorkSeconds);
 
-	if (bIsServer && TemperatureComponent != nullptr && !FoundZone->DrivesOwnWorkHeat()
-		&& FoundZone->HasWorkAt(this, WorkLocation))
+	if (bIsServer && TemperatureComponent != nullptr && FoundZone->HasWorkAt(this, WorkLocation))
 	{
 		TemperatureComponent->AddWorkHeat(UnheatedWorkSeconds);
 		UnheatedWorkSeconds = 0.f;
 	}
 
-	// 존이 게이지 방식이든 칸 방식이든 미니게임이든 이 한 줄로 끝난다.
+	// 존이 칸 방식이든 차징 방식이든 이 한 줄로 끝난다.
 	FoundZone->ApplyWork(this, WorkLocation, EffectiveDeltaTime);
-}
-
-void UCWWorkerComponent::SubmitWorkHeat(float EffectiveWorkSeconds)
-{
-	const AActor* Owner = GetOwner();
-	if (Owner == nullptr || EffectiveWorkSeconds <= 0.f)
-	{
-		return;
-	}
-
-	// 리슨 서버의 호스트. 자기 체온이므로 바로 올린다.
-	if (Owner->HasAuthority())
-	{
-		if (TemperatureComponent != nullptr)
-		{
-			TemperatureComponent->AddWorkHeat(EffectiveWorkSeconds);
-		}
-
-		return;
-	}
-
-	// 클라이언트. 모아 뒀다가 다음 Tick 에서 한 번에 올린다.
-	PendingWorkHeat += EffectiveWorkSeconds;
-}
-
-void UCWWorkerComponent::NotifyZonePaintDepleted()
-{
-	bZoneReportedDepleted = true;
-
-	// 알림을 남에게도 띄우려면 서버가 알아야 한다. 미니게임은 이 기계에서만 돌기 때문에
-	// 서버가 스스로는 소진 시점을 잡을 수 없다. (기획서 5-4)
-	if (GetOwner() != nullptr && !GetOwner()->HasAuthority())
-	{
-		Server_NotifyZonePaintDepleted();
-	}
-}
-
-void UCWWorkerComponent::Server_NotifyZonePaintDepleted_Implementation()
-{
-	bZoneReportedDepleted = true;
-}
-
-void UCWWorkerComponent::FlushPendingWorkHeat()
-{
-	const AActor* Owner = GetOwner();
-	const UWorld* World = GetWorld();
-	if (Owner == nullptr || World == nullptr || Owner->HasAuthority() || PendingWorkHeat <= 0.f)
-	{
-		return;
-	}
-
-	const float Now = World->GetTimeSeconds();
-	if (Now - LastWorkHeatSendTime < WorkHeatSendInterval)
-	{
-		return;
-	}
-
-	LastWorkHeatSendTime = Now;
-	Server_SubmitWorkHeat(PendingWorkHeat);
-	PendingWorkHeat = 0.f;
-}
-
-void UCWWorkerComponent::Server_SubmitWorkHeat_Implementation(float EffectiveWorkSeconds)
-{
-	if (TemperatureComponent != nullptr)
-	{
-		TemperatureComponent->AddWorkHeat(EffectiveWorkSeconds);
-	}
 }
 
 void UCWWorkerComponent::ConsumePaint(float Amount)
@@ -289,20 +187,6 @@ void UCWWorkerComponent::SetPaintDepleted(bool bNewDepleted)
 	}
 
 	bPaintDepleted = bNewDepleted;
-
-	HandlePaintDepletedChanged();
-}
-
-void UCWWorkerComponent::OnRep_PaintDepleted()
-{
-	// 원격 캐릭터는 Tick 이 조기 반환하므로 이 경로로만 상태가 들어온다.
-	// 소유 클라이언트가 미리 같은 값으로 맞춰 둔 경우에는 값이 바뀌지 않아 여기까지 오지 않는다.
-	HandlePaintDepletedChanged();
-}
-
-void UCWWorkerComponent::HandlePaintDepletedChanged()
-{
-	OnPaintDepletedChanged.Broadcast(this, bPaintDepleted);
 }
 
 float UCWWorkerComponent::GetWorkSpeedFactor() const
@@ -312,7 +196,7 @@ float UCWWorkerComponent::GetWorkSpeedFactor() const
 
 void UCWWorkerComponent::StartWork()
 {
-	// 소유 클라이언트에서는 즉시 반영한다. 미니게임 선의 로컬 가속이 이 값을 본다.
+	// 소유 클라이언트에서는 즉시 반영한다. 서버 값이 오면 덮인다.
 	bWorking = true;
 	bCancelRequested = false;
 
@@ -354,8 +238,8 @@ void UCWWorkerComponent::CancelWork()
 	bCancelRequested = true;
 	bWorking = false;
 
-	// 미니게임은 이 기계에서 돌고 있으므로 여기서 바로 끈다.
-	// 서버에 취소를 요청하는 게 아니다. 서버에는 돌고 있는 미니게임이 없다.
+	// 차징 상태는 이 기계에서 돌고 있으므로 여기서 바로 끈다.
+	// 서버에 취소를 요청하는 게 아니다. 서버에는 돌고 있는 차징이 없다.
 	if (TargetZone != nullptr)
 	{
 		TargetZone->CancelWork();
@@ -419,8 +303,8 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 	// 작업 지점의 기본값은 캐릭터 위치다.
 	//
 	// 존을 "고르는" 기준과 작업 "지점" 을 분리한 이유:
-	//   - 게이지가 차오르는 존(2단계 테두리)은 지점이 필요 없다. 존 옆에 서서 누르면 된다.
-	//   - 칸을 칠하는 존(1/3단계)은 커서가 가리키는 지점을 붓 중심으로 써야 한다.
+	//   - 지점이 필요 없는 존은 존 옆에 서서 누르면 된다.
+	//   - 칸을 칠하는 존은 커서가 가리키는 지점을 붓 중심으로 써야 한다.
 	OutWorkLocation = PawnLocation;
 
 	if (IsLocallyControlledWorker())
@@ -473,7 +357,7 @@ ACWBaseWorkZone* UCWWorkerComponent::FindTargetZone(FVector& OutWorkLocation) co
 
 		// 작업할 수 있는 위치인지는 존이 판단한다.
 		//
-		// 존마다 기준이 다르다. 게이지 존이나 미니게임은 "존 옆에 서 있어야 한다" 가 맞지만,
+		// 존마다 기준이 다르다. 지점이 필요 없는 존은 "존 옆에 서 있어야 한다" 가 맞지만,
 		// 칸을 칠하는 존은 "붓이 닿는 곳에 칸이 있으면 된다" 가 맞다. 후자를 박스 거리로
 		// 판단하면 격자가 박스보다 넓게 뻗은 만큼(바깥 고리) 손이 닿는데도 작업이 막힌다.
 		if (!Zone->IsWorkerInRange(this, OutWorkLocation))
@@ -536,46 +420,6 @@ void UCWWorkerComponent::SetTargetZone(ACWBaseWorkZone* NewZone)
 	}
 
 	TargetZone = NewZone;
-	OnTargetZoneChanged.Broadcast(this, TargetZone);
-}
-
-void UCWWorkerComponent::ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress)
-{
-	if (Zone == nullptr)
-	{
-		return;
-	}
-
-	if (GetOwner() != nullptr && GetOwner()->HasAuthority())
-	{
-		Zone->ReceiveReportedProgress(this, NewProgress);
-		return;
-	}
-
-	// 완주는 놓치면 작업이 끝나지 않으므로 신뢰 채널로 따로 보낸다.
-	if (NewProgress >= 1.f)
-	{
-		Server_ReportWorkCompleted(Zone);
-		return;
-	}
-
-	Server_ReportWorkProgress(Zone, NewProgress);
-}
-
-void UCWWorkerComponent::Server_ReportWorkProgress_Implementation(ACWBaseWorkZone* Zone, float NewProgress)
-{
-	if (Zone != nullptr)
-	{
-		Zone->ReceiveReportedProgress(this, NewProgress);
-	}
-}
-
-void UCWWorkerComponent::Server_ReportWorkCompleted_Implementation(ACWBaseWorkZone* Zone)
-{
-	if (Zone != nullptr)
-	{
-		Zone->ReceiveReportedProgress(this, 1.f);
-	}
 }
 
 void UCWWorkerComponent::SubmitBrushStrokes(ACWBaseWorkZone* Zone, const TArray<FCWBrushStroke>& Strokes)
@@ -640,16 +484,6 @@ bool UCWWorkerComponent::IsParryBlocked() const
 bool UCWWorkerComponent::IsAimingBlocked() const
 {
 	return bWorking && TargetZone != nullptr && TargetZone->BlocksAiming();
-}
-
-int32 UCWWorkerComponent::GetChargeLevel() const
-{
-	return (TargetZone != nullptr) ? TargetZone->GetChargeLevel() : 0;
-}
-
-float UCWWorkerComponent::GetChargeRatio() const
-{
-	return (TargetZone != nullptr) ? TargetZone->GetChargeRatio() : 0.f;
 }
 
 bool UCWWorkerComponent::IsLocalWorker() const
