@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
+#include "Data/Enums/CWSessionTypes.h"
 #include "Data/Enums/CWUITypes.h"
 #include "UI/Data/CWUIPageConfigDataAsset.h"
 #include "UI/Feedback/CWBaseConfirmDialog.h"
@@ -125,6 +126,11 @@ public:
 	void SetPauseMenu(UCWPauseMenuWidget* InMenu);
 	void ClearPauseMenu(UCWPauseMenuWidget* InMenu);
 	UCWSessionViewModel* GetSessionViewModel() const;
+
+	// 방 나가기(DestroyRoom) 완료의 공통 후속 처리 - 성공이면 메뉴 맵을 열고, 실패하면 사유를 토스트로 알림
+	// 화면마다 복제하던 처리를 한 곳에 모은 것이며, 방 나가기가 아닌 작업의 완료는 처리하지 않고 false 를 반환
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Session")
+	bool HandleRoomLeaveResult(ECWSessionOperation Operation, bool bSuccess);
 
 	// HUD 버튼과 같은 입구를 키 입력에도 열어 줌
 	// 다른 페이지가 열려 있거나 차단 중이면 열지 않음

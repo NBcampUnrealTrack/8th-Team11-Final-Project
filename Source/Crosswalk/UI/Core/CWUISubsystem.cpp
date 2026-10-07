@@ -9,6 +9,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
 #include "MVVMGameSubsystem.h"
@@ -788,6 +789,34 @@ void UCWUISubsystem::ClearPauseMenu(UCWPauseMenuWidget* InMenu)
 UCWSessionViewModel* UCWUISubsystem::GetSessionViewModel() const
 {
 	return SessionViewModel.Get();
+}
+
+bool UCWUISubsystem::HandleRoomLeaveResult(ECWSessionOperation Operation, bool bSuccess)
+{
+	if (Operation != ECWSessionOperation::DestroyRoom)
+	{
+		return false;
+	}
+
+	const UCWSessionViewModel* ViewModel = GetSessionViewModel();
+	if (bSuccess)
+	{
+		const FString MenuMap = IsValid(ViewModel) ? ViewModel->GetMenuMapPath() : FString();
+		if (!MenuMap.IsEmpty())
+		{
+			UGameplayStatics::OpenLevel(GetWorld(), FName(*MenuMap));
+			return true;
+		}
+
+		// 방은 나갔지만 돌아갈 맵이 설정되지 않은 개발 설정 오류 - 화면이 멈춘 것처럼 보이지 않게 알림
+		UE_LOG(LogCWUI, Error, TEXT("UISubsystem: menu map path is not configured."));
+		ShowToast(NSLOCTEXT("CWSessionUI", "MenuMapMissing", "메뉴 맵 설정을 확인해 주세요."));
+		return true;
+	}
+
+	// 실패 사유는 뷰모델이 갖고 있으며, 뷰모델이 없으면 일반 문구로 대신함
+	ShowToast(IsValid(ViewModel) ? ViewModel->GetLastFailureText() : NSLOCTEXT("CWSessionUI", "LeaveRoomFailed", "방을 나가지 못했습니다. 다시 시도해 주세요."));
+	return true;
 }
 
 UUserWidget* UCWUISubsystem::GetFocusTargetWidget() const
