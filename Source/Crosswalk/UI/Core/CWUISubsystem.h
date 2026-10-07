@@ -6,6 +6,7 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "Data/Enums/CWUITypes.h"
 #include "UI/Data/CWUIPageConfigDataAsset.h"
+#include "UI/Feedback/CWBaseConfirmDialog.h"
 #include "CWUISubsystem.generated.h"
 
 class UCWUIRootWidget;
@@ -176,6 +177,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
 	bool ClosePopup(UUserWidget* InWidget);
 
+	// 확인·취소 팝업을 만들어 표시하고 그 팝업을 반환. 열지 못하면 null 이며 콜백은 부르지 않음
+	// ESC 는 취소와 같고, 팝업이 결과 없이 사라지면(맵 이동·소유자 파기) 어느 콜백도 부르지 않음
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	UCWBaseConfirmDialog* ShowConfirmPopup(
+		TSubclassOf<UCWBaseConfirmDialog> DialogClass,
+		FText Message,
+		FCWConfirmResultSignature OnConfirmed,
+		FCWConfirmResultSignature OnCancelled
+	);
+
+	// 확인 버튼만 있는 안내 팝업. 확인을 누르면 닫히고 콜백은 없음
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
+	UCWBaseConfirmDialog* ShowNoticePopup(TSubclassOf<UCWBaseConfirmDialog> DialogClass, FText Message);
+
 	// 비차단 안내 문구를 토스트 큐에 추가
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
 	void ShowToast(const FText& Message);
@@ -186,6 +201,15 @@ public:
 	void CopyTextToClipboard(const FString& Text);
 
 private:
+	// 확인 팝업을 만들고 열기까지의 공통 경로
+	UCWBaseConfirmDialog* OpenConfirmDialog(
+		TSubclassOf<UCWBaseConfirmDialog> DialogClass,
+		const FText& Message,
+		bool bShowCancel,
+		FCWConfirmResultSignature OnConfirmed,
+		FCWConfirmResultSignature OnCancelled
+	);
+
 	// 대기 중인 다음 토스트를 생성하고 표시
 	void ShowNextToast();
 
