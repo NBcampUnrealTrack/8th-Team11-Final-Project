@@ -797,6 +797,37 @@ void ACWBaseVehicle::OnConstruction(const FTransform& Transform)
 	}
 }
 
+void ACWBaseVehicle::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	/**
+	 * 생성자에서 건 복제 설정을 여기서 다시 못박는다. 신호 제어기(ACWTrafficDirector)와 같은 이유다.
+	 *
+	 * BP CDO 는 부모 C++ 기본값을 따라가지 않고 에셋에 굳은 값을 쓴다. 차종 BP 하나가
+	 * 복제를 끄거나 무브먼트 복제를 켜 두면 컴파일은 통과하고 런타임에만 어긋난다.
+	 * 제어기는 실제로 bAlwaysRelevant 와 bReplicates 를 한 번씩 그렇게 잃었다.
+	 *
+	 * 셋 다 배치로 고를 값이 아니라서 묶어서 막는다. 하나만 막으면 옆 칸으로 같은 버그가 난다.
+	 * - 복제가 꺼지면 클라이언트에 차가 아예 안 생긴다.
+	 * - 무브먼트 복제가 켜지면 서버 트랜스폼이 DistanceAlongLane 으로 계산한 위치와 싸운다.
+	 * - 외형 컴포넌트 복제가 꺼지면 VariantPick 이 안 와서 차종 외형이 기기마다 달라진다.
+	 *
+	 * NetUpdateFrequency 는 튜닝 값이라 막지 않는다. BP 에서 바꾸는 것이 맞다.
+	 * SetReplicates 는 권한 쪽에서만 부른다. 아니면 엔진이 경고만 찍고 아무것도 하지 않는다.
+	 */
+	if (GetLocalRole() == ROLE_Authority)
+	{
+		SetReplicates(true);
+		SetReplicateMovement(false);
+
+		if (AppearanceComponent)
+		{
+			AppearanceComponent->SetIsReplicated(true);
+		}
+	}
+}
+
 void ACWBaseVehicle::BeginPlay()
 {
 	Super::BeginPlay();

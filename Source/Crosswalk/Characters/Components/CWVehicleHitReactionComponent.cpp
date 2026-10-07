@@ -102,6 +102,9 @@ void UCWVehicleHitReactionComponent::StartHitReaction(const FCWVehicleHitContext
 	{
 		World->GetTimerManager().ClearTimer(HitLockTimerHandle);
 
+		// 앞선 피격의 기상 대기 타이머가 남아 있으면 이번 잠금을 중간에 풀어 버린다.
+		World->GetTimerManager().ClearTimer(GetUpWaitTimerHandle);
+
 		// 착지 통보가 끝내 오지 않아도 언젠가는 풀려야 한다.
 		World->GetTimerManager().SetTimer(
 			LandingWaitTimerHandle,
@@ -142,6 +145,16 @@ void UCWVehicleHitReactionComponent::RequestGetUp()
 
 	// 잠금은 아직 그대로다. 일어나는 동안 조작이 들어가면 몸이 애니메이션과 따로 논다.
 	OnGetUpRequested.Broadcast(this);
+
+	/**
+	 * 기상이 Broadcast 안에서 바로 끝났으면 안전장치를 걸 필요가 없다.
+	 * (래그돌이 꺼져 있거나 기상 몬타주가 없을 때 NotifyGetUpFinished 가 그 자리에서 불린다)
+	 * 여기서 걸면 잠금이 이미 풀린 뒤에 타이머가 남아, 다음 피격의 잠금을 끊는다.
+	 */
+	if (!bHitLocked || !bWaitingForGetUp)
+	{
+		return;
+	}
 
 	if (UWorld* World = GetWorld())
 	{
