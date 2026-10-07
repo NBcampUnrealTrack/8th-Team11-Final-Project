@@ -70,8 +70,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Parry")
 	float ParryAngle = 360.f;
 
-	// 대상 차종은 여기 없다. 이 컨텍스트를 받는 쪽이 차량 자신이라 자기 차종을 이미 안다.
-	// 연출 쪽이 볼 차종은 FCWParrySyncData::VehicleType 이 따로 나른다.
+	// 대상 차량 정보는 여기 없다. 이 컨텍스트를 받는 쪽이 차량 자신이다.
 
 	/**
 	 * 이 시도를 판정할 때 차량을 몇 초 되돌려 볼 것인가. (랙 보정)
