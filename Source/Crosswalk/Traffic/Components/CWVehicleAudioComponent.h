@@ -21,11 +21,8 @@ class USoundBase;
  * 각자의 화면에서만 내릴 수 있다. 서버가 한 대를 골라 전원에게 보내면 누군가에게는
  * 멀어서 안 들리고 누군가에게는 겹친다. 대역폭도 0 으로 끝난다.
  *
- * 경적이 아무 때나 울리지 않도록 세 겹으로 막는다. 한 겹씩 담당이 다르다.
- *   1. 들리는 거리 안인가(HornAudibleRange) - 안 들릴 소리가 예산을 까먹지 않게 한다.
- *   2. 이 차가 최근에 울렸나(HornCooldownSeconds)  - 같은 차가 연달아 울리는 것을 막는다.
- *   3. 월드 전체가 최근에 울렸나(UCWTrafficSubsystem::TryConsumeHornBudget)
- *      - 서로 다른 차 여러 대가 같은 순간에 우는 것을 막는다.
+ * 경적은 접근 경고(UpdateApproachWarning)로만 운다. 차 한 대가 로컬 플레이어에게 한 번만
+ * 울리므로 따로 쿨다운이나 월드 예산을 두지 않는다.
  *
  * 동시 발성 상한은 여기서 세지 않는다. 그쪽은 Sound Concurrency 애셋(Max Count / Stop
  * Quietest)이 엔진 차원에서 이미 하는 일이고, 코드로 또 세면 두 벌이 서로 다른 답을 낸다.
@@ -43,20 +40,6 @@ class CROSSWALK_API UCWVehicleAudioComponent : public UActorComponent
 
 public:
 	UCWVehicleAudioComponent();
-
-	/**
-	 * 경적을 울린다. 세 겹의 게이트(거리·차량 쿨다운·월드 예산)를 모두 통과했을 때만 난다.
-	 *
-	 * **배경 연출용 입구다.** 게이트가 "가끔 울린다" 를 전제로 하므로 경고에는 쓰지 않는다 -
-	 * 4 번에 1 번만 나는 경고는 없느니만 못하다. 접근 경고는 UpdateApproachWarning 이
-	 * 게이트를 건너뛰고 따로 울린다.
-	 *
-	 * 이 함수를 스스로 부르는 곳은 없다. 계기는 BP 에서 붙인다.
-	 *
-	 * @return 실제로 소리가 났으면 true. 게이트에 걸렸으면 false.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Traffic|Audio")
-	bool RequestHorn();
 
 protected:
 	virtual void BeginPlay() override;
@@ -127,13 +110,13 @@ private:
 	 * **차 한 대는 한 번만 운다.** 플레이어가 경로를 들락거릴 때 경적이 따라 붙었다
 	 * 떨어졌다 하는 것을 막는다. 대신 피했다가 다시 들어가면 두 번째 경고는 없다.
 	 *
-	 * RequestHorn 의 게이트를 타지 않는다. 쿨다운과 월드 예산은 "가끔 울린다" 를 만드는
-	 * 값이라, 차 세 대가 동시에 나에게 오는 가장 위험한 순간에 한 대만 울리게 된다.
+	 * 쿨다운이나 월드 예산을 두지 않는다. 그런 값은 "가끔 울린다" 를 만드는 값이라,
+	 * 차 세 대가 동시에 나에게 오는 가장 위험한 순간에 한 대만 울리게 된다.
 	 * 대신 위협 판정(ThreatLateralTolerance 120cm)이 좁아서 그것이 자연스러운 상한이 된다.
 	 */
 	void UpdateApproachWarning();
 
-	/** 게이트 없이 경적을 붙여 재생한다. RequestHorn 과 경고가 함께 쓴다. */
+	/** 경적을 차에 붙여 재생한다. 접근 경고가 부른다. */
 	void SpawnHorn();
 
 	/** 로컬 리스너(카메라)의 위치와 속도. 리스너가 없으면 false. */
@@ -147,7 +130,7 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USoundBase> EngineLoopSound;
 
-	/** 경적. 비워 두면 RequestHorn 이 항상 false 를 돌려준다. */
+	/** 경적. 비워 두면 접근 경고가 울리지 않는다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USoundBase> HornSound;
 
@@ -189,18 +172,6 @@ private:
 	/** 위 파라미터가 1.0 이 되는 속도(cm/s). 차종 기본 750 의 두 배를 상한으로 잡았다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true", ClampMin = "1.0"))
 	float EngineSpeedReference = 1500.f;
-
-	/** 이 거리(cm) 밖에서는 경적을 시도조차 하지 않는다. 감쇠 반경과 비슷하게 맞춘다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float HornAudibleRange = 4000.f;
-
-	/** 같은 차가 다시 울리기까지의 최소 간격(초). */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float HornCooldownSeconds = 12.f;
-
-	/** 월드 전체에서 경적 사이의 최소 간격(초). 여러 대가 같은 순간에 우는 것을 막는다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Audio", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float GlobalHornIntervalSeconds = 3.f;
 
 	/** 로컬 플레이어에게 다가올 때 경적으로 미리 알릴지. 끄면 경고가 아예 안 난다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Traffic|Warning", meta = (AllowPrivateAccess = "true"))
@@ -277,9 +248,6 @@ private:
 
 	// 경적 컴포넌트는 붙잡아 두지 않는다. 피치는 시작 시점에 한 번 정하고 끝까지 고정이라
 	// (SpawnHorn) 재생 중에 다시 만질 일이 없고, 원샷이라 끝나면 알아서 사라진다.
-
-	/** 마지막으로 경적을 울린 월드 시각(초). 한 번도 안 울렸으면 음수로 남는다. */
-	float LastHornTime = -UE_BIG_NUMBER;
 
 	/** 이 차가 로컬 플레이어에게 이미 경고했는지. 한 번 서면 다시 내려가지 않는다. */
 	bool bWarnedLocalPlayer = false;
