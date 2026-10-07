@@ -10,9 +10,6 @@
 class ACWGameState;
 class ACWTrafficVehicleSpawner;
 
-/** 적용 중인 단계가 바뀔 때. 연출이나 사운드를 붙일 자리다. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnTrafficDifficultyStepChangedSignature, int32, StepIndex, FName, StepName);
-
 /**
  * 스테이지 진행도에 따라 판 전체의 교통 밀도를 옮긴다.
  *
@@ -42,10 +39,6 @@ class CROSSWALK_API ACWTrafficDifficulty : public AActor
 
 public:
 	ACWTrafficDifficulty();
-
-	/** 지금 적용 중인 단계. 아직 아무것도 적용하지 않았으면 INDEX_NONE. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Difficulty")
-	int32 GetCurrentStepIndex() const { return CurrentStepIndex; }
 
 	/**
 	 * 이 진행도에 해당하는 단계를 찾는다. 없으면 INDEX_NONE.
@@ -140,8 +133,4 @@ private:
 
 	/** 구독을 끊기 위해 들고 있는 게임 상태. */
 	TWeakObjectPtr<ACWGameState> BoundGameState;
-
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Difficulty")
-	FCWOnTrafficDifficultyStepChangedSignature OnStepChanged;
 };

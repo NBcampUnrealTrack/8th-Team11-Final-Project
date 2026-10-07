@@ -71,13 +71,6 @@ public:
 	 */
 	void UpdateWheelSpin(float DeltaSeconds);
 
-	/**
-	 * 바퀴가 지금까지 돈 각도(도). 본에 꽂는 일은 C++ 이 하므로 BP 쪽 참고용이다.
-	 * 0~360 으로 감아 둔다. 각도를 무한히 키우면 부동소수 정밀도가 떨어져 회전이 튄다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	float GetWheelSpinDegrees() const { return WheelSpinDegrees; }
-
 private:
 	/** 소유 차량. 차량이 아닌 액터에 붙어 있으면 nullptr 이고 모든 동작이 비켜간다. */
 	ACWBaseVehicle* GetVehicle() const;

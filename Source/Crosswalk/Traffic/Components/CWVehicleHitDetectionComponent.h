@@ -13,11 +13,11 @@ class ACWBaseVehicle;
  *
  * 왜 컴포넌트인가
  *   ACWBaseVehicle 은 주행·동기화·패링을 들고 있고, 피격은 그중 어느 것과도 상태를
- *   공유하지 않는다. 필요한 것은 차량의 위치·속도·콜리전 박스와 차종 데이터(차종 ID,
- *   피격 하한 속도, 납작 피격 여부)뿐이라 게터로 읽는다.
+ *   공유하지 않는다. 필요한 것은 차량의 위치·속도·콜리전 박스와 차종 데이터(피격 하한 속도)뿐이라
+ *   게터로 읽는다.
  *
  * 데이터는 차량에 남아 있다
- *   VehicleType / MinHitSpeed / bFlattenOnHit 은 차종 BP 가 정하는 값이라 ACWBaseVehicle 의
+ *   MinHitSpeed 는 차종 BP 가 정하는 값이라 ACWBaseVehicle 의
  *   UPROPERTY 그대로다. 프로퍼티를 옮기면 차종 BP 에 입력한 값이 사라진다.
  *
  * 왜 매 틱 다시 보는가

@@ -131,8 +131,6 @@ void UCWTrafficLightComponent::ApplyState(ECWTrafficSignalState NewState)
 		*GetReadableName(),
 		*ACWTrafficDirector::GetSignalStateText(OldState).ToString(),
 		*ACWTrafficDirector::GetSignalStateText(NewState).ToString());
-
-	OnLightStateChanged.Broadcast(this, NewState, OldState);
 }
 
 int32 UCWTrafficLightComponent::CountTaggedComponents(FName Tag) const

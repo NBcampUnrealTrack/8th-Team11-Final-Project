@@ -9,7 +9,6 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Traffic/CWBaseVehicle.h"
-#include "Traffic/CWTrafficSubsystem.h"
 
 namespace
 {
@@ -27,54 +26,6 @@ UCWVehicleAudioComponent::UCWVehicleAudioComponent()
 	 * 있어도 비용이 눈에 띄지 않는다.
 	 */
 	PrimaryComponentTick.TickInterval = 0.05f;
-}
-
-bool UCWVehicleAudioComponent::RequestHorn()
-{
-	if (!HornSound || !CanPlaySound())
-	{
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// 1. 들리는 거리인가. 안 들릴 소리가 전역 예산을 까먹으면, 정작 옆에서 울려야 할
-	//    차가 조용해진다.
-	FVector ListenerLocation = FVector::ZeroVector;
-	FVector ListenerVelocity = FVector::ZeroVector;
-	if (!ResolveListener(ListenerLocation, ListenerVelocity))
-	{
-		return false;
-	}
-
-	if (FVector::DistSquared(ListenerLocation, GetOwner()->GetActorLocation()) > FMath::Square(HornAudibleRange))
-	{
-		return false;
-	}
-
-	// 2. 이 차가 최근에 울렸나.
-	const float Now = World->GetTimeSeconds();
-	if (Now - LastHornTime < HornCooldownSeconds)
-	{
-		return false;
-	}
-
-	// 3. 월드 전체가 최근에 울렸나. 여기까지 온 차들 중 먼저 부른 하나만 통과한다.
-	UCWTrafficSubsystem* TrafficSubsystem = UCWTrafficSubsystem::Get(this);
-	if (TrafficSubsystem && !TrafficSubsystem->TryConsumeHornBudget(GlobalHornIntervalSeconds))
-	{
-		return false;
-	}
-
-	SpawnHorn();
-
-	LastHornTime = Now;
-
-	return true;
 }
 
 void UCWVehicleAudioComponent::SpawnHorn()

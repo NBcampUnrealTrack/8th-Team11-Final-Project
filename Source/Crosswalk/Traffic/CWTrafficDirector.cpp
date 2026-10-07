@@ -64,11 +64,6 @@ bool ACWTrafficDirector::ControlsLane(const ACWTrafficLane* Lane) const
 	return ResolveLaneState(Lane) != ECWTrafficSignalState::Off;
 }
 
-bool ACWTrafficDirector::IsLaneGreen(const ACWTrafficLane* Lane) const
-{
-	return ResolveLaneState(Lane) == ECWTrafficSignalState::Green;
-}
-
 bool ACWTrafficDirector::IsLanePassable(const ACWTrafficLane* Lane) const
 {
 	/**
@@ -372,8 +367,6 @@ void ACWTrafficDirector::EnterStep(int32 StepIndex)
 	ApplyAssignments(Step.Assignments);
 
 	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 단계 %d(%s) / %.1f초"), *GetName(), StepIndex, *Step.StepName.ToString(), Step.Duration);
-
-	OnStepChanged.Broadcast(this, StepIndex, Step.StepName);
 
 	// 단계가 하나뿐이면 넘어갈 곳이 없다. 그 색으로 고정된다.
 	if (Sequence.Num() > 1)

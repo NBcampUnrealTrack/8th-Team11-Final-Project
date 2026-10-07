@@ -418,24 +418,3 @@ int32 UCWTrafficSubsystem::GetActiveVehicleCount() const
 
 	return Count;
 }
-
-bool UCWTrafficSubsystem::TryConsumeHornBudget(float MinIntervalSeconds)
-{
-	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	const float Now = World->GetTimeSeconds();
-	if (Now - LastHornTime < MinIntervalSeconds)
-	{
-		return false;
-	}
-
-	// 통과시킨 순간에 자리를 잡는다. 실제로 울렸는지 확인하지 않는다 - 그러려면 소리가
-	// 끝날 때까지 들고 있어야 하는데, 그 사이에 차가 사라지면 자리가 영영 안 풀린다.
-	LastHornTime = Now;
-
-	return true;
-}

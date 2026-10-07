@@ -949,8 +949,7 @@ protected:
 	 * 바닥 기준으로 정렬되어 있어서(ACWBaseVehicle::OnConstruction) 그 점이 지면에 붙어 있다.
 	 * 그대로 뿌리면 바퀴 밑에서 터진다. 차높이 절반쯤 올리는 값이 기본이다.
 	 *
-	 * 차종마다 높이가 다르지만 한 값으로 둔다. 연출용이라 정확할 필요가 없고, 차종별로
-	 * 나눌 상황이 되면 애초에 차량 쪽 ACWBaseVehicle::OnParriedFX 로 옮기는 게 맞다.
+	 * 차종마다 높이가 다르지만 한 값으로 둔다. 연출용이라 정확할 필요가 없다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Traffic|Parry")
 	FVector ParryEffectOffset = FVector(0.f, 0.f, 80.f);

@@ -104,20 +104,6 @@ public:
 	 */
 	bool FindActiveStopLine(const ACWTrafficLane* Lane, float FromDistance, float& OutStopLineDistance) const;
 
-	/**
-	 * 지금 경적을 울려도 되는지 묻고, 되면 그 자리를 잡는다. (월드 전체에서 한 대만)
-	 *
-	 * 차량 개별 쿨다운과 별개다. 차마다 따로 세면 "각자 12초에 한 번" 은 지켜지지만
-	 * 서른 대가 각자의 타이밍으로 울어서 결과적으로 계속 시끄럽다. 총량은 여기서 막는다.
-	 *
-	 * 서버·클라이언트가 각자 자기 월드에서 쓴다. 누가 울릴지 맞출 필요가 없다 -
-	 * 경적은 판정이 아니라 연출이고, 들리는 범위는 화면마다 다르기 때문이다.
-	 *
-	 * @param MinIntervalSeconds  직전 경적으로부터 비어 있어야 하는 시간(초)
-	 * @return 통과하면 true. 이때 내부 시각이 갱신되므로 부른 쪽은 반드시 울려야 한다.
-	 */
-	bool TryConsumeHornBudget(float MinIntervalSeconds);
-
 private:
 	/**
 	 * 시도 정보 기준으로 이 차량이 패링 후보인지 본다.
@@ -148,10 +134,4 @@ private:
 
 	/** 레벨에 배치된 정지선들. 같은 이유로 클라이언트에도 등록된다. */
 	TArray<TWeakObjectPtr<ACWTrafficStopLine>> StopLines;
-
-	/**
-	 * 이 월드에서 마지막으로 경적이 난 시각(초). TryConsumeHornBudget 만 만진다.
-	 * 한 번도 안 났으면 음수로 남아 첫 요청이 그대로 통과한다.
-	 */
-	float LastHornTime = -UE_BIG_NUMBER;
 };

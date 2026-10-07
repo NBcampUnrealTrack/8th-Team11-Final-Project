@@ -8,10 +8,6 @@
 #include "CWTrafficLightComponent.generated.h"
 
 class ACWTrafficDirector;
-class UCWTrafficLightComponent;
-
-/** 신호등 색이 바뀔 때. 태그 기반 자동 처리로 부족한 연출을 BP 에서 붙일 때 쓴다. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnTrafficLightStateChangedSignature, UCWTrafficLightComponent*, LightComponent, ECWTrafficSignalState, NewState, ECWTrafficSignalState, OldState);
 
 /**
  * 신호 그룹의 색을 화면에 보여주는 컴포넌트.
@@ -40,16 +36,6 @@ class CROSSWALK_API UCWTrafficLightComponent : public UActorComponent
 
 public:
 	UCWTrafficLightComponent();
-
-	UFUNCTION(BlueprintPure, Category = "Traffic|Light")
-	ECWTrafficSignalState GetLightState() const { return CurrentState; }
-
-	UFUNCTION(BlueprintPure, Category = "Traffic|Light")
-	ACWTrafficDirector* GetDirector() const { return Director; }
-
-	/** 지금 초록인지. 다른 로직이 신호를 물어볼 때 쓴다. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Light")
-	bool IsGreen() const { return CurrentState == ECWTrafficSignalState::Green; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -112,9 +98,4 @@ protected:
 
 private:
 	ECWTrafficSignalState CurrentState = ECWTrafficSignalState::Off;
-
-public:
-	/** 색이 바뀔 때. 태그 자동 처리 위에 얹을 연출이 있으면 여기 붙인다. */
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Light")
-	FCWOnTrafficLightStateChangedSignature OnLightStateChanged;
 };

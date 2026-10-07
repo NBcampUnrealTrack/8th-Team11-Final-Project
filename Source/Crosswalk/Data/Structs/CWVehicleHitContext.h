@@ -22,12 +22,4 @@ public:
 	// 충돌한 차량의 현재 속도
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
 	float VehicleSpeed = 0.f;
-
-	// 차종별 피격 프로파일을 찾기 위한 ID
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
-	FName VehicleType = NAME_None;
-
-	// 대형 트럭처럼 납작해지는 특수 피격을 사용할지 여부
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Hit")
-	bool bFlattenOnHit = false;
 };

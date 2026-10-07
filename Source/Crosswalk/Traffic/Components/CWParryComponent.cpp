@@ -273,8 +273,6 @@ void UCWParryComponent::Multicast_ParrySucceeded_Implementation(const FCWParrySy
 FCWParrySyncData UCWParryComponent::BuildParrySyncData(const FCWParryAttemptContext& ParryAttemptContext, ACWBaseVehicle& ParriedVehicle, int32 PropIndex) const
 {
 	FCWParrySyncData ParrySyncData;
-	ParrySyncData.TargetVehicle = &ParriedVehicle;
-	ParrySyncData.VehicleType = ParriedVehicle.GetVehicleType();
 
 	/**
 	 * 소품은 누른 사람이 이미 뽑았다(RequestParry). 여기서는 범위만 확인해 그대로 싣는다.
