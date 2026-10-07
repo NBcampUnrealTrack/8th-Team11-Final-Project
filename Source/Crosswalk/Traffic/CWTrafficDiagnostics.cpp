@@ -72,24 +72,47 @@ namespace
 		ECVF_Default);
 }
 
+/**
+ * Shipping 에서는 네 로그 모두 끈다.
+ *
+ * Shipping 은 UE_LOG 만 빠지고 로그를 만드는 작업(차량 대수 집계, 커넥션별 관련성 계산,
+ * 문자열 조립)은 그대로 돈다. 기본값이 켜짐이라 막지 않으면 아무도 못 보는 일을 계속 한다.
+ * 개발 빌드는 위의 기본값 그대로다.
+ */
 bool CWTrafficDiagnostics::IsSyncLoggingEnabled()
 {
+#if UE_BUILD_SHIPPING
+	return false;
+#else
 	return CVarTrafficLogSync.GetValueOnAnyThread();
+#endif
 }
 
 bool CWTrafficDiagnostics::IsNetCensusLoggingEnabled()
 {
+#if UE_BUILD_SHIPPING
+	return false;
+#else
 	return CVarTrafficLogNetCensus.GetValueOnGameThread();
+#endif
 }
 
 bool CWTrafficDiagnostics::IsNetRelevancyLoggingEnabled()
 {
+#if UE_BUILD_SHIPPING
+	return false;
+#else
 	return CVarTrafficLogNetRelevancy.GetValueOnAnyThread();
+#endif
 }
 
 bool CWTrafficDiagnostics::IsParryAimLoggingEnabled()
 {
+#if UE_BUILD_SHIPPING
+	return false;
+#else
 	return CVarTrafficLogParryAim.GetValueOnGameThread();
+#endif
 }
 
 const TCHAR* CWTrafficDiagnostics::GetNetRoleTag(const UObject* WorldContextObject)
