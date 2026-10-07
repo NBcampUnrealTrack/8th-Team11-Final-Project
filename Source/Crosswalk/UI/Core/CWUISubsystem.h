@@ -142,6 +142,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
 	void SetPauseMenuBlocked(bool bBlocked);
 
+	// 클리어 연출이 시작될 때 연출을 가리는 것을 닫음 - 일시정지 메뉴와 열려 있는 입장 안내 팝업
+	// 입장 안내를 닫지 않으면 클리어 뒤에도 결과 화면 위에 남음
+	void DismissOverlaysForClear();
+
 	// 설정 화면을 닫은 뒤 기존 메뉴로 키보드 포커스를 돌려줌
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Pause")
 	bool RestorePauseMenuFocus();
@@ -169,6 +173,25 @@ public:
 
 	// 입력이 막힌 메뉴나 클리어 화면에서 실행 가능한 안내처럼 보이지 않도록 함
 	bool CanShowInteractionPrompts() const;
+
+#pragma endregion
+
+#pragma region ClearSummary
+
+public:
+	// 클리어 연출이 결과 화면에 넘길 값을 기록 - 기록한 스테이지(맵)도 함께 저장
+	// HUD 위젯을 찾아 읽던 결합을 없애려는 것이며, 별 개수는 0~3 으로 보정
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Clear")
+	void SetClearSummary(float ElapsedSeconds, int32 StarCount);
+
+	// 현재 스테이지에서 기록된 값이 있으면 true - 없거나 다른 스테이지의 값이면 false 이며 출력값은 0
+	// 서브시스템은 맵 이동을 넘어 살아 있으므로 이전 스테이지의 값이 남아 있을 수 있어 맵 이름을 대조함
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Clear")
+	bool TryGetClearSummary(float& OutElapsedSeconds, int32& OutStarCount) const;
+
+	// 기록을 지움 - HUD 가 만들어질 때 새 판의 시작으로 호출
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Clear")
+	void ClearClearSummary();
 
 #pragma endregion
 
@@ -263,6 +286,12 @@ private:
 
 	// 클리어 연출 등으로 일시정지를 막아 둔 상태인지
 	bool bPauseMenuBlocked = false;
+
+	// 클리어 요약 - 유효 여부·기록한 맵·값
+	bool bClearSummaryValid = false;
+	FString ClearSummaryMap;
+	float ClearSummaryElapsedSeconds = 0.f;
+	int32 ClearSummaryStarCount = 0;
 
 	// 현재 World에 표시 중인 Root
 	UPROPERTY(Transient)
