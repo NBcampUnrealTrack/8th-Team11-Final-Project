@@ -8,6 +8,12 @@
 #include "Painting/Components/CWToolHolderComponent.h"
 #include "Net/UnrealNetwork.h"
 
+namespace
+{
+	// 비어 있지 않은 통이 HUD 에서 0% 로 보이지 않게 하는 최소 비율. (GetPaintRatio)
+	constexpr float MinVisiblePaintRatio = 0.01f;
+}
+
 ACWBaseTool::ACWBaseTool()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -185,12 +191,31 @@ float ACWBaseTool::GetPaintRatio() const
 		return 0.f;
 	}
 
-	return FMath::Clamp(PaintAmount / MaxPaintAmount, 0.f, 1.f);
+	const float Ratio = FMath::Clamp(PaintAmount / MaxPaintAmount, 0.f, 1.f);
+
+	// 비어 있지 않은 통은 최소 1% 로 내보낸다. HUD 는 이 값을 반올림해 퍼센트로 쓰는데,
+	// 그대로 두면 0.3% 남은 통이 "0%" 로 보인다. 잔량이 0 이 아니면 작업은 되고 테두리 존은
+	// 그 자투리로 한 칸을 칠해 주므로(BorderSketch FilterAffordableCells) "0% 인데 칠해진다" 로 읽힌다.
+	//
+	// 실제 잔량(PaintAmount)은 건드리지 않는다. 그쪽을 올리면 조금씩 깎는 작업에서 페인트가 끝없이 나온다.
+	return (PaintAmount > 0.f) ? FMath::Max(Ratio, MinVisiblePaintRatio) : 0.f;
 }
 
 float ACWBaseTool::SetPaintAmount(float NewAmount)
 {
-	const float Clamped = FMath::Clamp(NewAmount, 0.f, MaxPaintAmount);
+	float Clamped = FMath::Clamp(NewAmount, 0.f, MaxPaintAmount);
+
+	// 부동소수점 찌꺼기는 빈 통으로 친다.
+	//
+	// 잔량은 진행도 차이 × PaintCostFull 을 계속 빼서 만드는 값이라, 존 하나를 딱 다 칠해도
+	// 0.000004 같은 값이 남는 일이 흔하다. 그 값이 남아 있으면 HasPaint 는 "있다" 고 해서
+	// 작업 모션이 나오고 체온도 오르는데, 테두리 존은 KINDA_SMALL_NUMBER 이하를 "없다" 로 보고
+	// 칸을 안 칠한다. (BorderSketch FilterAffordableCells) 두 판정이 엇갈리는 틈을 여기서 막는다.
+	if (Clamped <= KINDA_SMALL_NUMBER)
+	{
+		Clamped = 0.f;
+	}
+
 	const float Delta = Clamped - PaintAmount;
 
 	if (FMath::IsNearlyZero(Delta))
