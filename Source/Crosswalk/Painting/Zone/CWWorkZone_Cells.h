@@ -87,10 +87,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsFillMode() const { return WorkMode == ECWCellWorkMode::FillCells; }
 
-	/** 이 존이 페인트 오염 레이어인가. (스트라이프 밖에 묻은 페인트를 전부 담는 존) */
-	UFUNCTION(BlueprintPure, Category = "Work")
-	bool IsPaintSpillLayer() const { return bPaintSpillLayer; }
-
 	virtual bool BlocksPaintSpill() const override;
 
 	/**
@@ -128,10 +124,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetOverspillMargin() const { return OverspillMargin; }
 
-	/** 이 도구가 삐져나간 페인트를 지우는 도구인가. (검은색 롤러) */
-	UFUNCTION(BlueprintPure, Category = "Work")
-	bool IsCleanupTool(ECWToolType ToolType) const;
-
 	/** 이 도구가 칸을 채우는 도구인가. FillTools 가 비어 있으면 WorkMode 로 판단한다. */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsFillTool(ECWToolType ToolType) const;
@@ -152,6 +144,12 @@ public:
 	 * 고리가 없는데도 고리만 지우게 두면 오염 레이어에서 검은 롤러가 통째로 먹통이 된다.
 	 */
 	bool HasOverspillRing() const;
+
+	/**
+	 * 이 도구의 붓질이 바깥 고리 칸만 건드리는가. 고리가 있는 존에서 정리 도구를 쓸 때다.
+	 * 붓질을 만드는 곳과 "할 일이 있는지 보는 곳" 이 같은 답을 써야 해서 함수로 뺐다.
+	 */
+	bool IsSpillOnlyStroke(ECWToolType ToolType) const { return IsCleanupTool(ToolType) && HasOverspillRing(); }
 
 	/** 정리 도구로 지울 수 있는 칸이 남아 있는가. 고리 유무에 따라 세는 대상이 다르다. */
 	int32 GetCleanableCellCount() const;
@@ -199,20 +197,6 @@ public:
 
 	/** 도색과 정리를 겸하는 존이라 "페인트 정리" 줄을 하나 더 낸다. */
 	virtual void GetExtraObjectives(TArray<FCWStageObjective>& OutObjectives) const override;
-
-	/**
-	 * 페인트가 말랐는가. 마르면 차량이 밟아도 더 이상 번지지 않는다.
-	 * 도색이 완료되고 PaintDryDelay 가 지나면 true 가 된다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Work")
-	bool IsPaintDry() const { return bPaintDry; }
-
-	UFUNCTION(BlueprintPure, Category = "Work")
-	int32 GetFilledCellCount() const { return FilledCellCount; }
-
-	/** 진행도로 세는 칸 중 채워진 수. 도색 진행도의 분자다. */
-	UFUNCTION(BlueprintPure, Category = "Work")
-	int32 GetCountedFilledCount() const { return CountedFilledCount; }
 
 	/**
 	 * Area 바깥으로 삐져나간 페인트 칸 수. 0 이면 정리가 끝난 상태다.
@@ -299,7 +283,7 @@ private:
 	 * 메쉬는 여기서 건드리지 않는다. 바뀐 칸만 표시해 두고 프레임 끝에 한 번에 반영한다.
 	 * (FlushCellMeshUpdates) 한 프레임에 여러 명이 칠하거나 차량 자국이 겹쳐도 렌더 상태는 한 번만 더러워진다.
 	 *
-	 * @return 실제로 바뀐 칸이 있으면 true
+	 * @return 실제로 바뀐 칸 수
 	 */
 	int32 ApplyStroke(const FCWBrushStroke& Stroke);
 
@@ -486,7 +470,7 @@ private:
 
 	/**
 	 * 중심점 주변 반경 안의 칸들을 켜거나 끈다.
-	 * @return 실제로 상태가 바뀐 칸이 하나라도 있으면 true
+	 * @return 실제로 상태가 바뀐 칸 수
 	 */
 	int32 SetCellsInRadius(const FVector& WorldCenter, float Radius, bool bNewFilled, bool bSpillOnly);
 
@@ -518,7 +502,7 @@ private:
 	 *
 	 * 칸이 크면 무시할 차이지만 이 존의 칸은 한 변이 4cm 도 안 될 수 있다. 그러면 붓 원의
 	 * 경계에 걸친 칸들이 기계마다 다르게 뒤집힌다. 게다가 본인 기계는 이미 칠한 것으로 알아서
-	 * (ApplyStroke 가 false 를 반환) 그 붓질을 다시 보내지 않기 때문에, 서버가 놓친 칸은
+	 * (ApplyStroke 가 0 을 반환) 그 붓질을 다시 보내지 않기 때문에, 서버가 놓친 칸은
 	 * 영영 안 채워진다. 칠한 사람 기계만 조금씩 더 칠해진 상태로 굳는다.
 	 *
 	 * 그래서 로컬에 적용하기 전에 먼저 반올림한다. 모든 기계가 같은 입력을 적용하게 된다.
@@ -588,9 +572,6 @@ private:
 	 * 발광이 영영 꺼진 채로 남는다. 그래서 MID 를 다시 물리는 자리에서도 같이 부른다.
 	 */
 	void RefreshPaintFieldHighlight();
-
-	/** 기존 칸 텍스처로 도색된 부분의 안내 테두리를 숨긴다. 네트워크 상태는 추가하지 않는다. */
-	void RefreshHighlightPaintMask();
 
 	/**
 	 * 칸 상태를 담을 텍스처를 만든다. 크기가 그대로면 아무것도 하지 않는다.
@@ -668,8 +649,7 @@ protected:
 	// 영역 비율에 맞춰 칸이 정사각형이 되게 잡는 게 보기 좋다.
 	//
 	// 칸 하나가 8~10cm 쯤 되어야 붓 자국처럼 보인다. 20cm 를 넘으면 어떤 머티리얼을 써도
-	// 네모가 눈에 띈다. 반대로 칸이 너무 잘면 붓질마다 인스턴스를 전부 다시 만드는 비용이
-	// 커진다. 전체 3000칸 근처부터 프레임에 영향이 온다.
+	// 네모가 눈에 띈다. 칸 수의 실질적인 상한은 칸 상태 스냅샷 크기다. (BuildGrid 참고)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	FIntPoint GridSize = FIntPoint(40, 20);
 
@@ -691,10 +671,10 @@ protected:
 	/**
 	 * 지금 설정으로 나오는 전체 칸 수. 바깥 고리까지 포함한다.
 	 *
-	 * 이 수가 곧 렌더 인스턴스 수다. **20,000 을 넘으면 프레임에 영향이 온다.**
-	 * 넘었으면 GridSize 를 줄여 칸을 키우거나, 박스를 줄이면 된다.
+	 * 칸 하나가 칸 상태 스냅샷의 비트 하나라, 이 수가 Reliable 로 나가는 스냅샷 크기를 정한다.
+	 * 스냅샷이 8KB 를 넘으면 BuildGrid 가 경고한다. 그때는 GridSize 를 줄여 칸을 키우거나, 박스를 줄이면 된다.
 	 */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "Work", meta = (DisplayName = "전체 칸 수 (2만 이하 권장)"))
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Work", meta = (DisplayName = "전체 칸 수"))
 	int32 CellCountPreview = 0;
 
 	// Area 바깥으로 몇 cm 까지 칠할 수 있는가. 여기 묻은 페인트는 진행도에 포함되지 않고,
@@ -715,15 +695,6 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
 	TArray<ECWToolType> FillTools;
-
-	// 칸을 지우는 도구. (검은색 롤러)
-	//
-	// 바깥 고리가 있는 존이면 고리 칸만 지운다. 완성된 횡단보도까지 지워지면 안 되기 때문이다.
-	// 고리가 없는 존(오염 레이어)이면 격자 전체를 지운다. 그쪽은 격자 전체가 곧 정리 대상이다.
-	//
-	// 이 도구는 AcceptedTools 에 없어도 존에 들어올 수 있고, 존이 완료된 뒤에도 계속 쓸 수 있다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work")
-	TArray<ECWToolType> CleanupTools;
 
 	// 삐져나간 페인트 정리를 체크리스트에 별도 줄로 낼 때 쓸 이름. ("페인트 정리")
 	//
@@ -1041,7 +1012,7 @@ private:
 	// 전체 격자 안에서 점수 영역이 시작되는 칸 좌표. 여백이 0 이면 (0, 0).
 	FIntPoint CountedOrigin = FIntPoint::ZeroValue;
 
-	// 바깥 고리 포함, 채워진 칸 전체 수. 메쉬를 그리는 데 쓴다.
+	// 바깥 고리 포함, 채워진 칸 전체 수. 바깥 고리 칸 수와 치울 칸 수를 셀 때 쓴다.
 	int32 FilledCellCount = 0;
 
 	// 점수 영역 안에서 채워진 칸 수. 진행도는 이것만 본다.

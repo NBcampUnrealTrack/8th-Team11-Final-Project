@@ -68,10 +68,6 @@ public:
 	 */
 	void AddBurst(const FVector& BurstLocation, int32 BrokenCount, const AActor* IgnoredActor = nullptr);
 
-	/** 남아 있는 자국 수. 0 이면 정리가 끝난 상태다. */
-	UFUNCTION(BlueprintPure, Category = "Work")
-	int32 GetDecalCount() const { return Decals.Num(); }
-
 protected:
 	/** 디버그 줄에 남은 자국 수를 덧붙인다. */
 	virtual FString GetDebugDetailText() const override;
@@ -88,9 +84,6 @@ private:
 
 	/** 이 지점 반경 안에 자국이 하나라도 있는가. */
 	bool HasDecalInRadius(const FVector& WorldCenter, float Radius) const;
-
-	/** 이 작업자가 자국을 지울 수 있는 도구를 들고 있는가. */
-	bool IsCleanupTool(ECWToolType ToolType) const;
 
 	/**
 	 * 이 자리에 겹치는 자국을 찾아 되살린다. 되살렸으면 true.
@@ -115,10 +108,6 @@ private:
 	void PruneLocalSpawnTimes();
 
 public:
-	// 자국을 지우는 도구. (검은색 롤러)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal")
-	TArray<ECWToolType> CleanupTools;
-
 	// 자국에 입힐 데칼 머티리얼. 비워두면 자국이 보이지 않는다. (판정은 정상 동작)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Decal")
 	TObjectPtr<UMaterialInterface> DecalMaterial;

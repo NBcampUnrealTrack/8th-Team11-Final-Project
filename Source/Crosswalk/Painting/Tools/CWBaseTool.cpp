@@ -82,7 +82,7 @@ void ACWBaseTool::Interact_Implementation(APawn* InstigatorPawn)
 bool ACWBaseTool::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
 	// 트렁크에 들어 있는 도구는 차량을 거쳐서만 나온다.
-	return !IsHeld() && !bStored;
+	return !IsHeld() && !IsStored();
 }
 
 bool ACWBaseTool::TryPickUp(APawn* NewHolder)
@@ -248,7 +248,6 @@ void ACWBaseTool::HandlePaintAmountChanged()
 
 	const float Ratio = GetPaintRatio();
 
-	OnPaintAmountChanged(PaintAmount, Ratio);
 	OnPaintChanged.Broadcast(this, PaintAmount, Ratio);
 }
 
@@ -307,7 +306,6 @@ void ACWBaseTool::HandleHeldStateChanged()
 	if (bNowHeld)
 	{
 		SetFocused(false);
-		OnPickedUp();
 	}
 	else
 	{
@@ -315,7 +313,6 @@ void ACWBaseTool::HandleHeldStateChanged()
 		// 종료 노티파이가 HeldTool을 찾을 수 없으므로 드롭 시점에 복구한다.
 		// 서버와 OnRep_Holder 양쪽에서 실행되어 원격 화면도 같은 상태가 된다.
 		SetActorHiddenInGame(bStored);
-		OnDropped();
 	}
 }
 
@@ -331,23 +328,8 @@ void ACWBaseTool::SetFocused(bool bNewFocused)
 	OnFocusChanged(bFocused);
 }
 
-void ACWBaseTool::OnPickedUp_Implementation()
-{
-	// BP 자식에서 연출을 넣는 자리.
-}
-
-void ACWBaseTool::OnDropped_Implementation()
-{
-	// BP 자식에서 연출을 넣는 자리.
-}
-
 void ACWBaseTool::OnFocusChanged_Implementation(bool bNewFocused)
 {
 	// 외곽선 포스트프로세스가 아직 없어도 해가 없고, 생기면 바로 하이라이트가 된다.
 	ToolMesh->SetRenderCustomDepth(bNewFocused);
-}
-
-void ACWBaseTool::OnPaintAmountChanged_Implementation(float NewAmount, float NewRatio)
-{
-	// BP 자식에서 도구 위 게이지를 갱신하는 자리.
 }

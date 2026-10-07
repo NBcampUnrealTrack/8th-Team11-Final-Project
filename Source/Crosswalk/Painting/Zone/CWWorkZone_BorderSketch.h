@@ -7,8 +7,6 @@
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
-class UNiagaraSystem;
-class USoundBase;
 class ACWWorkZone_Cells;
 
 /**
@@ -46,8 +44,7 @@ struct FCWBorderCell
  * 셋 중 하나라도 풀어주면 그 계산이 성립하지 않는다.
  *
  * 최소 홀드 0.3초를 못 채우고 떼면 아무것도 칠해지지 않는다(허탕). 탭 연타로 칸을 하나씩
- * 찍는 플레이를 막기 위한 것인데, **허탕에도 반드시 눈에 보이는 반응이 있어야 한다.**
- * 아무 일도 안 일어나면 입력이 씹힌 것으로 느껴진다. OnChargeReleased 가 단계 0 으로 불린다.
+ * 찍는 플레이를 막기 위한 것이다.
  *
  * 실패 개념은 없다. 칠한 칸은 되돌아가지 않는다.
  *
@@ -105,21 +102,7 @@ public:
 	virtual void ReceiveBorderCells(UCWWorkerComponent* Worker, const TArray<int32>& CellIndices) override;
 
 	/** 지금 차징 단계. 0 이면 아직 최소 홀드를 못 채웠다(허탕). */
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	virtual int32 GetChargeLevel() const override;
-
-	/** 게이지 채움용 0~1. 풀차징 시간 대비 얼마나 눌렀는가. */
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	virtual float GetChargeRatio() const override;
-
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	bool IsCharging() const { return bCharging; }
-
-	/** 이번 릴리즈에 칠해질 칸 목록. 4단계 프리뷰가 이걸 그대로 쓴다. */
-	void GetChargeTargetCells(TArray<int32>& OutCells) const;
-
-	UFUNCTION(BlueprintPure, Category = "Work|Border")
-	int32 GetCellCount() const { return Cells.Num(); }
+	int32 GetChargeLevel() const;
 
 	UFUNCTION(BlueprintPure, Category = "Work|Border")
 	int32 GetPaintedCellCount() const;
@@ -136,30 +119,6 @@ protected:
 
 	/** 퍼센트만으로는 몇 칸이 남았는지 안 보인다. 완료가 안 되는 이유를 가르는 데 그 숫자가 필요하다. */
 	virtual FString GetDebugDetailText() const override;
-
-	/**
-	 * 아래 셋은 차징하는 본인 기계에서만 불린다. 연출을 붙이는 자리다. (5단계)
-	 * 남의 화면에서 남의 붓이 기를 모으는 소리가 나면 안 되므로 여기서 걸러 부른다.
-	 */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Work|Charge")
-	void OnChargeStarted();
-
-	/** 단계가 바뀔 때마다. "틱" 소리와 게이지 눈금이 여기에 붙는다. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Work|Charge")
-	void OnChargeLevelChanged(int32 NewLevel);
-
-	/**
-	 * 손을 뗐을 때, 또는 최대 단계에서 FullChargeHoldSeconds 가 지나 저절로 나갔을 때. ChargeLevel 0 은 최소 홀드를 못 채운 허탕이다.
-	 *
-	 * PaintedCellCount 가 ChargeLevel 보다 작을 수 있다. 이미 칠해진 칸이 섞여 있거나
-	 * 페인트가 모자라 되는 만큼만 칠한 경우다. 0 이면 붓이 헛돈 것이므로 마른 붓 소리를 낸다.
-	 *
-	 * bPaintShort 는 "잔량이 칸 하나 값에 못 미쳐 거기서 끊겼다" 는 뜻이다.
-	 * 통이 비지는 않았으므로 기존 "페인트 없음" 알림에는 걸리지 않는 상태다.
-	 * 이 경우에만 나는 소리를 따로 두어야 플레이어가 보충하러 갈 때라는 것을 안다.
-	 */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Work|Charge")
-	void OnChargeReleased(int32 ChargeLevel, int32 PaintedCellCount, bool bPaintShort);
 
 private:
 	/** 같은 작업 그룹의 도색 존. 연결이 모호하면 다른 테두리를 밝히지 않는다. */
@@ -221,7 +180,7 @@ private:
 	void RefreshPaintedInstances();
 
 	/** 대기열에 있는 칸을 CellRevealInterval 간격으로 하나씩 켠다. */
-	void TickCellReveal(float DeltaSeconds);
+	void TickCellReveal();
 
 	/** 넘어온 순서 그대로 점등 대기열에 넣는다. 붓이 지나간 순서라 그대로 켜져야 한다. */
 	void EnqueueRevealCells(const TArray<int32>& OrderedCells);
@@ -237,11 +196,8 @@ private:
 
 	void RevealCell(int32 CellIndex);
 
-	/** 칸 중심의 월드 좌표. 파티클을 터트릴 자리다. */
+	/** 칸 중심의 월드 좌표. */
 	FVector GetCellWorldLocation(int32 CellIndex) const;
-
-	/** 차징하는 본인에게만 들리는 소리. 남의 기계에서는 아무것도 하지 않는다. */
-	void PlayLocalChargeSound(USoundBase* Sound, const UCWWorkerComponent* Worker) const;
 
 	/** 칸 하나를 그릴 인스턴스 트랜스폼. */
 	FTransform MakeCellTransform(const FCWBorderCell& Cell) const;
@@ -321,6 +277,9 @@ private:
 	/** 확정된 단계만큼 칸을 칠하고 차징을 끝낸다. */
 	void ReleaseCharge();
 
+	/** 이번 릴리즈에 칠해질 칸 목록. 차징 중에만 부른다. */
+	void GetChargeTargetCells(TArray<int32>& OutCells) const;
+
 	/** 칸도 페인트도 건드리지 않고 차징을 버린다. (차에 치임 · 취소 · 도구 놓기) */
 	void AbortCharge();
 
@@ -331,9 +290,6 @@ private:
 
 	/** 칸 하나를 칠하는 데 드는 페인트. */
 	float GetCellPaintCost() const;
-
-	/** 지금 차징하는 사람이 이 기계의 플레이어인가. 연출과 디버그 표시 대상을 가른다. */
-	bool IsLocalCharger() const;
 
 	void ShowChargeDebug(const TCHAR* Event, int32 Level, int32 PaintedCount) const;
 
@@ -520,40 +476,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.0"))
 	float CellRevealInterval = 0.05f;
 
-	// 칸이 켜질 때마다 그 자리에 터지는 페인트 튀김. (3단계 도색 존의 PaintStrokeFX 와 같은 것을 쓰면 된다)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX")
-	TObjectPtr<UNiagaraSystem> CellPaintFX;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.01"))
-	float CellPaintFXScale = 1.f;
-
-	// 풀차징에 도달한 순간 붓 끝에서 터지는 반짝임. 차징하는 본인에게만 보인다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX")
-	TObjectPtr<UNiagaraSystem> ChargeFullFX;
-
-	/**
-	 * 아래 셋은 차징하는 본인에게만 들린다. 남의 붓이 기를 모으는 소리가 나면 안 된다.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
-	TObjectPtr<USoundBase> ChargeLevelUpSound;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
-	TObjectPtr<USoundBase> ChargeFullSound;
-
-	// 아무것도 안 나갔을 때의 마른 붓 소리. 최소 홀드 미달·헛스윙·페인트 부족에 모두 쓴다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
-	TObjectPtr<USoundBase> ReleaseFailSound;
-
-	/**
-	 * 붓이 그어지는 소리. 이것만 전원에게 들린다.
-	 *
-	 * 칸이 칠해지는 것은 월드에서 실제로 일어나는 일이라 남에게도 보이고 들려야 한다.
-	 * 점등이 시작될 때 한 번 난다. 칸마다 나면 4연타로 들린다.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
-	TObjectPtr<USoundBase> ReleaseSound;
-
-	// 차징 상태를 화면에 띄운다. 연출이 붙기 전까지 단계 판정을 눈으로 확인하는 용도다.
+	// 차징 상태를 화면에 띄운다. 단계 판정을 눈으로 확인하는 용도다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
 	bool bShowDebugCharge = false;
 
@@ -583,7 +506,7 @@ private:
 	// 범위가 뻗는 방향(월드, 수평). 차징 시작 시점에 얼어붙고 중간에 바뀌지 않는다.
 	FVector ChargeForwardDirection = FVector::ForwardVector;
 
-	// 마지막으로 알린 단계. 값이 바뀔 때만 OnChargeLevelChanged 를 부른다.
+	// 마지막으로 알린 단계. 값이 바뀔 때만 디버그를 띄운다.
 	int32 LastReportedChargeLevel = 0;
 
 	// ApplyWork 가 마지막으로 온 시각. 이 값으로 릴리즈를 감지한다.
@@ -595,6 +518,7 @@ private:
 	// 최대 단계에 머문 실제 시간(초). FullChargeHoldSeconds 를 넘기면 저절로 나간다.
 	float FullChargeElapsed = 0.f;
 
+	// 차징은 ApplyWork 가 로컬 작업자에게만 시작시키므로, 차징 중이면 늘 이 기계의 플레이어다.
 	UPROPERTY(Transient)
 	TObjectPtr<UCWWorkerComponent> ChargingWorker;
 

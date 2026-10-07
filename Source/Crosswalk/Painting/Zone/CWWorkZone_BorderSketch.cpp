@@ -7,9 +7,6 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
-#include "Kismet/GameplayStatics.h"
-#include "NiagaraFunctionLibrary.h"
-#include "NiagaraSystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
@@ -234,7 +231,7 @@ void ACWWorkZone_BorderSketch::Tick(float DeltaSeconds)
 	// 차징을 먼저 처리한다. 이 프레임에 릴리즈됐으면 프리뷰도 같은 프레임에 사라져야 한다.
 	TickCharge(DeltaSeconds);
 
-	TickCellReveal(DeltaSeconds);
+	TickCellReveal();
 
 	UpdatePreview();
 }
@@ -265,32 +262,12 @@ void ACWWorkZone_BorderSketch::TickCharge(float DeltaSeconds)
 		return;
 	}
 
-	// 단계가 오른 프레임에만 알린다. 매 프레임 부르면 연출이 계속 다시 시작된다.
+	// 단계가 오른 프레임에만 디버그를 띄운다. 매 프레임 띄우면 화면이 덮인다.
 	const int32 CurrentLevel = GetChargeLevel();
 	if (CurrentLevel != LastReportedChargeLevel)
 	{
 		LastReportedChargeLevel = CurrentLevel;
-
-		if (IsLocalCharger())
-		{
-			OnChargeLevelChanged(CurrentLevel);
-
-			// 풀차징은 따로 알린다. "더 눌러도 소용없다" 를 손끝으로 알 수 있어야
-			// 언제 놓을지 판단할 수 있고, 그게 이 존의 재미다.
-			const bool bFullCharge = (CurrentLevel >= ChargeThresholds.Num());
-			PlayLocalChargeSound(bFullCharge ? ChargeFullSound : ChargeLevelUpSound, ChargingWorker);
-
-			if (bFullCharge && ChargeFullFX != nullptr && ChargingWorker->GetOwner() != nullptr)
-			{
-				UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-					GetWorld(),
-					ChargeFullFX,
-					ChargingWorker->GetOwner()->GetActorLocation(),
-					FRotator::ZeroRotator);
-			}
-
-			ShowChargeDebug(TEXT("단계"), CurrentLevel, 0);
-		}
+		ShowChargeDebug(TEXT("단계"), CurrentLevel, 0);
 	}
 
 	// 최대 단계에서 FullChargeHoldSeconds 가 지나면 저절로 내보낸다.
@@ -308,16 +285,14 @@ void ACWWorkZone_BorderSketch::TickCharge(float DeltaSeconds)
 		return;
 	}
 
+	// 위의 IsChargingWorkerEligible 이 작업자가 있는 것을 이미 확인했다.
 	UCWWorkerComponent* const Worker = ChargingWorker;
 	ReleaseCharge();
 
 	// 키를 뗀 것과 똑같이 작업 자체를 끝낸다. 차징만 막으면 bWorking 이 켜진 채로 남아서
 	// 작업 애니메이션과 체온 상승이 계속 돈다. 서버에도 같이 알려지므로 남의 화면에서도 멈춘다.
 	// 작업 시작은 키를 누른 순간(Started)에만 들어오므로, 다음 차징은 키를 다시 눌러야 시작된다.
-	if (Worker != nullptr)
-	{
-		Worker->StopWork();
-	}
+	Worker->StopWork();
 }
 
 void ACWWorkZone_BorderSketch::ApplyWork(UCWWorkerComponent* Worker, const FVector& WorldLocation, float DeltaSeconds)
@@ -342,15 +317,10 @@ void ACWWorkZone_BorderSketch::ApplyWork(UCWWorkerComponent* Worker, const FVect
 		return;
 	}
 
+	// 위에서 로컬 작업자만 통과시키므로, 이미 차징 중이라면 그 사람이 바로 이 작업자다.
 	if (!bCharging)
 	{
 		BeginCharge(Worker);
-	}
-	else if (ChargingWorker != Worker)
-	{
-		// 이미 다른 사람이 차징 중이면 끼어들지 않는다.
-		// 도구가 1인 1개라 보통 일어나지 않지만, 도구가 늘어나면 여기서 걸린다.
-		return;
 	}
 
 	LastApplyWorkTime = Now;
@@ -388,29 +358,18 @@ int32 ACWWorkZone_BorderSketch::GetChargeLevel() const
 	return Level;
 }
 
-float ACWWorkZone_BorderSketch::GetChargeRatio() const
-{
-	if (ChargeThresholds.Num() == 0)
-	{
-		return 0.f;
-	}
-
-	const float FullChargeSeconds = ChargeThresholds.Last();
-
-	return (FullChargeSeconds > 0.f) ? FMath::Clamp(ChargeSeconds / FullChargeSeconds, 0.f, 1.f) : 1.f;
-}
-
 void ACWWorkZone_BorderSketch::GetChargeTargetCells(TArray<int32>& OutCells) const
 {
 	OutCells.Reset();
 
-	if (!bCharging || GetChargeLevel() <= 0)
+	// 차징 중에만 불린다. (ReleaseCharge)
+	const int32 Level = GetChargeLevel();
+	if (Level <= 0)
 	{
 		return;
 	}
 
-	CollectCellsInArea(ChargeOriginLocation, ChargeForwardDirection,
-		GetChargeAreaSize(GetChargeLevel()), OutCells);
+	CollectCellsInArea(ChargeOriginLocation, ChargeForwardDirection, GetChargeAreaSize(Level), OutCells);
 }
 
 FVector2D ACWWorkZone_BorderSketch::GetChargeAreaSize(int32 Level) const
@@ -546,7 +505,6 @@ void ACWWorkZone_BorderSketch::BeginCharge(UCWWorkerComponent* Worker)
 	ChargingWorker = Worker;
 	bCharging = true;
 	ChargeSeconds = 0.f;
-	LastReportedChargeLevel = 0;
 
 	// 범위의 기준점과 방향은 차징이 시작될 때 한 번만 정하고 중간에 다시 보지 않는다.
 	// 누른 뒤에도 커서를 따라 범위가 돌면 조준한 의미가 없어진다.
@@ -554,11 +512,6 @@ void ACWWorkZone_BorderSketch::BeginCharge(UCWWorkerComponent* Worker)
 	// 여기서 GetChargeFrame 을 쓰면 안 된다. 그쪽은 차징 중이면 얼려둔 값을 돌려주는데,
 	// 이 시점에는 bCharging 이 이미 켜져 있어서 아직 빈 값을 자기 자신에 도로 넣는다.
 	ComputeWorkerFrame(Worker, ChargeOriginLocation, ChargeForwardDirection);
-
-	if (IsLocalCharger())
-	{
-		OnChargeStarted();
-	}
 }
 
 void ACWWorkZone_BorderSketch::ReleaseCharge()
@@ -567,13 +520,12 @@ void ACWWorkZone_BorderSketch::ReleaseCharge()
 	GetChargeTargetCells(TargetCells);
 
 	const int32 Level = GetChargeLevel();
-	const bool bLocal = IsLocalCharger();
 	UCWWorkerComponent* const Worker = ChargingWorker;
 
 	int32 PaintedCount = 0;
 	bool bPaintShort = false;
 
-	if (Worker != nullptr && TargetCells.Num() > 0)
+	if (TargetCells.Num() > 0)
 	{
 		if (HasAuthority())
 		{
@@ -601,39 +553,25 @@ void ACWWorkZone_BorderSketch::ReleaseCharge()
 	// 붓질 모션이 끝날 때까지 이동을 잠근다. 패링은 이 동안에도 된다.
 	ReleaseEndTime = GetWorld()->GetTimeSeconds() + ReleaseSeconds;
 
-	if (bLocal)
+	const TCHAR* EventName = TEXT("릴리즈");
+	if (Level <= 0)
 	{
-		// 단계 0 은 최소 홀드를 못 채운 허탕이다. 이 경우에도 반드시 반응이 나가야 한다.
-		// 아무 일도 안 일어나면 입력이 씹힌 것으로 느껴진다.
-		OnChargeReleased(Level, PaintedCount, bPaintShort);
-
-		// 아무것도 안 나갔으면 마른 붓 소리를 낸다. 칸이 나갔으면 붓질 소리는 점등이 낸다.
-		// (그쪽은 월드에서 일어나는 일이라 전원에게 들려야 한다)
-		if (PaintedCount == 0)
-		{
-			PlayLocalChargeSound(ReleaseFailSound, Worker);
-		}
-
-		const TCHAR* EventName = TEXT("릴리즈");
-		if (Level <= 0)
-		{
-			EventName = TEXT("허탕(최소 홀드 미달)");
-		}
-		else if (bPaintShort && PaintedCount == 0)
-		{
-			EventName = TEXT("헛스윙(페인트 부족)");
-		}
-		else if (PaintedCount == 0)
-		{
-			EventName = TEXT("헛스윙(이미 칠해진 칸)");
-		}
-		else if (bPaintShort)
-		{
-			EventName = TEXT("일부만 도색(페인트 부족)");
-		}
-
-		ShowChargeDebug(EventName, Level, PaintedCount);
+		EventName = TEXT("허탕(최소 홀드 미달)");
 	}
+	else if (bPaintShort && PaintedCount == 0)
+	{
+		EventName = TEXT("헛스윙(페인트 부족)");
+	}
+	else if (PaintedCount == 0)
+	{
+		EventName = TEXT("헛스윙(이미 칠해진 칸)");
+	}
+	else if (bPaintShort)
+	{
+		EventName = TEXT("일부만 도색(페인트 부족)");
+	}
+
+	ShowChargeDebug(EventName, Level, PaintedCount);
 }
 
 void ACWWorkZone_BorderSketch::AbortCharge()
@@ -643,15 +581,10 @@ void ACWWorkZone_BorderSketch::AbortCharge()
 		return;
 	}
 
-	const bool bLocal = IsLocalCharger();
-
 	ResetChargeState();
 
 	// 릴리즈 모션을 걸지 않는다. 차에 치여 날아가는 중에 붓질 모션이 나오면 안 된다.
-	if (bLocal)
-	{
-		ShowChargeDebug(TEXT("중단"), 0, 0);
-	}
+	ShowChargeDebug(TEXT("중단"), 0, 0);
 }
 
 void ACWWorkZone_BorderSketch::ResetChargeState()
@@ -671,20 +604,15 @@ bool ACWWorkZone_BorderSketch::IsChargingWorkerEligible() const
 		return false;
 	}
 
-	// 라인 테두리 도구를 계속 들고 있어야 한다.
-	if (!CanUseTool(Worker->GetHeldTool()))
+	// 라인 테두리 도구를 계속 들고 있어야 한다. 차징하는 사이에 다른 사람이 마지막 칸을
+	// 칠했거나, 앞 단계가 되돌아가 존이 잠겼을 수도 있다. ApplyWork 와 같은 기준이다.
+	if (!CanWorkNow(Worker->GetHeldTool()))
 	{
 		return false;
 	}
 
 	// 차량에 치여 다운된 동안에는 차징도 중단된다.
 	if (Worker->IsWorkBlocked())
-	{
-		return false;
-	}
-
-	// 차징하는 사이에 다른 사람이 마지막 칸을 칠했거나, 앞 단계가 되돌아가 존이 잠겼을 수 있다.
-	if (IsCompleted() || IsLocked())
 	{
 		return false;
 	}
@@ -699,17 +627,10 @@ bool ACWWorkZone_BorderSketch::IsChargingWorkerEligible() const
 	return GetSquaredDistanceToPoint(WorkerActor->GetActorLocation()) <= FMath::Square(WorkRange);
 }
 
-
-
 float ACWWorkZone_BorderSketch::GetCellPaintCost() const
 {
 	// 존 하나를 다 칠하면 정확히 PaintCostFull 이 든다. (차징 붓 기획서 2.6)
 	return (Cells.Num() > 0) ? (PaintCostFull / Cells.Num()) : 0.f;
-}
-
-bool ACWWorkZone_BorderSketch::IsLocalCharger() const
-{
-	return ChargingWorker != nullptr && ChargingWorker->IsLocalWorker();
 }
 
 void ACWWorkZone_BorderSketch::ShowChargeDebug(const TCHAR* Event, int32 Level, int32 PaintedCount) const
@@ -805,8 +726,6 @@ void ACWWorkZone_BorderSketch::AppendSideCells(const FVector& Start, const FVect
 		Cell.bAlongX = bAlongX;
 	}
 }
-
-
 
 void ACWWorkZone_BorderSketch::UpdatePreview()
 {
@@ -1077,7 +996,7 @@ void ACWWorkZone_BorderSketch::FilterAffordableCells(const UCWWorkerComponent* W
 			}
 
 			// 잔량이 바닥나 여기서 끊겼다는 신호다. 보충하러 갈 때라는 것을 알려야 한다.
-			// 잔량이 0 은 아니어서 기존 "페인트 없음" 알림(IsPaintDepleted)에는 안 걸린다.
+			// 잔량이 0 은 아니어서 기존 "페인트 없음" 판정(bPaintDepleted)에는 안 걸린다.
 			bOutPaintShort = true;
 			break;
 		}
@@ -1189,7 +1108,7 @@ void ACWWorkZone_BorderSketch::RefreshPaintedInstances()
 	BorderMeshes->MarkRenderStateDirty();
 }
 
-void ACWWorkZone_BorderSketch::TickCellReveal(float DeltaSeconds)
+void ACWWorkZone_BorderSketch::TickCellReveal()
 {
 	if (PendingRevealCells.Num() == 0)
 	{
@@ -1264,13 +1183,6 @@ void ACWWorkZone_BorderSketch::EnqueueRevealCells(const TArray<int32>& OrderedCe
 	{
 		// 첫 칸은 기다리지 않는다. 손을 뗀 프레임에 붓이 닿아야 한다.
 		NextRevealTime = GetWorld()->GetTimeSeconds();
-
-		// 붓이 그어지는 소리는 월드에서 일어나는 일이라 전원에게 들린다.
-		// 칸마다 내면 4연타로 들리므로 점등이 시작될 때 한 번만 낸다.
-		if (ReleaseSound != nullptr && Cells.IsValidIndex(PendingRevealCells[0]))
-		{
-			UGameplayStatics::PlaySoundAtLocation(this, ReleaseSound, GetCellWorldLocation(PendingRevealCells[0]));
-		}
 	}
 }
 
@@ -1318,16 +1230,6 @@ void ACWWorkZone_BorderSketch::RevealCell(int32 CellIndex)
 	}
 
 	RevealedCellFlags[CellIndex] = 1;
-
-	if (CellPaintFX != nullptr)
-	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			GetWorld(),
-			CellPaintFX,
-			GetCellWorldLocation(CellIndex),
-			FRotator::ZeroRotator,
-			FVector(CellPaintFXScale));
-	}
 }
 
 FVector ACWWorkZone_BorderSketch::GetCellWorldLocation(int32 CellIndex) const
@@ -1341,24 +1243,6 @@ FVector ACWWorkZone_BorderSketch::GetCellWorldLocation(int32 CellIndex) const
 	LocalLocation.Z += GuideHeightOffset;
 
 	return GetActorTransform().TransformPosition(LocalLocation);
-}
-
-void ACWWorkZone_BorderSketch::PlayLocalChargeSound(USoundBase* Sound, const UCWWorkerComponent* Worker) const
-{
-	// 작업자를 인자로 받는 이유: 릴리즈 실패음은 차징 상태를 정리한 뒤에 난다.
-	// 그때 ChargingWorker 는 이미 비어 있어서, 멤버를 보면 소리가 조용히 사라진다.
-	if (Sound == nullptr || Worker == nullptr || !Worker->IsLocalWorker())
-	{
-		return;
-	}
-
-	const AActor* WorkerActor = Worker->GetOwner();
-	if (WorkerActor == nullptr)
-	{
-		return;
-	}
-
-	UGameplayStatics::PlaySoundAtLocation(this, Sound, WorkerActor->GetActorLocation());
 }
 
 FTransform ACWWorkZone_BorderSketch::MakeCellTransform(const FCWBorderCell& Cell) const

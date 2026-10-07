@@ -20,17 +20,9 @@
 #include "Traffic/CWBaseVehicle.h"
 #include "Traffic/CWTrafficSubsystem.h"
 
-namespace
-{
-	// 런타임 오염 구역 판정 박스의 높이 절반(cm).
-	// 오염은 평면으로만 판정하지만(ContainsGridPoint), 박스가 너무 납작하면
-	// 에디터에서 눈에 안 띄고 경사면에서 캐릭터가 존을 못 잡는다.
-	constexpr float SpillZoneAreaHalfHeight = 50.f;
-}
-
 ACWWorkZone_Cells::ACWWorkZone_Cells()
 {
-	// 남은 칸 디버그를 켰을 때만 BeginPlay 에서 실제로 돌린다.
+	// 평소에는 꺼 두고, 할 일이 생길 때만 RefreshTickEnabled 가 켠다.
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
@@ -199,7 +191,7 @@ void ACWWorkZone_Cells::BeginPlay()
 	// 그때는 OnRep 이 아무것도 못 하고 지나갔으므로 여기서 다시 시도한다.
 	TryApplyCellSnapshot();
 
-	// 틱은 할 일이 있을 때만 돈다. 시작 시점에 켤 이유는 디버그 표시뿐이다.
+	// 틱은 할 일이 있을 때만 돈다. (스냅샷 전송, 칸 갱신, 디버그 표시)
 	RefreshTickEnabled();
 
 	// 마스킹은 등록된 존 목록을 봐야 해서 다음 틱에 돈다.
@@ -623,9 +615,6 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 		return;
 	}
 
-	// 검은색 롤러는 지우는 쪽이고, 그것도 Area 바깥에 삐져나간 페인트만 지운다.
-	const bool bCleanup = IsCleanupTool(Worker->GetHeldTool());
-
 	// 도구가 칸을 채우는지 지우는지 정한다. FillTools/CleanupTools 가 비면 예전처럼 모드가 정한다.
 	const bool bNewFilled = ResolveFillForTool(Worker->GetHeldTool());
 
@@ -652,7 +641,7 @@ void ACWWorkZone_Cells::ApplyWork(UCWWorkerComponent* Worker, const FVector& Wor
 	Stroke.Radius = EffectiveRadius;
 	Stroke.bFilled = bNewFilled;
 	// 고리가 있는 존이면 정리 도구가 고리만 지운다. 고리가 없으면 격자 전체가 정리 대상이다.
-	Stroke.bSpillOnly = bCleanup && HasOverspillRing();
+	Stroke.bSpillOnly = IsSpillOnlyStroke(Worker->GetHeldTool());
 
 	// 스냅샷이 이 붓질을 덮지 않도록 시각을 남긴다. (TryApplyCellSnapshot)
 	if (const UWorld* World = GetWorld())
@@ -740,15 +729,13 @@ int32 ACWWorkZone_Cells::AddCellsAt(const FVector& WorldLocation, float Radius, 
 	Stroke.bFilled = true;
 	Stroke.bSpillOnly = bSpillOnly;
 
-	// 여기서는 페인트를 소모하지 않는다. 차량 자국도 터진 통도 누구의 도구에서 나온 것이 아니다.
+	// 여기서는 페인트를 소모하지 않는다. 차량 자국은 누구의 도구에서 나온 것이 아니다.
 	const int32 ChangedCellCount = ApplyStroke(Stroke);
 	if (ChangedCellCount > 0)
 	{
 		QueueOutgoingStroke(nullptr, Stroke);
 	}
 
-	// 오염이 이 존에 실제로 얹혔는지 호출부가 알아야 한다.
-	// 하나도 안 얹혔으면 근처에 받아줄 존이 없다는 뜻이라, 런타임 오염 구역을 새로 만들어야 한다.
 	return ChangedCellCount;
 }
 
@@ -759,11 +746,6 @@ FVector ACWWorkZone_Cells::QuantizeStrokeLocation(const FVector& WorldLocation)
 		FMath::RoundToFloat(WorldLocation.X),
 		FMath::RoundToFloat(WorldLocation.Y),
 		FMath::RoundToFloat(WorldLocation.Z));
-}
-
-bool ACWWorkZone_Cells::IsCleanupTool(ECWToolType ToolType) const
-{
-	return ToolType != ECWToolType::None && CleanupTools.Contains(ToolType);
 }
 
 bool ACWWorkZone_Cells::IsFillTool(ECWToolType ToolType) const
@@ -945,7 +927,6 @@ void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightS
 	if (!bHighlightPaintedCells)
 	{
 		Super::OnHighlightStateChanged_Implementation(NewState);
-		RefreshHighlightPaintMask();
 		return;
 	}
 
@@ -957,38 +938,6 @@ void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightS
 	 * 칸을 순회하지 않고 스칼라 하나만 바꾸면 된다. 드로우콜도 그대로 1개다.
 	 */
 	RefreshPaintFieldHighlight();
-}
-
-void ACWWorkZone_Cells::RefreshHighlightPaintMask()
-{
-	UMaterialInstanceDynamic* HighlightMaterialInstance = GetHighlightMaterialInstance();
-	if (HighlightMaterialInstance == nullptr)
-	{
-		return;
-	}
-
-	const bool bUseMask = IsFillMode() && !bHighlightPaintedCells && ShouldBuildPaintField() && PaintFieldTexture != nullptr
-		&& FieldTextureSize.X > 2 && FieldTextureSize.Y > 2 && Area != nullptr;
-	HighlightMaterialInstance->SetScalarParameterValue(TEXT("HidePainted"), bUseMask ? 1.f : 0.f);
-	if (!bUseMask)
-	{
-		return;
-	}
-
-	HighlightMaterialInstance->SetTextureParameterValue(TEXT("PaintedCellField"), PaintFieldTexture);
-	const FVector2D HighlightExtent = GetHighlightPlanarExtent();
-	const float FieldSizeX = FMath::Max(FieldTextureSize.X * CachedCellSize.X, KINDA_SMALL_NUMBER);
-	const float FieldSizeY = FMath::Max(FieldTextureSize.Y * CachedCellSize.Y, KINDA_SMALL_NUMBER);
-	// 데칼과 여백 한 칸을 포함한 필드의 크기가 다르므로 중심 기준으로 UV를 맞춘다.
-	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVScale"), FLinearColor(
-		2.f * HighlightExtent.X / FieldSizeX,
-		2.f * HighlightExtent.Y / FieldSizeY, 0.f, 0.f));
-	// 표시 위치만 옮겨도 칠한 자리의 마스크는 실제 페인트 위치를 계속 따라야 한다.
-	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVOffset"),
-		FLinearColor(HighlightOffset.X / FieldSizeX, HighlightOffset.Y / FieldSizeY, 0.f, 0.f));
-	// 바깥 테두리도 가장 가까운 실제 칸을 따른다. 항상 빈 패딩 칸은 읽지 않는다.
-	HighlightMaterialInstance->SetVectorParameterValue(TEXT("PaintFieldUVInset"),
-		FLinearColor(1.5f / FieldTextureSize.X, 1.5f / FieldTextureSize.Y, 0.f, 0.f));
 }
 
 void ACWWorkZone_Cells::RefreshPaintFieldHighlight()
@@ -1275,7 +1224,7 @@ void ACWWorkZone_Cells::ReceiveForwardedBrush(UCWWorkerComponent* Worker, const 
 	Stroke.Center = Center;
 	Stroke.Radius = Radius;
 	Stroke.bFilled = ResolveFillForTool(ToolType);
-	Stroke.bSpillOnly = IsCleanupTool(ToolType) && HasOverspillRing();
+	Stroke.bSpillOnly = IsSpillOnlyStroke(ToolType);
 
 	const int32 ChangedCellCount = ApplyStroke(Stroke);
 	if (ChangedCellCount == 0)
@@ -1465,7 +1414,7 @@ bool ACWWorkZone_Cells::IsWorkerInRange(const UCWWorkerComponent* Worker, const 
 	// 실제 범위 제약은 붓이 닿는 거리 하나다.
 	// 붓 중심은 이미 캐릭터 주변으로 묶여서 들어온다. (UCWWorkerComponent::MaxBrushDistance)
 	// 고리가 있는 존이면 정리 도구는 고리 칸만 본다. ApplyWork 와 같은 기준이어야 한다.
-	const bool bSpillOnly = IsCleanupTool(Worker->GetHeldTool()) && HasOverspillRing();
+	const bool bSpillOnly = IsSpillOnlyStroke(Worker->GetHeldTool());
 
 	// 높이만 확인한다. 칸 판정이 높이를 무시하므로 이걸 안 보면 다리 위에서도 아래가 칠해진다.
 	const FVector LocalWorker = ToLocalLocation(WorkerActor->GetActorLocation());
@@ -1489,7 +1438,7 @@ bool ACWWorkZone_Cells::HasWorkAt(const UCWWorkerComponent* Worker, const FVecto
 		return true;
 	}
 
-	const bool bSpillOnly = IsCleanupTool(Worker->GetHeldTool()) && HasOverspillRing();
+	const bool bSpillOnly = IsSpillOnlyStroke(Worker->GetHeldTool());
 	const bool bNewFilled = ResolveFillForTool(Worker->GetHeldTool());
 
 	// 이 붓질이 실제로 뒤집을 칸이 하나라도 있는지 본다.
@@ -1754,7 +1703,6 @@ void ACWWorkZone_Cells::RefreshPaintField()
 	if (!ShouldBuildPaintField())
 	{
 		PaintFieldMesh->SetVisibility(false);
-		RefreshHighlightPaintMask();
 		return;
 	}
 
@@ -1819,7 +1767,6 @@ void ACWWorkZone_Cells::RefreshPaintField()
 	}
 
 	WriteAllFieldTexels();
-	RefreshHighlightPaintMask();
 }
 
 void ACWWorkZone_Cells::RefreshPaintFieldSolidState(float NewProgress)

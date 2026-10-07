@@ -19,7 +19,7 @@ ACWRestZone::ACWRestZone()
 	Area = CreateDefaultSubobject<UBoxComponent>(TEXT("Area"));
 	SetRootComponent(Area);
 
-	// 프롬프트가 뜨는 범위다. 의자 주변으로 넉넉히 잡되 SeatInteractRadius 안쪽이어야 한다.
+	// 상호작용 후보로 잡히는 범위다. 의자 주변으로 넉넉히 잡되 SeatRange 반지름 안쪽이어야 한다.
 	// 1인 제한은 이 박스의 폭이 아니라 착석 판정이 담당하므로 좁게 만들 이유가 없다.
 	Area->SetBoxExtent(FVector(120.f, 120.f, 110.f));
 
@@ -75,18 +75,12 @@ void ACWRestZone::BeginPlay()
 	 * 도구 차단 범위가 착석 범위보다 좁으면, 앉을 수는 있는데 도구는 내려놓이는 구간이 생긴다.
 	 * 바로 그 구간이 도구가 쌓이던 자리라 거꾸로 잡으면 고친 의미가 없다.
 	 */
-	if (SeatRange != nullptr && ToolDropBlockRange != nullptr
-		&& ToolDropBlockRange->GetScaledSphereRadius() < SeatRange->GetScaledSphereRadius())
+	if (ToolDropBlockRange->GetScaledSphereRadius() < SeatRange->GetScaledSphereRadius())
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[%s] ToolDropBlockRange(%.0f)가 SeatRange(%.0f)보다 좁습니다. 앉을 수 있는데 도구가 내려놓이는 구간이 생깁니다."),
 			*GetName(), ToolDropBlockRange->GetScaledSphereRadius(), SeatRange->GetScaledSphereRadius());
 	}
-
-	// 겹침은 모든 머신에서 받는다. 서버가 쓰려는 게 아니라 각 화면의 프롬프트 때문이다.
-	// 예전에는 이 겹침이 회복 판정이라 서버만 필요했다.
-	Area->OnComponentBeginOverlap.AddDynamic(this, &ACWRestZone::HandleBeginOverlap);
-	Area->OnComponentEndOverlap.AddDynamic(this, &ACWRestZone::HandleEndOverlap);
 
 	SetActorTickEnabled(bShowDebugOccupant);
 }
@@ -163,7 +157,7 @@ bool ACWRestZone::CanInteract_Implementation(APawn* InstigatorPawn) const
 	}
 
 	// 거리는 의자 기준이다. 서버가 다시 판정할 때를 대비해 여유를 준다.
-	const float SeatRadius = SeatRange != nullptr ? SeatRange->GetScaledSphereRadius() : 0.f;
+	const float SeatRadius = SeatRange->GetScaledSphereRadius();
 	const float AllowedRadius = SeatRadius * ServerRangeTolerance;
 	if (FVector::DistSquared(Player->GetActorLocation(), GetInteractionLocation_Implementation()) > FMath::Square(AllowedRadius))
 	{
@@ -175,28 +169,16 @@ bool ACWRestZone::CanInteract_Implementation(APawn* InstigatorPawn) const
 
 FVector ACWRestZone::GetInteractionLocation_Implementation() const
 {
-	return Seat != nullptr ? Seat->GetComponentLocation() : GetActorLocation();
+	return Seat->GetComponentLocation();
 }
 
 FTransform ACWRestZone::GetSeatTransform() const
 {
-	if (Seat == nullptr)
-	{
-		// 컴포넌트가 통째로 없는 경우는 사실상 없지만, 조용히 바닥 원점에 박히는 것보다 낫다.
-		UE_LOG(LogTemp, Warning, TEXT("[%s] Seat 컴포넌트가 없어 액터 원점에 앉힙니다."), *GetName());
-		return GetActorTransform();
-	}
-
 	return Seat->GetComponentTransform();
 }
 
 bool ACWRestZone::IsWithinToolDropBlockRange(const FVector& Location) const
 {
-	if (ToolDropBlockRange == nullptr)
-	{
-		return false;
-	}
-
 	const float Radius = ToolDropBlockRange->GetScaledSphereRadius();
 
 	// 반지름을 0 으로 내리면 이 기능을 끈 것으로 본다. 레벨마다 다르게 쓸 수 있어야 한다.
@@ -217,64 +199,6 @@ void ACWRestZone::ReleaseOccupant(ACWPlayerCharacter* Player)
 
 	ApplyRestingState(Occupant, false);
 	SetOccupant(nullptr);
-}
-
-void ACWRestZone::HandleBeginOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/, bool /*bFromSweep*/, const FHitResult& /*SweepResult*/)
-{
-	const ACWPlayerCharacter* Player = Cast<ACWPlayerCharacter>(OtherActor);
-
-	// 내 화면의 플레이어만 본다. 프롬프트는 남에게 보여줄 것이 아니다.
-	if (Player == nullptr || !Player->IsLocallyControlled())
-	{
-		return;
-	}
-
-	bLocalPlayerInside = true;
-	RefreshPromptState();
-}
-
-void ACWRestZone::HandleEndOverlap(UPrimitiveComponent* /*OverlappedComponent*/, AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/, int32 /*OtherBodyIndex*/)
-{
-	const ACWPlayerCharacter* Player = Cast<ACWPlayerCharacter>(OtherActor);
-	if (Player == nullptr || !Player->IsLocallyControlled())
-	{
-		return;
-	}
-
-	// 차에 치이면 캡슐 콜리전이 꺼지면서 여기로 들어온다. 그래도 프롬프트는 숨기는 게 맞다.
-	// 쓰러져 있는 동안에는 어차피 E 가 막혀 있다.
-	bLocalPlayerInside = false;
-	RefreshPromptState();
-}
-
-void ACWRestZone::RefreshPromptState()
-{
-	ECWRestPromptState NewState = ECWRestPromptState::Hidden;
-
-	if (bLocalPlayerInside)
-	{
-		if (Occupant == nullptr)
-		{
-			NewState = ECWRestPromptState::Available;
-		}
-		else if (!Occupant->IsLocallyControlled())
-		{
-			NewState = ECWRestPromptState::Occupied;
-		}
-		// 본인이 앉아 있으면 Hidden 그대로다. 앉아 있는 사람에게 "앉기" 를 띄울 이유가 없다.
-	}
-
-	if (PromptState == NewState)
-	{
-		return;
-	}
-
-	PromptState = NewState;
-
-	OnPromptStateChanged(PromptState);
-	OnPromptChangedDelegate.Broadcast(this, PromptState);
 }
 
 void ACWRestZone::SetOccupant(ACWPlayerCharacter* NewOccupant)
@@ -300,11 +224,7 @@ void ACWRestZone::ApplyRestingState(ACWPlayerCharacter* Player, bool bNewResting
 
 void ACWRestZone::OnRep_Occupant()
 {
-	// 누가 앉고 일어나면 내 화면의 프롬프트도 같이 바뀐다. (비어있음 <-> 사용 중)
-	RefreshPromptState();
-
 	OnOccupantChanged(Occupant);
-	OnOccupantChangedDelegate.Broadcast(this, Occupant);
 }
 
 void ACWRestZone::ShowDebugOccupant() const

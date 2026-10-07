@@ -37,7 +37,7 @@ void UCWWorkZoneHighlightComponent::BeginPlay()
 	/**
 	 * 도구가 바뀌는 순간을 듣지 않고 주기적으로 다시 본다.
 	 *
-	 * UCWToolHolderComponent::OnHeldToolChanged 만 구독하면 도구를 든 채로 팀원이 앞 단계를
+	 * 도구가 바뀌는 순간만 들으면 도구를 든 채로 팀원이 앞 단계를
 	 * 끝내는 순간을 놓친다. ACWBaseWorkZone::bLocked 가 ReplicatedUsing 이 아니라 Replicated 라
 	 * 클라이언트에서 잠금이 풀릴 때 아무 이벤트도 오지 않기 때문이다.
 	 *

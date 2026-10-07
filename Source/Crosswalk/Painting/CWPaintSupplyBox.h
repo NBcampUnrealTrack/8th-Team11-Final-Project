@@ -14,9 +14,8 @@ class UStaticMeshComponent;
  *
  * 이 액터는 상태를 거의 갖지 않는다. 재고가 무한이기 때문이다. (기획서 8절)
  * 재고를 유한하게 두면 "전 도구 잔량 0 + 재고 0 + 정리할 오염 남음" 에서 클리어가 막힌다.
- * 그래서 여기서 하는 일은 사실상 두 가지뿐이다.
- *   1. 근처인지 판정할 기준점이 된다
- *   2. 통을 꺼낼 때 흔들리는 피드백을 전원에게 뿌린다
+ * 그래서 여기서 하는 일은 사실상 하나뿐이다.
+ *   근처인지 판정할 기준점이 된다
  *
  * 실제 소지 개수와 들기/내려놓기 판정은 UCWSupplyCarrierComponent 가 갖는다.
  * 박스가 아니라 플레이어 쪽에 두는 이유: 통은 박스를 떠나 플레이어를 따라다니는 물건이고,
@@ -35,8 +34,7 @@ class UStaticMeshComponent;
  * 같은 이유다. CanInteract 로 걸러내면 후보에서 조용히 빠져 이유가 사라진다.
  *
  * 네트워크
- *   꺼내기 판정은 전부 서버가 한다. 박스는 판정에 참여하지 않으므로 리플리케이트할 상태가 없고,
- *   흔들림만 멀티캐스트로 뿌린다. 놓쳐도 연출 하나가 빠질 뿐이라 Unreliable 로 둔다.
+ *   꺼내기 판정은 전부 서버가 한다. 박스는 판정에 참여하지 않으므로 리플리케이트할 상태가 없다.
  */
 UCLASS()
 class CROSSWALK_API ACWPaintSupplyBox : public AActor
@@ -46,30 +44,10 @@ class CROSSWALK_API ACWPaintSupplyBox : public AActor
 public:
 	ACWPaintSupplyBox();
 
-	/**
-	 * 통을 하나 꺼냈다. 흔들림 피드백을 전원에게 뿌린다. 서버에서만 유효하다.
-	 * 개수 판정은 이미 UCWSupplyCarrierComponent 가 끝낸 뒤에 불린다.
-	 */
-	void NotifyCanDispensed();
-
 	/** 이 박스에서 통을 꺼내거나 반납할 수 있는 거리(cm). */
 	UFUNCTION(BlueprintPure, Category = "Supply")
 	float GetInteractRadius() const { return InteractRadius; }
 
-protected:
-	/**
-	 * 통을 꺼내는 순간. 서버와 클라이언트 양쪽에서 호출된다.
-	 * BP 자식에서 0.4초짜리 흔들림과 사운드를 넣는 자리. (기획서 6-1 처리 1항)
-	 */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Supply")
-	void OnCanDispensed(float InShakeDuration);
-
-private:
-	/** 흔들림은 연출이라 놓쳐도 게임플레이에 영향이 없다. */
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayDispense();
-
-public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Supply")
 	TObjectPtr<UStaticMeshComponent> BoxMesh;
 
@@ -77,8 +55,4 @@ protected:
 	// 이 반경 안에서만 통을 꺼내고 반납할 수 있다. (기획서 9절 "페인트 통 박스 상호작용 거리")
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply", meta = (ClampMin = "0.0"))
 	float InteractRadius = 150.f;
-
-	// 통을 꺼낼 때 박스가 흔들리는 시간(초). (기획서 6-1 처리 1항)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply", meta = (ClampMin = "0.0"))
-	float ShakeDuration = 0.4f;
 };

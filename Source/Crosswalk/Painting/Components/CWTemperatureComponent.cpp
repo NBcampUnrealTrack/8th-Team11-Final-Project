@@ -28,7 +28,6 @@ void UCWTemperatureComponent::BeginPlay()
 	Super::BeginPlay();
 
 	CurrentTemperature = NormalTemperature;
-	HeatStage = ResolveHeatStage();
 
 	if (const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 	{
@@ -258,36 +257,7 @@ void UCWTemperatureComponent::BroadcastIfChanged()
 		LastBroadcastTemperature = CurrentTemperature;
 
 		OnTemperatureChanged.Broadcast(this, CurrentTemperature, GetHeatRatio());
-
-		// 구간 전이는 색과 달리 "넘어선 순간" 한 번만 알린다.
-		const ECWHeatStage NewStage = ResolveHeatStage();
-		if (NewStage != HeatStage)
-		{
-			HeatStage = NewStage;
-			OnHeatStageChanged.Broadcast(this, HeatStage);
-		}
 	}
-
-	if (bResting != bLastBroadcastResting)
-	{
-		bLastBroadcastResting = bResting;
-		OnRestingChanged.Broadcast(this, bResting);
-	}
-}
-
-ECWHeatStage UCWTemperatureComponent::ResolveHeatStage() const
-{
-	if (CurrentTemperature >= OverheatTemperature)
-	{
-		return ECWHeatStage::Overheated;
-	}
-
-	if (CurrentTemperature >= CautionTemperature)
-	{
-		return ECWHeatStage::Caution;
-	}
-
-	return ECWHeatStage::Normal;
 }
 
 void UCWTemperatureComponent::ShowDebugTemperature() const
@@ -328,9 +298,9 @@ void UCWTemperatureComponent::ShowDebugTemperature() const
 	// 버프 구간은 게이지가 0 에서 클램프돼 화면에 안 나타난다. 색으로라도 갈라둔다.
 	const bool bChilled = CurrentTemperature < NormalTemperature;
 
+	// 체온이 오를수록 노랑에서 빨강으로 간다.
 	const FColor LineColor = bChilled ? FColor::Cyan
-		: (HeatStage == ECWHeatStage::Overheated ? FColor::Red
-			: (HeatStage == ECWHeatStage::Caution ? FColor::Orange : FColor::Yellow));
+		: FLinearColor::LerpUsingHSV(FLinearColor::Yellow, FLinearColor::Red, GetHeatRatio()).ToFColor(true);
 
 	// 화면 가운데 위쪽에 있는 것처럼 보이도록 앞에 붙이는 공백 개수.
 	//

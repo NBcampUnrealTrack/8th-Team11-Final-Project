@@ -17,25 +17,6 @@ class UCWToolHolderComponent;
 class UCWWorkerComponent;
 
 /**
- * 소지한 페인트 통 개수가 바뀔 때. 서버와 클라이언트 양쪽에서, 모든 캐릭터에 대해 발행된다.
- *
- * 가슴팍 통 메쉬와 운반 애니메이션이 붙는 자리다. (기획서 6-1 처리 3~4항)
- * 남의 캐릭터에서도 발행되므로, 다른 플레이어가 통을 몇 개 들고 있는지 그대로 보인다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnCarriedCanCountChangedSignature, UCWSupplyCarrierComponent*, CarrierComponent, int32, CarriedCount);
-
-/**
- * 페인트 통이 터졌을 때. 서버가 확정한 뒤 모든 머신에서 같은 시점에 발행된다.
- *
- * 터진 자리에 페인트가 튄 데칼을 뿌리는 자리다. (기획서 6-4)
- * 오염 레이어의 칸은 건드리지 않는다. 정리 부담은 실제로 칠한 페인트만으로 정해진다.
- *
- *  BurstLocation 지면에 붙인 터진 지점. 피격 순간 위치이지 착지 지점이 아니다.
- *  BrokenCount   터진 통 개수. 데칼 크기를 여기에 비례시킨다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnCansBurstSignature, UCWSupplyCarrierComponent*, CarrierComponent, FVector, BurstLocation, int32, BrokenCount);
-
-/**
  * 보급 입력이 무시됐을 때. 입력을 넣은 본인 기계에서만 발행된다.
  *
  * "양손이 찼습니다" 같은 피드백이 붙는 자리다. (기획서 6-6)
@@ -47,7 +28,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnSupplyActionRejectedSignature,
 /**
  * 통을 꺼내거나 반납하기로 정해진 순간. 입력을 넣은 본인 기계에서만, 서버 확정을 기다리지 않고 발행된다.
  *
- * 뽑기/반납 사운드가 붙는 자리다. OnCarriedCanCountChanged 는 리플리케이션 왕복을 거쳐야 해서
+ * 뽑기/반납 사운드가 붙는 자리다. CarriedCount 는 리플리케이션 왕복을 거쳐야 해서
  * 반응이 늦고, 왕복 시간보다 빠르게 연속 입력이 들어오면 중간값이 통째로 묶여 사운드가 통째로 빠질 수 있다.
  * 이 델리게이트는 서버 확정 여부와 무관하게 클라이언트가 스스로 판단한 시점에 바로 나간다. (NotifyActionRejected 와 같은 이유)
  *
@@ -60,7 +41,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnCanCarriedLocallySignature, UC
  *
  * 충전 사운드가 붙는 자리다. 충전한 사람과 도구를 받는 사람이 다를 수 있어서(기획서 6-3),
  * OnCanCarriedLocally 처럼 본인 기계에만 즉시 내보내면 받는 쪽이 못 듣는다. 그래서 뽑기/반납과
- * 달리 서버 확정 후 Multicast 로 전원에게 뿌린다. (OnCansBurst 와 같은 이유)
+ * 달리 서버 확정 후 Multicast 로 전원에게 뿌린다.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnToolChargedSignature, UCWSupplyCarrierComponent*, CarrierComponent);
 
@@ -78,7 +59,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnToolChargedSignature, UCWSupply
  * 통을 액터로 스폰하지 않고 개수만 세는 이유:
  * 통은 들고 있는 동안 아무 상호작용도 하지 않는다. 위치도 캐릭터에 붙어 따라다닐 뿐이다.
  * 액터로 만들면 3개마다 리플리케이션과 소유권이 생기는데 얻는 게 없다.
- * 가슴팍에 보이는 메쉬는 OnCarriedCanCountChanged 를 받아 BP 가 켜고 끈다.
+ * 소지 개수는 CarriedCount 복제로 모든 머신에 전달된다.
  *
  * 네트워크
  *   개수 판정은 전부 서버에서 한다. 클라이언트는 "꺼내고 싶다 / 이 도구에 붓고 싶다" 고
@@ -167,7 +148,7 @@ public:
 	bool IsNearSupplyBox() const;
 
 	/**
-	 * 들고 있던 통을 전부 터뜨리고 터진 연출을 뿌린다. 차량에 치였을 때 부른다. (기획서 6-4)
+	 * 들고 있던 통을 전부 터뜨리고 터진 자국을 남긴다. 차량에 치였을 때 부른다. (기획서 6-4)
 	 * 서버에서만 유효하다.
 	 *
 	 * 오염 레이어의 칸은 채우지 않는다. 그림은 데칼이 맡고, 정리 부담은 실제로 칠한 페인트만으로 정해진다.
@@ -200,15 +181,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Supply")
 	bool IsCarrying() const { return CarriedCount > 0; }
 
-	UFUNCTION(BlueprintPure, Category = "Supply")
-	int32 GetMaxCarriedCount() const { return MaxCarriedCount; }
-
 private:
-	/** 터진 통 연출을 전원에게 뿌린다. 연출이라 놓쳐도 게임플레이에 영향이 없다. */
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayCanBurst(FVector_NetQuantize BurstLocation, int32 BrokenCount);
-
-	/** 충전 사운드를 전원에게 뿌린다. 이 5개 사운드 중 제일 자주 들려야 해서 Reliable 로 둔다. */
+	/** 충전 사운드를 전원에게 뿌린다. 보급 사운드 중 제일 자주 들려야 해서 Reliable 로 둔다. */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayChargeSound();
 
@@ -249,17 +223,17 @@ private:
 	ACWPaintSupplyBox* FindNearestBox(float RadiusScale = 1.f) const;
 
 	/** 충전할 수 있는 도구 중 가장 가까운 것. 없으면 nullptr. */
-	ACWBaseTool* FindNearestChargeableTool(float RadiusScale = 1.f) const;
+	ACWBaseTool* FindNearestChargeableTool() const;
 
 	/** 이 도구를 충전할 수 있는가. 빗자루와 내가 든 도구는 제외된다. */
 	bool CanChargeTool(const ACWBaseTool* Tool) const;
 
-	/** 다운 중이거나 미니게임 중이면 보급 입력을 받지 않는다. (기획서 6-7) */
+	/** 다운 중이거나 테두리 차징 중이면 보급 입력을 받지 않는다. (기획서 6-7) */
 	bool IsSupplyInputBlocked() const;
 
 	void SetCarriedCount(int32 NewCount);
 
-	/** 값이 실제로 바뀌었을 때만 델리게이트를 발행한다. 모든 머신이 각자 부른다. */
+	/** 값이 실제로 바뀌었을 때만 디버그 표시를 갱신한다. 모든 머신이 각자 부른다. */
 	void HandleCarriedCountChanged();
 
 	bool IsLocallyControlled() const;
@@ -291,7 +265,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply", meta = (ClampMin = "1.0"))
 	float ServerRangeTolerance = 1.6f;
 
-	// 소지 개수를 화면 좌상단에 띄운다. 보급 HUD 가 생기면 끄면 된다.
+	// 소지 개수를 화면 좌상단에 띄운다. 디버그 확인용이며 장비 패널 위젯과는 별개다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Supply|Debug")
 	bool bShowDebugCarriedCount = false;
 
@@ -301,7 +275,7 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_CarriedCount)
 	int32 CarriedCount = 0;
 
-	// 마지막으로 알린 개수. 이것과 다를 때만 델리게이트가 나간다.
+	// 마지막으로 처리한 개수. 이것과 다를 때만 디버그 표시를 갱신한다.
 	int32 LastBroadcastCount = -1;
 
 	// 같은 프레임에 박스를 두 번 찾지 않으려고 결과를 들고 있는다.
@@ -325,16 +299,10 @@ private:
 	// 델리게이트는 최하단에 배치
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
-	FCWOnCarriedCanCountChangedSignature OnCarriedCanCountChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnSupplyActionRejectedSignature OnSupplyActionRejected;
 
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnCanCarriedLocallySignature OnCanCarriedLocally;
-
-	UPROPERTY(BlueprintAssignable, Category = "Supply")
-	FCWOnCansBurstSignature OnCansBurst;
 
 	UPROPERTY(BlueprintAssignable, Category = "Supply")
 	FCWOnToolChargedSignature OnToolCharged;

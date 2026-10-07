@@ -140,24 +140,9 @@ public:
 	FText GetDisplayName() const { return DisplayName; }
 
 protected:
-	/** 집힌 직후. BP 자식에서 사운드/파티클을 붙이는 자리. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Tool")
-	void OnPickedUp();
-	virtual void OnPickedUp_Implementation();
-
-	/** 내려놓은 직후. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Tool")
-	void OnDropped();
-	virtual void OnDropped_Implementation();
-
 	UFUNCTION(BlueprintNativeEvent, Category = "Tool")
 	void OnFocusChanged(bool bNewFocused);
 	virtual void OnFocusChanged_Implementation(bool bNewFocused);
-
-	/** 잔량이 바뀐 직후. BP 자식에서 도구 위 게이지를 갱신하는 자리. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Tool|Paint")
-	void OnPaintAmountChanged(float NewAmount, float NewRatio);
-	virtual void OnPaintAmountChanged_Implementation(float NewAmount, float NewRatio);
 
 private:
 	UFUNCTION()
@@ -172,13 +157,13 @@ private:
 	UFUNCTION()
 	void OnRep_PaintAmount();
 
-	/** 값이 실제로 바뀌었을 때만 연출과 델리게이트를 돌린다. 모든 머신이 각자 부른다. */
+	/** 값이 실제로 바뀌었을 때만 델리게이트를 돌린다. 모든 머신이 각자 부른다. */
 	void HandlePaintAmountChanged();
 
 	/** 잔량을 범위 안으로 넣고, 바뀌었으면 알린다. @return 실제 변화량 */
 	float SetPaintAmount(float NewAmount);
 
-	/** 리플리케이트되지 않는 것들(콜리전, 하이라이트, 연출)을 소지 상태에 맞춘다. */
+	/** 리플리케이트되지 않는 것들(콜리전, 하이라이트)을 소지 상태에 맞춘다. */
 	void HandleHeldStateChanged();
 
 public:

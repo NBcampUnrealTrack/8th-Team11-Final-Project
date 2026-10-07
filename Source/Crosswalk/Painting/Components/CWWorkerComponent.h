@@ -9,24 +9,13 @@
 class ACWBaseTool;
 class ACWBaseWorkZone;
 class UCWTemperatureComponent;
-class UCWWorkerComponent;
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnTargetZoneChangedSignature, UCWWorkerComponent*, WorkerComponent, ACWBaseWorkZone*, TargetZone);
-
-/**
- * 페인트가 없어 작업이 막히기 시작했을 때 true, 다시 채워져 풀렸을 때 false.
- *
- * 머리 위 "페인트가 부족합니다!" 알림이 붙는 자리다. (기획서 5-4)
- * 작업 키를 누르고 있는 동안 매 프레임이 아니라 상태가 바뀌는 순간에만 발행된다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCWOnPaintDepletedChangedSignature, UCWWorkerComponent*, WorkerComponent, bool, bPaintDepleted);
 
 /**
  * 플레이어 캐릭터에 붙이는 작업 입력 컴포넌트.
  *
  * 하는 일은 단순하다.
  *   작업 키를 누르고 있는 동안, 매 프레임 커서가 가리키는 존을 찾아서 ApplyWork 를 호출한다.
- * 존이 Hold 방식인지 칸 방식인지는 이 컴포넌트가 신경 쓰지 않는다. 존이 알아서 처리한다.
+ * 존이 칸 방식인지 차징 방식인지는 이 컴포넌트가 신경 쓰지 않는다. 존이 알아서 처리한다.
  *
  * 들고 있는 도구는 UCWToolHolderComponent 가 SetHeldTool 로 넣어준다.
  * 홀더가 없어도 SetHeldTool 을 직접 불러 테스트할 수 있게 일부러 분리해 뒀다.
@@ -52,8 +41,6 @@ public:
 
 	virtual void BeginPlay() override;
 
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	/**
@@ -66,44 +53,16 @@ public:
 	float GetWorkSpeedFactor() const;
 
 	/**
-	 * 존이 자기 진행량만큼 체온을 올려달라고 보고한다.
-	 *
-	 * 미니게임 존처럼 진행이 자기 Tick 에서 도는 존이 쓴다. 그런 존은 작업 키를 누른 프레임에만
-	 * ApplyWork 가 오기 때문에, 이 컴포넌트의 Tick 에 체온을 맡기면 부스트할 때만 더워진다.
-	 *
-	 * 체온은 서버가 굴리므로 클라이언트에서 부르면 서버로 올려보낸다. 매 프레임 보내지 않고
-	 * WorkHeatSendInterval 로 묶는다.
-	 *
-	 * @param EffectiveWorkSeconds 작업속도 계수가 이미 곱해진 시간(초). AddWorkHeat 와 같은 단위다.
-	 */
-	void SubmitWorkHeat(float EffectiveWorkSeconds);
-
-	/**
 	 * 존이 자기 진행량만큼 페인트를 써달라고 보고한다. (기획서 5-3)
 	 *
-	 * 체온의 SubmitWorkHeat 과 같은 자리다. 다만 이쪽은 서버로 올려보내지 않는다.
+	 * 서버로 올려보내지 않는다.
 	 * 잔량은 도구 액터가 리플리케이트하고, 서버는 서버대로 같은 계산을 돌리기 때문이다.
-	 *   - 게이지 존   : 서버에서만 ApplyWork 가 돌아 서버가 깎는다
 	 *   - 칸 존       : 칠한 본인이 로컬로 깎고, 올라간 붓질을 받아 서버도 깎는다
-	 *   - 미니게임 존 : 그리는 본인이 로컬로 깎고, 올라간 진행도를 받아 서버도 깎는다
+	 *   - 테두리 존   : 그리는 본인이 로컬로 깎고, 올라간 칸 번호를 받아 서버도 깎는다
 	 * 어느 쪽이든 양쪽이 같은 양을 깎으므로 따로 RPC 를 태울 필요가 없고,
 	 * 어긋나더라도 서버 값이 리플리케이션으로 덮는다.
 	 */
 	void ConsumePaint(float Amount);
-
-	/**
-	 * 존이 스스로 진행하다 페인트가 떨어져 멈췄다고 보고한다. (기획서 5-4)
-	 *
-	 * 테두리 미니게임처럼 작업 키를 누르지 않아도 진행하는 존이 쓴다. 이 컴포넌트는
-	 * "작업 키를 누르고 있는가" 로 소진 시점을 잡기 때문에, 키를 떼고 있는 동안 멈춘 것은
-	 * 스스로 알 수 없다. 그러면 UI 만 조용히 닫히고 이유가 안 보인다.
-	 *
-	 * 서버로도 올려보낸다. 미니게임은 그리는 본인 기계에서만 돌아 서버가 스스로 알 수 없는데,
-	 * 머리 위 알림은 보급자가 봐야 의미가 있어서 서버를 거쳐야 남의 화면에도 뜬다.
-	 *
-	 * 켜기만 하고 끄지는 않는다. 페인트가 채워지거나, 존을 벗어나거나, 다운되면 Tick 이 알아서 푼다.
-	 */
-	void NotifyZonePaintDepleted();
 
 	/**
 	 * 지금 들고 있는 도구에 작업할 페인트가 남아 있는가. (기획서 5-1)
@@ -113,15 +72,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work|Paint")
 	bool HasPaintForWork() const;
-
-	/**
-	 * 페인트가 없어 작업이 막힌 상태인가. 머리 위 알림의 현재 상태를 물어볼 때 쓴다.
-	 *
-	 * 위젯이 뒤늦게 만들어지면 이미 지나간 OnPaintDepletedChanged 를 받을 수 없다.
-	 * 생성 시점에 이 값으로 한 번 맞추고, 이후는 델리게이트로 따라가면 된다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Work|Paint")
-	bool IsPaintDepleted() const { return bPaintDepleted; }
 
 	/** 지금 들고 있는 도구 액터. 맨손이면 nullptr. 잔량을 물어볼 때 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Work|Paint")
@@ -156,7 +106,7 @@ public:
 	bool ConsumeDirectionInput(const FVector2D& MoveInput);
 
 	/**
-	 * 작업 취소 키. 미니게임을 빠져나와 다시 움직일 수 있게 한다.
+	 * 작업 취소 키. 테두리 차징을 버리고 다시 움직일 수 있게 한다.
 	 *
 	 * 서버 확정을 기다리면 그 사이 이동이 막혀 차를 못 피한다.
 	 * 그래서 이동 잠금만 로컬에서 즉시 풀고, 존 상태 정리는 서버에 맡긴다.
@@ -186,17 +136,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work")
 	FVector GetWorkLocation() const { return CurrentWorkLocation; }
 
-	UFUNCTION(BlueprintPure, Category = "Work")
-	bool IsWorking() const { return bWorking; }
-
-	/** 다운 등으로 작업이 막혀 있는가. 미니게임 존이 중단 판단에 쓴다. */
+	/** 다운 등으로 작업이 막혀 있는가. 테두리 존이 중단 판단에 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	bool IsWorkBlocked() const { return bWorkBlocked; }
 
 	/**
 	 * 작업이 실제로 진행되는 중인가. 작업 애니메이션과 이펙트가 이 값을 본다.
 	 *
-	 * IsWorking 과 다르다. 그쪽은 "작업 키를 누르고 있다" 일 뿐이라, 존도 없는 허공에 대고
+	 * bWorking 과 다르다. 그쪽은 "작업 키를 누르고 있다" 일 뿐이라, 존도 없는 허공에 대고
 	 * 키를 눌러도 true 다. 이 값은 대상 존이 있고 페인트도 있는 경우만 true 다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Work")
@@ -221,22 +168,6 @@ public:
 	bool IsAimingBlocked() const;
 
 	/**
-	 * 지금 하는 작업의 차징 단계. 0 이면 차징 중이 아니다. 애니메이션이 자세를 고르는 데 쓴다.
-	 *
-	 * 캐릭터가 존을 직접 잡지 않고 여기를 거치게 한 이유: 존은 작업 컴포넌트가 매 프레임
-	 * 새로 고르는 값이라, 애니메이션 쪽에서 들고 있으면 존이 바뀌는 순간 놓친다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	int32 GetChargeLevel() const;
-
-	/** 게이지 채움용 0~1. 풀차징 시간 대비 얼마나 눌렀는가. */
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	float GetChargeRatio() const;
-
-	UFUNCTION(BlueprintPure, Category = "Work|Charge")
-	bool IsCharging() const { return GetChargeLevel() > 0 || GetChargeRatio() > 0.f; }
-
-	/**
 	 * 이 컴포넌트가 이 기계에서 조종 중인 플레이어의 것인가.
 	 * 로컬로 시뮬레이션하는 존이 "내가 돌려야 할 작업인지" 판단하는 데 쓴다.
 	 */
@@ -246,12 +177,6 @@ public:
 	/** 존이 "이 작업자가 작업할 수 있는 위치인가" 를 판단할 때 쓴다. */
 	UFUNCTION(BlueprintPure, Category = "Work")
 	float GetMaxWorkDistance() const { return MaxWorkDistance; }
-
-	/**
-	 * 로컬에서 계산한 진행도를 서버에 올린다. 테두리 미니게임처럼
-	 * 진행 자체는 본인 기계에서 돌고 결과만 공유하면 되는 존이 쓴다.
-	 */
-	void ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
 
 	/**
 	 * 로컬에서 확정한 붓질들을 서버로 올린다. 칸을 칠하는 존이 일정 간격으로 모아서 부른다.
@@ -284,34 +209,6 @@ private:
 	 */
 	UFUNCTION(Server, Unreliable)
 	void Server_UpdateWorkLocation(FVector_NetQuantize WorkLocation);
-
-	/**
-	 * 미니게임이 페인트 소진으로 멈췄다는 보고. 놓치면 남의 화면에 알림이 안 뜨므로 Reliable 이다.
-	 * 끄는 보고는 없다. 해제 조건은 서버도 자기 Tick 에서 같이 본다.
-	 */
-	UFUNCTION(Server, Reliable)
-	void Server_NotifyZonePaintDepleted();
-
-	/**
-	 * 로컬에서 계산한 진행도 보고.
-	 * 중간 값은 몇 개 유실돼도 다음 것이 덮으므로 Unreliable 로 둔다.
-	 */
-	UFUNCTION(Server, Unreliable)
-	void Server_ReportWorkProgress(ACWBaseWorkZone* Zone, float NewProgress);
-
-	/** 완주 보고. 이건 놓치면 작업이 영영 안 끝나므로 Reliable 이어야 한다. */
-	UFUNCTION(Server, Reliable)
-	void Server_ReportWorkCompleted(ACWBaseWorkZone* Zone);
-
-	/**
-	 * 존이 보고한 체온 상승분. 몇 개 유실돼도 그만큼만 덜 오르고 끝이라 Unreliable 로 둔다.
-	 * (진행도와 달리 누적값이 아니라 증분이라 다음 패킷이 덮어주지 않는다는 점은 감수한다)
-	 */
-	UFUNCTION(Server, Unreliable)
-	void Server_SubmitWorkHeat(float EffectiveWorkSeconds);
-
-	/** 모아둔 체온 상승분을 서버로 올린다. 소유 클라이언트에서만 의미가 있다. */
-	void FlushPendingWorkHeat();
 
 	/**
 	 * 붓질 보고. 놓치면 그 자리만 영영 안 칠해지거나 안 지워지므로 Reliable 이어야 한다.
@@ -352,14 +249,7 @@ private:
 
 	void SetTargetZone(ACWBaseWorkZone* NewZone);
 
-	/** 페인트 부족 상태가 바뀌었을 때만 델리게이트를 발행한다. */
 	void SetPaintDepleted(bool bNewDepleted);
-
-	UFUNCTION()
-	void OnRep_PaintDepleted();
-
-	/** 부족 상태가 실제로 바뀐 뒤의 처리. 서버·소유 클라이언트·원격 모두 각자 여기로 모인다. */
-	void HandlePaintDepletedChanged();
 
 	/** 들고 있는 도구의 잔량을 화면에 띄운다. 페인트 UI 가 붙기 전까지 프로토타입 확인용. */
 	void ShowDebugPaint() const;
@@ -395,11 +285,6 @@ protected:
 	// 자기가 조종하는 캐릭터에서만 그린다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
 	bool bShowDebugPaint = false;
-
-	// 존이 보고한 체온 상승분을 모아 서버로 올리는 간격(초).
-	// 매 프레임 보낼 이유가 없다. 어차피 합산해서 더하는 값이라 묶어도 결과가 같다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work", meta = (ClampMin = "0.02"))
-	float WorkHeatSendInterval = 0.2f;
 
 	// 진행이 확인되기를 기다리며 쌓아둘 수 있는 작업 시간의 상한(초).
 	//
@@ -451,11 +336,6 @@ private:
 	// 작업 지점을 마지막으로 올려보낸 시각. 소유 클라이언트에서만 쓴다.
 	float LastWorkLocationSendTime = -1000.f;
 
-	// 아직 서버로 올리지 않은 체온 상승분. 소유 클라이언트에서만 쓴다.
-	float PendingWorkHeat = 0.f;
-
-	float LastWorkHeatSendTime = -1000.f;
-
 	// 아직 체온으로 넘기지 못한 작업 시간. 진행이 확인되면 한 번에 넘기고 0 으로 돌린다.
 	float UnheatedWorkSeconds = 0.f;
 
@@ -466,15 +346,15 @@ private:
 	/**
 	 * 지금 들고 있는 도구 액터. 잔량을 묻고 깎는 대상이다.
 	 *
-	 * 리플리케이트하지 않는다. 서버는 PerformInteract 에서, 클라이언트는 OnRep_HeldTool 에서
-	 * 각자 홀더가 넣어주므로 양쪽 모두 자기 값을 갖는다. 남의 도구 잔량은 그 도구 액터가
+	 * 리플리케이트하지 않는다. 서버는 PickUpTool/DropHeldToolAt 에서, 클라이언트는 OnRep_HeldTool 에서
+	 * 각자 홀더가 NotifyWorkerComponent 로 넣어주므로 양쪽 모두 자기 값을 갖는다. 남의 도구 잔량은 그 도구 액터가
 	 * 직접 리플리케이트하므로 여기를 거칠 이유가 없다.
 	 */
 	UPROPERTY(Transient)
 	TObjectPtr<ACWBaseTool> HeldToolActor;
 
 	/**
-	 * 페인트가 없어 작업이 막힌 상태인가. 매 프레임 알리지 않고 바뀌는 순간만 잡는다.
+	 * 페인트가 없어 작업이 막힌 상태인가.
 	 *
 	 * 리플리케이트하는 이유는 기획서 5-4 의 기획 의도 때문이다. 머리 위 "페인트가 부족합니다!" 는
 	 * 본인이 아니라 **보급자가 봐야** 의미가 있다. 로컬 계산만 두면 판정이 서버와 본인 기계에서만
@@ -483,23 +363,10 @@ private:
 	 * 소유 클라이언트는 반응성을 위해 로컬 판정으로 즉시 세팅하고, 서버 값이 오면 덮인다.
 	 * bWorking 과 같은 모델이다.
 	 */
-	UPROPERTY(ReplicatedUsing = OnRep_PaintDepleted)
+	UPROPERTY(Replicated)
 	bool bPaintDepleted = false;
-
-	// 존이 스스로 진행하다 페인트 소진으로 멈췄다고 보고했는가. (NotifyZonePaintDepleted)
-	//
-	// 작업 키를 떼고 있어도 알림을 띄워두기 위한 플래그다. 리플리케이트하지 않는다.
-	// 서버는 RPC 로 따로 받고, 이 값에서 나온 결과(bPaintDepleted)만 전원에게 나간다.
-	bool bZoneReportedDepleted = false;
 
 	// 취소를 눌렀는가. 서버 응답을 기다리지 않고 이동 잠금을 즉시 풀기 위한 로컬 플래그다.
 	// 리플리케이트하지 않는다. 작업을 다시 시작할 때 풀린다.
 	bool bCancelRequested = false;
-
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Work")
-	FCWOnTargetZoneChangedSignature OnTargetZoneChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Work|Paint")
-	FCWOnPaintDepletedChangedSignature OnPaintDepletedChanged;
 };

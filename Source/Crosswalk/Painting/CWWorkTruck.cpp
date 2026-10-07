@@ -41,7 +41,6 @@ void ACWWorkTruck::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ACWWorkTruck, StoredTools);
-	DOREPLIFETIME(ACWWorkTruck, TotalToolCount);
 }
 
 void ACWWorkTruck::BeginPlay()
@@ -81,34 +80,12 @@ void ACWWorkTruck::CollectStageTools()
 		}
 	}
 
-	// 설정에 적힌 도구를 만들어 넣는다. 레벨에 실물을 놓지 않아도 되는 경로다.
-	for (const TSubclassOf<ACWBaseTool>& ToolClass : ToolClasses)
-	{
-		if (ToolClass == nullptr)
-		{
-			continue;
-		}
-
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = this;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		if (ACWBaseTool* SpawnedTool = World->SpawnActor<ACWBaseTool>(ToolClass, GetTrunkLocation(), GetActorRotation(), SpawnParams))
-		{
-			StoreTool(SpawnedTool);
-		}
-	}
-
 	// 꺼내는 순서를 도구 종류 순으로 고정한다. 액터 순회 순서는 보장되지 않아서
 	// 그대로 두면 판마다 처음 꺼내지는 도구가 달라진다.
 	StoredTools.Sort([](const ACWBaseTool& Lhs, const ACWBaseTool& Rhs)
 	{
 		return Lhs.GetToolType() < Rhs.GetToolType();
 	});
-
-	TotalToolCount = StoredTools.Num();
-
-	OnRep_StoredTools();
 }
 
 void ACWWorkTruck::Interact_Implementation(APawn* InstigatorPawn)
@@ -182,12 +159,12 @@ bool ACWWorkTruck::StoreTool(ACWBaseTool* Tool)
 	}
 
 	Tool->SetActorLocation(GetTrunkLocation());
-	ApplyStoredState(Tool, true);
+
+	// 보관 상태는 도구가 복제 변수로 들고 있고, 숨김과 집기 차단도 도구가 알아서 한다.
+	// (ACWBaseTool 의 bStored 주석 참고)
+	Tool->SetStored(true);
 
 	StoredTools.Add(Tool);
-	OnRep_StoredTools();
-
-	OnToolStored(Tool);
 
 	return true;
 }
@@ -200,26 +177,6 @@ bool ACWWorkTruck::TakeOutTool(APawn* InstigatorPawn)
 	}
 
 	return GiveToolToPawn(StoredTools[0], InstigatorPawn);
-}
-
-bool ACWWorkTruck::TakeOutToolOfType(APawn* InstigatorPawn, ECWToolType ToolType)
-{
-	if (!HasAuthority())
-	{
-		return false;
-	}
-
-	const int32 FoundIndex = StoredTools.IndexOfByPredicate([ToolType](const ACWBaseTool* Tool)
-	{
-		return Tool != nullptr && Tool->GetToolType() == ToolType;
-	});
-
-	if (FoundIndex == INDEX_NONE)
-	{
-		return false;
-	}
-
-	return GiveToolToPawn(StoredTools[FoundIndex], InstigatorPawn);
 }
 
 bool ACWWorkTruck::GiveToolToPawn(ACWBaseTool* Tool, APawn* InstigatorPawn)
@@ -238,45 +195,18 @@ bool ACWWorkTruck::GiveToolToPawn(ACWBaseTool* Tool, APawn* InstigatorPawn)
 	// 트렁크 앞에 꺼내 놓고 홀더에 넘긴다. 홀더가 폰과의 거리를 다시 재기 때문에
 	// 숨어 있던 자리가 아니라 실제로 꺼내진 자리에 있어야 승인된다.
 	Tool->SetActorLocation(GetTrunkLocation());
-	ApplyStoredState(Tool, false);
+	Tool->SetStored(false);
 
 	if (!HolderComponent->PickUpTool(Tool))
 	{
 		// 이미 다른 도구를 들고 있거나 너무 멀다. 꺼내다 만 상태로 두지 않고 되돌린다.
-		ApplyStoredState(Tool, true);
+		Tool->SetStored(true);
 		return false;
 	}
 
 	StoredTools.Remove(Tool);
-	OnRep_StoredTools();
-
-	OnToolTakenOut(Tool);
 
 	return true;
-}
-
-void ACWWorkTruck::ApplyStoredState(ACWBaseTool* Tool, bool bStored)
-{
-	if (Tool == nullptr)
-	{
-		return;
-	}
-
-	// 보관 상태는 도구가 복제 변수로 들고 있고, 숨김도 도구가 직접 맞춘다.
-	//
-	// 예전에는 여기서 숨김과 콜리전을 직접 껐다. 트렁크 옆에 선 플레이어가 보관 중인 도구를
-	// 홀더의 근처 탐색으로 집어가는 것을 콜리전으로 막으려던 것인데, 두 가지가 잘못됐다.
-	//   1. bActorEnableCollision 은 복제되지 않아서 클라이언트에서는 콜리전이 그대로 살아 있었다.
-	//      즉 막으려던 경로가 정작 클라이언트에서는 열려 있었다.
-	//   2. "숨김 + 콜리전 없음" 은 AActor::IsNetRelevantFor 가 무관련으로 판정하는 조건이라
-	//      도구가 복제 대상에서 통째로 빠졌다. 그래서 숨김조차 전달되지 않았다.
-	// 지금은 콜리전을 켜 둔 채 ACWBaseTool::IsStored 로 거른다. (ACWBaseTool 의 bStored 주석 참고)
-	Tool->SetStored(bStored);
-}
-
-void ACWWorkTruck::OnRep_StoredTools()
-{
-	OnStoredToolsChanged.Broadcast(this, StoredTools.Num());
 }
 
 FVector ACWWorkTruck::GetTrunkLocation() const
