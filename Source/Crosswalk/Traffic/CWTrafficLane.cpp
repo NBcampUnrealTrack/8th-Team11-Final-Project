@@ -150,18 +150,6 @@ FTransform ACWTrafficLane::GetTransformAtDistance(float Distance) const
 	return Result;
 }
 
-FVector ACWTrafficLane::GetDirectionAtDistance(float Distance) const
-{
-	if (!LaneSpline)
-	{
-		return GetActorForwardVector();
-	}
-
-	const FVector Direction = LaneSpline->GetDirectionAtDistanceAlongSpline(ToSplineDistance(Distance), ESplineCoordinateSpace::World);
-
-	return bReverseDirection ? -Direction : Direction;
-}
-
 float ACWTrafficLane::GetDistanceAtWorldLocation(const FVector& WorldLocation) const
 {
 	if (!LaneSpline)

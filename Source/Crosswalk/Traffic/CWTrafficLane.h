@@ -29,10 +29,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
 	FTransform GetTransformAtDistance(float Distance) const;
 
-	/** 시작점에서 Distance(cm)만큼 진행한 지점의 진행 방향(정규화). */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
-	FVector GetDirectionAtDistance(float Distance) const;
-
 	/**
 	 * 월드 위치에서 가장 가까운 차선 위 지점의 진행 거리(cm).
 	 *

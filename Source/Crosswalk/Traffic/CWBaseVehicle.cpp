@@ -108,7 +108,7 @@ void ACWBaseVehicle::Tick(float DeltaSeconds)
 	if (bParried)
 	{
 		// 차선을 벗어난 차는 더 이상 정지선을 보지 않는다. 서 있다가 튕겨나간 경우
-		// 이걸 안 풀면 날아가는 중에도 IsStoppedAtStopLine 이 true 로 남는다.
+		// 이걸 안 풀면 날아가는 중에도 bStoppedAtStopLine 이 true 로 남는다.
 		StopTargetDistance = -1.f;
 		UpdateStopState(false);
 
@@ -212,11 +212,6 @@ float ACWBaseVehicle::GetVehicleHalfLength() const
 	// 여기만 스케일 전 크기를 쓰면 두 기준이 갈려서, 패링 반경 판정과 스포너 간격 계산이
 	// 서로 다른 차량 크기를 보게 된다.
 	return CollisionBox ? CollisionBox->GetScaledBoxExtent().X : 0.f;
-}
-
-float ACWBaseVehicle::GetWheelSpinDegrees() const
-{
-	return AppearanceComponent ? AppearanceComponent->GetWheelSpinDegrees() : 0.f;
 }
 
 void ACWBaseVehicle::InitializeOnLane(ACWTrafficLane* InLane, const FCWTrafficVehicleSpawnParams& Params)

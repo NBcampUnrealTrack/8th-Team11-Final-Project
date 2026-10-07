@@ -46,10 +46,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Spawner")
 	ACWBaseVehicle* RequestSpawn();
 
-	/** 이 스포너가 차량을 흘려보내는 차선. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Spawner")
-	ACWTrafficLane* GetTargetLane() const { return TargetLane; }
-
 	/**
 	 * VehicleMix에서 가중치 추첨으로 차종을 고른다. 목록이 비면 VehicleClass로 떨어진다.
 	 *

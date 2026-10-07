@@ -184,13 +184,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetCurrentSpeed() const { return CurrentVelocity.Size(); }
 
-	/**
-	 * 바퀴가 지금까지 돈 각도(도). 외형 컴포넌트의 값을 그대로 돌려주는 BP 호환용 창구다.
-	 * 본에 꽂는 일은 C++ 이 하므로 BP 쪽 참고용으로만 남아 있다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	float GetWheelSpinDegrees() const;
-
 	/** 콜리전 박스 기준 차량 전체 길이(cm). 차간 거리 계산의 기준값. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetVehicleLength() const;
@@ -256,30 +249,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetDistanceAlongLane() const { return DistanceAlongLane; }
-
-	/**
-	 * 지금 정지선 때문에 서 있는가. 서버·클라이언트 각자의 판단이라 두 값이 다를 수 있고,
-	 * 다른 것 자체가 어긋남의 신호다.
-	 *
-	 * 앞차에 막혀 선 것은 false 다. 두 정지는 풀리는 방식이 달라서 섞으면 안 된다.
-	 * 앞차는 앞이 움직이면 따라 풀리지만, 정지선은 신호가 바뀔 때까지 값이 얼어붙는다.
-	 *
-	 * 바뀌는 순간을 잡으려면 매 틱 비교하지 말고 OnStopStateChanged 를 쓴다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	bool IsStoppedAtStopLine() const { return bStoppedAtStopLine; }
-
-	/**
-	 * 이 차가 서야 하는 차선 위 진행 거리(cm). 보고 있는 정지선이 없으면 -1.
-	 *
-	 * DistanceAlongLane 과 같은 좌표계라 그대로 대입하면 정확히 서야 할 자리에 놓인다.
-	 * 정지 구간의 보정은 서버가 보낸 값을 기다리지 말고 이 값을 목표로 삼는 편이 낫다.
-	 * 정지선 위치도 차체 길이도 양쪽이 같은 값을 갖고 있어서, 계산 결과가 애초에 같다.
-	 *
-	 * 감속을 시작하기 전에도 값이 나온다. 서 있는지까지 물으려면 IsStoppedAtStopLine 을 같이 본다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	float GetStopTargetDistance() const { return StopTargetDistance; }
 
 	/**
 	 * Target이 이 차량의 진행 경로 위에 있을 때 충돌까지 남은 시간(초)을 낸다.
