@@ -103,7 +103,6 @@ void UCWWeatherComponent::OnRep_CurrentWeatherState()
 void UCWWeatherComponent::BroadcastWeatherState(float RolledWindSpeed, float RolledIntensity, float BlendTime)
 {
 	FCWWeatherEventPayload Payload;
-	Payload.WeatherState = CurrentWeatherState;
 	Payload.WindSpeed = RolledWindSpeed;
 	Payload.WeatherIntensity = RolledIntensity;
 	Payload.BlendTime = BlendTime;
