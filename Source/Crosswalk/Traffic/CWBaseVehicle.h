@@ -100,7 +100,7 @@ struct FCWVehicleStepResolution
  *   HitDetection    플레이어 피격 판정(오버랩·재판정·랙 보정)
  *   Audio           엔진음·경적·도플러
  *
- *   차종 데이터(MeshVariants, WheelBones, VehicleType 등)는 컴포넌트가 아니라 여기 있다.
+ *   차종 데이터(MeshVariants, WheelBones 등)는 컴포넌트가 아니라 여기 있다.
  *   차종 BP 가 입력하는 값이라 프로퍼티를 옮기면 그 입력이 전부 날아간다. 컴포넌트는
  *   게터로 읽기만 한다. 두 컴포넌트는 틱이 없고 이 클래스의 Tick 이 맨 앞에서 부른다 -
  *   "지난 프레임 값으로 본다" 는 전제를 액터 틱 순서 설정에 맡기지 않기 위해서다.
@@ -221,10 +221,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	float GetDistanceToPoint(const FVector& Point) const;
-
-	/** 피격·패링 연출 분기에 쓰이는 차종 ID. 수신 측이 차종별 분기에 쓴다. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
-	FName GetVehicleType() const { return VehicleType; }
 
 	UFUNCTION(BlueprintPure, Category = "Traffic|Vehicle")
 	ACWTrafficLane* GetCurrentLane() const { return CurrentLane; }
@@ -564,13 +560,6 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	TArray<FName> WheelBones;
-
-	/**
-	 * 피격 연출 분기에 쓰이는 차종 ID. FCWVehicleHitContext로 전달된다.
-	 * 차종 BP마다 다른 값을 지정해야 피격 프로파일이 제대로 잡힌다.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
-	FName VehicleType = TEXT("Sedan");
 
 	/**
 	 * 피격이 성립하는 최소 주행 속도(cm/s). 이보다 느린 차는 몸이 닿아도 치지 않는다.
