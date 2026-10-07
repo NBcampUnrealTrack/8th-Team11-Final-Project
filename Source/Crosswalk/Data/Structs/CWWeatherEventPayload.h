@@ -4,7 +4,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Data/Enums/CWWeatherTypes.h"
 #include "CWWeatherEventPayload.generated.h"
 
 /**
@@ -20,9 +19,6 @@ struct FCWWeatherEventPayload
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(BlueprintReadOnly, Category = "Weather")
-	ECWWeatherState WeatherState = ECWWeatherState::Calm;
-
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	float WindSpeed = 0.f;
 
