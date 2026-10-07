@@ -10,6 +10,7 @@ class UCWClipboardPresenterSubsystem;
 class ACWClipboardPropActor;
 class USizeBox;
 class UWidget;
+class UListViewBase;
 
 // 클립보드 내리기 연출 완료 후 부모 위젯에 제거 가능 시점을 알림
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(
@@ -28,6 +29,7 @@ protected:
 	virtual void NativeConstruct() override;
 
 	virtual void NativeDestruct() override;
+	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -51,6 +53,9 @@ public:
 #pragma region PrivateFunctions
 
 private:
+	void ApplyStageEntryLock(UUserWidget& EntryWidget);
+	TArray<TWeakObjectPtr<UListViewBase>> StageLists;
+
 	UFUNCTION()
 	void HandleClipboardRaiseFinished();
 

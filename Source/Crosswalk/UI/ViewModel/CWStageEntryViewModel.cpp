@@ -3,6 +3,15 @@
 #include "UI/ViewModel/CWStageEntryViewModel.h"
 #include "Data/Structs/CWStageInfo.h"
 
+void UCWStageEntryViewModel::SetIsUnlocked(bool bInUnlocked)
+{
+	UE_MVVM_SET_PROPERTY_VALUE(bIsUnlocked, bInUnlocked);
+	if (!bInUnlocked)
+	{
+		UE_MVVM_SET_PROPERTY_VALUE(DisplayName, FText::Format(NSLOCTEXT("CWUI", "LockedStageName", "{0} · 잠김"), DisplayName));
+	}
+}
+
 void UCWStageEntryViewModel::SetStageInfo(const FCWStageInfo& StageInfo)
 {
 	// 식별자는 표시용이 아니라 확정에만 쓰므로 그대로 보관

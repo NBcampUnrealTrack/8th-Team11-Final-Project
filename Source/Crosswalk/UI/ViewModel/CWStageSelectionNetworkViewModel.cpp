@@ -5,6 +5,7 @@
 #include "Core/Stage/CWStageSelectionGameStateBase.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
+#include "UI/Progress/CWLocalStageProgress.h"
 
 #pragma region StageSelectionRequests
 
@@ -31,6 +32,7 @@ bool UCWStageSelectionNetworkViewModel::RequestOpenStageSelection()
 
 bool UCWStageSelectionNetworkViewModel::RequestSelectStage(FName StageId)
 {
+	if (!FCWLocalStageProgress::CanSelect(StageId)) return false;
 	UWorld* World = GetBoundWorld();
 
 	if (!IsValid(World))
@@ -71,6 +73,7 @@ bool UCWStageSelectionNetworkViewModel::RequestCloseStageSelection()
 
 bool UCWStageSelectionNetworkViewModel::RequestStartSelectedStage(FName StageId)
 {
+	if (!FCWLocalStageProgress::CanSelect(StageId)) return false;
 	UWorld* World = GetBoundWorld();
 
 	if (!IsValid(World))

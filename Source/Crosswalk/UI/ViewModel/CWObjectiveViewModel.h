@@ -30,6 +30,7 @@ public:
 private:
 	// 목표 목록을 갱신하고 FieldNotify를 발생
 	void SetObjectives(const TArray<FCWStageObjective>& InObjectives);
+	void PublishObjectives(const TArray<FCWStageObjective>& InObjectives);
 	void UpdateObjectiveTransition();
 	bool PrepareObjectiveInkLayer();
 	void StopObjectiveTransition();

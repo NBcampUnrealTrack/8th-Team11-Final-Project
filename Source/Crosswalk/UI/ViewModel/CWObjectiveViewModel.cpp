@@ -14,8 +14,88 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+#include "UI/Progress/CWLocalStageProgress.h"
+#include "UObject/UnrealType.h"
 
 #pragma region ObjectiveData
+
+void UCWObjectiveViewModel::PublishObjectives(const TArray<FCWStageObjective>& InObjectives)
+{
+	if (Objectives == InObjectives) return;
+	struct FCompletedRowState
+	{
+		TWeakObjectPtr<UUserWidget> Panel;
+		FText Name;
+		double Elapsed = 0.0;
+		float Progress = 0.f;
+	};
+	TArray<FCompletedRowState> CompletedRows;
+	TArray<UUserWidget*> Widgets;
+	if (GetBoundWorld()) UWidgetBlueprintLibrary::GetAllWidgetsOfClass(GetBoundWorld(), Widgets, UUserWidget::StaticClass(), false);
+	for (UUserWidget* Panel : Widgets)
+	{
+		UVerticalBox* List = Cast<UVerticalBox>(Panel->GetWidgetFromName(TEXT("VerticalBox_Objectives")));
+		if (!List) continue;
+		for (UWidget* Child : List->GetAllChildren())
+		{
+			UUserWidget* Row = Cast<UUserWidget>(Child);
+			if (!Row) continue;
+			const FTextProperty* Name = FindFProperty<FTextProperty>(Row->GetClass(), TEXT("ObjectiveText"));
+			const FIntProperty* Completed = FindFProperty<FIntProperty>(Row->GetClass(), TEXT("CompletedCount"));
+			const FIntProperty* Total = FindFProperty<FIntProperty>(Row->GetClass(), TEXT("TotalCount"));
+			const FNumericProperty* Time = FindFProperty<FNumericProperty>(Row->GetClass(), TEXT("CompletedPaintElapsed"));
+			const FObjectPropertyBase* Material = FindFProperty<FObjectPropertyBase>(Row->GetClass(), TEXT("CompletedPaintMID"));
+			if (!Name || !Completed || !Total || !Time || !Time->IsFloatingPoint() || !Material) continue;
+			UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(Material->GetObjectPropertyValue_InContainer(Row));
+			const int32 Required = Total->GetPropertyValue_InContainer(Row);
+			if (Required <= 0 || Completed->GetPropertyValue_InContainer(Row) < Required || !MID) continue;
+			FCompletedRowState& State = CompletedRows.AddDefaulted_GetRef();
+			State.Panel = Panel;
+			State.Name = Name->GetPropertyValue_InContainer(Row);
+			State.Elapsed = Time->GetFloatingPointPropertyValue(Time->ContainerPtrToValuePtr<void>(Row));
+			State.Progress = MID->K2_GetScalarParameterValue(TEXT("PaintProgress"));
+		}
+	}
+	UE_MVVM_SET_PROPERTY_VALUE(Objectives, InObjectives);
+	// 목록 바인딩이 모든 행의 완료 타이머를 초기화해도 기존 완료 행의 진행도는 이어지게 함
+	const auto RestoreCompletedRows = [CompletedRows]()
+	{
+	for (const FCompletedRowState& State : CompletedRows)
+	{
+		UUserWidget* Panel = State.Panel.Get();
+		UVerticalBox* List = Panel ? Cast<UVerticalBox>(Panel->GetWidgetFromName(TEXT("VerticalBox_Objectives"))) : nullptr;
+		if (!List) continue;
+		for (UWidget* Child : List->GetAllChildren())
+		{
+			UUserWidget* Row = Cast<UUserWidget>(Child);
+			if (!Row) continue;
+			const FTextProperty* Name = FindFProperty<FTextProperty>(Row->GetClass(), TEXT("ObjectiveText"));
+			const FIntProperty* Completed = FindFProperty<FIntProperty>(Row->GetClass(), TEXT("CompletedCount"));
+			const FIntProperty* Total = FindFProperty<FIntProperty>(Row->GetClass(), TEXT("TotalCount"));
+			FNumericProperty* Time = FindFProperty<FNumericProperty>(Row->GetClass(), TEXT("CompletedPaintElapsed"));
+			const FObjectPropertyBase* Material = FindFProperty<FObjectPropertyBase>(Row->GetClass(), TEXT("CompletedPaintMID"));
+			if (!Name || !Completed || !Total || !Time || !Time->IsFloatingPoint() || !Material) continue;
+			const int32 Required = Total->GetPropertyValue_InContainer(Row);
+			if (Required <= 0 || Completed->GetPropertyValue_InContainer(Row) < Required
+				|| !Name->GetPropertyValue_InContainer(Row).EqualTo(State.Name)) continue;
+			const double Elapsed = FMath::Max(State.Elapsed,
+				Time->GetFloatingPointPropertyValue(Time->ContainerPtrToValuePtr<void>(Row)));
+			Time->SetFloatingPointPropertyValue(Time->ContainerPtrToValuePtr<void>(Row), Elapsed);
+			if (UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(Material->GetObjectPropertyValue_InContainer(Row)))
+			{
+				MID->SetScalarParameterValue(TEXT("PaintProgress"), FMath::Max(State.Progress,
+					MID->K2_GetScalarParameterValue(TEXT("PaintProgress"))));
+			}
+		}
+	}
+	};
+	RestoreCompletedRows();
+	// 지연 MVVM 바인딩 이후에도 이미 완료된 행만 복원해 새 완료 행의 붓칠은 유지함
+	if (UWorld* World = GetBoundWorld(); World && !CompletedRows.IsEmpty())
+	{
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, RestoreCompletedRows));
+	}
+}
 
 void UCWObjectiveViewModel::SetObjectives(
 	const TArray<FCWStageObjective>& InObjectives
@@ -70,7 +150,7 @@ void UCWObjectiveViewModel::SetObjectives(
 		PendingObjectives = VisibleObjectives;
 		if (bTransitionListReplaced)
 		{
-			UE_MVVM_SET_PROPERTY_VALUE(Objectives, VisibleObjectives);
+			PublishObjectives(VisibleObjectives);
 		}
 		return;
 	}
@@ -85,7 +165,7 @@ void UCWObjectiveViewModel::SetObjectives(
 		{
 			if (!IsCleanupObjective(Objective)) CompletedMainObjectives.Add(Objective);
 		}
-		UE_MVVM_SET_PROPERTY_VALUE(Objectives, CompletedMainObjectives);
+		PublishObjectives(CompletedMainObjectives);
 		PendingObjectives = VisibleObjectives;
 		bTransitioningObjectives = true;
 		bTransitionListReplaced = false;
@@ -95,7 +175,7 @@ void UCWObjectiveViewModel::SetObjectives(
 		return;
 	}
 	StopObjectiveTransition();
-	UE_MVVM_SET_PROPERTY_VALUE(Objectives, VisibleObjectives);
+	PublishObjectives(VisibleObjectives);
 }
 
 bool UCWObjectiveViewModel::PrepareObjectiveInkLayer()
@@ -152,7 +232,7 @@ void UCWObjectiveViewModel::UpdateObjectiveTransition()
 	URetainerBox* Layer = ObjectiveInkLayer.Get();
 	if (!World || !Layer)
 	{
-		UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+		PublishObjectives(PendingObjectives);
 		StopObjectiveTransition();
 		return;
 	}
@@ -162,7 +242,7 @@ void UCWObjectiveViewModel::UpdateObjectiveTransition()
 	UMaterialInstanceDynamic* Mask = Layer->GetEffectMaterial();
 	if (!Mask)
 	{
-		UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+		PublishObjectives(PendingObjectives);
 		StopObjectiveTransition();
 		return;
 	}
@@ -178,7 +258,7 @@ void UCWObjectiveViewModel::UpdateObjectiveTransition()
 		if (!bTransitionListReplaced)
 		{
 			bTransitionListReplaced = true;
-			UE_MVVM_SET_PROPERTY_VALUE(Objectives, PendingObjectives);
+			PublishObjectives(PendingObjectives);
 		}
 	}
 	Layer->RequestRender();
@@ -199,6 +279,11 @@ void UCWObjectiveViewModel::SetIsStageCleared(
 )
 {
 	// 클리어 여부가 실제로 변경된 경우에만 MVVM 알림 발생
+	// 결과 화면의 다음 선택 목록이 만들어지기 전에 로컬 해금을 기록하기 위함
+	if (bInIsStageCleared && GetOwningPlayerController())
+	{
+		FCWLocalStageProgress::RecordClear(GetBoundWorld());
+	}
 	UE_MVVM_SET_PROPERTY_VALUE(
 		bIsStageCleared,
 		bInIsStageCleared
