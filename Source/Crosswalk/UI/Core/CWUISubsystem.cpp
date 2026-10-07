@@ -1179,6 +1179,64 @@ bool UCWUISubsystem::ClosePopup(UUserWidget* InWidget)
 	return true;
 }
 
+UCWBaseConfirmDialog* UCWUISubsystem::ShowConfirmPopup(
+	TSubclassOf<UCWBaseConfirmDialog> DialogClass,
+	FText Message,
+	FCWConfirmResultSignature OnConfirmed,
+	FCWConfirmResultSignature OnCancelled
+)
+{
+	return OpenConfirmDialog(DialogClass, Message, true, OnConfirmed, OnCancelled);
+}
+
+UCWBaseConfirmDialog* UCWUISubsystem::ShowNoticePopup(TSubclassOf<UCWBaseConfirmDialog> DialogClass, FText Message)
+{
+	return OpenConfirmDialog(DialogClass, Message, false, FCWConfirmResultSignature(), FCWConfirmResultSignature());
+}
+
+UCWBaseConfirmDialog* UCWUISubsystem::OpenConfirmDialog(
+	TSubclassOf<UCWBaseConfirmDialog> DialogClass,
+	const FText& Message,
+	bool bShowCancel,
+	FCWConfirmResultSignature OnConfirmed,
+	FCWConfirmResultSignature OnCancelled
+)
+{
+	// 클래스가 비면 아무것도 열지 않고 알림 - 크래시 대신 기능만 비활성화
+	if (!DialogClass)
+	{
+		UE_LOG(LogCWUI, Error, TEXT("UISubsystem: confirm popup class is not set."));
+		return nullptr;
+	}
+
+	ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	APlayerController* PlayerController = IsValid(LocalPlayer) ? LocalPlayer->GetPlayerController(GetWorld()) : nullptr;
+	if (!IsValid(PlayerController))
+	{
+		UE_LOG(LogCWUI, Error, TEXT("UISubsystem: PlayerController is invalid for confirm popup."));
+		return nullptr;
+	}
+
+	UCWBaseConfirmDialog* Dialog = CreateWidget<UCWBaseConfirmDialog>(PlayerController, DialogClass);
+	if (!IsValid(Dialog))
+	{
+		UE_LOG(LogCWUI, Error, TEXT("UISubsystem: failed to create confirm popup."));
+		return nullptr;
+	}
+
+	Dialog->Setup(Message, bShowCancel, OnConfirmed, OnCancelled);
+
+	// 이미 다른 팝업이 열려 있으면 열지 못하며, 이때 콜백은 부르지 않음
+	if (!OpenPopup(Dialog))
+	{
+		return nullptr;
+	}
+
+	// ESC 가 이 팝업으로 오도록 포커스를 줌
+	Dialog->SetUserFocus(PlayerController);
+	return Dialog;
+}
+
 void UCWUISubsystem::CopyTextToClipboard(const FString& Text)
 {
 	// 빈 문자열로 덮어쓰면 사용자가 갖고 있던 내용만 날아감

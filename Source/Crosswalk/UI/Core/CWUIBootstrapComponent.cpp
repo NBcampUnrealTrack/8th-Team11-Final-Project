@@ -347,18 +347,15 @@ void UCWUIBootstrapComponent::TryOpenInitialPage()
 			// 복귀 페이지가 준비된 뒤 안내하며, 팝업이 열렸을 때만 대기 내용을 소비함
 			if (!bEnteringRoom && IsValid(GI) && !GI->GetPendingSessionNotice().IsEmpty())
 			{
-				UUserWidget* Notice = SessionNoticeClass ? CreateWidget<UUserWidget>(PC, SessionNoticeClass) : nullptr;
-				UTextBlock* Message = Notice ? Cast<UTextBlock>(Notice->GetWidgetFromName(TEXT("Text_Message"))) : nullptr;
-				UWidget* Cancel = Notice ? Notice->GetWidgetFromName(TEXT("WBP_ButtonCommon_Cancel")) : nullptr;
-				if (!Message || !Cancel)
+				// 클래스가 확인 팝업의 자식이 아니거나 비면 null 이 되어 안내만 건너뜀
+				const TSubclassOf<UCWBaseConfirmDialog> NoticeClass(SessionNoticeClass.Get());
+				if (!NoticeClass)
 				{
-					UE_LOG(LogCWUI, Error, TEXT("Session notice: confirm dialog configuration is invalid."));
+					UE_LOG(LogCWUI, Error, TEXT("Session notice: confirm dialog class is invalid."));
 					World->GetTimerManager().ClearTimer(InitialPageTimer);
 					return;
 				}
-				Message->SetText(GI->GetPendingSessionNotice());
-				Cancel->SetVisibility(ESlateVisibility::Collapsed);
-				if (!UI->OpenPopup(Notice))
+				if (!UI->ShowNoticePopup(NoticeClass, GI->GetPendingSessionNotice()))
 				{
 					return;
 				}
