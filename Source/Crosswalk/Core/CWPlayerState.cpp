@@ -21,6 +21,7 @@ void ACWPlayerState::CopyProperties(APlayerState* PlayerState)
 	if (ACWPlayerState* Destination = Cast<ACWPlayerState>(PlayerState))
 	{
 		WearableComponent->CopySelectionTo(Destination->WearableComponent);
+		Destination->SetFilmObserver(bIsFilmObserver);
 	}
 }
 
@@ -32,6 +33,7 @@ void ACWPlayerState::GetLifetimeReplicatedProps(
 
 	// 서버의 준비 상태를 모든 클라이언트에 복제
 	DOREPLIFETIME(ACWPlayerState, bIsReady);
+	DOREPLIFETIME(ACWPlayerState, bIsFilmObserver);
 }
 
 void ACWPlayerState::OnRep_PlayerName()
@@ -51,8 +53,19 @@ bool ACWPlayerState::IsReady() const
 	return bIsReady;
 }
 
+void ACWPlayerState::SetFilmObserver(bool bObserver)
+{
+	if (!HasAuthority()) { return; }
+	bIsFilmObserver = bObserver;
+	SetIsOnlyASpectator(bObserver);
+	SetIsSpectator(bObserver);
+	NotifyPlayersChanged();
+	ForceNetUpdate();
+}
+
 void ACWPlayerState::ServerSetReady_Implementation(bool bNewReady)
 {
+	if (bIsFilmObserver) { return; }
 	if (bIsReady == bNewReady)
 	{
 		return;

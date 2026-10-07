@@ -54,7 +54,11 @@ void ACWRoomGameState::RemovePlayerState(
 bool ACWRoomGameState::CanStartGame() const
 {
 	// 설정된 최소 인원보다 적으면 시작할 수 없음
-	if (PlayerArray.Num() < MinimumPlayersToStart)
+	const int32 PlayingCount = PlayerArray.FilterByPredicate([](const TObjectPtr<APlayerState>& State)
+	{
+		return IsValid(State) && !State->IsOnlyASpectator();
+	}).Num();
+	if (PlayingCount < MinimumPlayersToStart)
 	{
 		return false;
 	}
@@ -62,6 +66,7 @@ bool ACWRoomGameState::CanStartGame() const
 	// 모든 방 플레이어의 준비 상태를 확인
 	for (const TObjectPtr<APlayerState>& PlayerState : PlayerArray)
 	{
+		if (IsValid(PlayerState) && PlayerState->IsOnlyASpectator()) { continue; }
 		const ACWPlayerState* CWPlayerState =
 			Cast<ACWPlayerState>(
 				PlayerState.Get()

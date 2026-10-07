@@ -38,6 +38,8 @@ public:
 	// 현재 방 준비 상태 반환
 	UFUNCTION(BlueprintPure, Category = "CW|Room")
 	bool IsReady() const;
+	bool IsFilmObserver() const { return bIsFilmObserver; }
+	void SetFilmObserver(bool bObserver);
 
 	// 소유 클라이언트가 서버에 준비 상태 변경 요청
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category = "CW|Room")
@@ -69,6 +71,10 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	bool bIsReady = false;
+
+	// Preserved across seamless travel and kept separate from temporary spectator states.
+	UPROPERTY(ReplicatedUsing = OnRep_IsReady)
+	bool bIsFilmObserver = false;
 
 #pragma endregion
 };

@@ -39,6 +39,8 @@ namespace
 
 ACWGameMode::ACWGameMode()
 {
+	// Keep the fifth client's observer role on stage changes and return-to-room travel.
+	bUseSeamlessTravel = true;
 	DefaultPawnClass = ACWPlayerCharacter::StaticClass();
 	PlayerControllerClass = ACWPlayerController::StaticClass();
 	GameStateClass = ACWGameState::StaticClass();

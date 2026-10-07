@@ -4,6 +4,10 @@
 #include "GameFramework/PlayerController.h"
 #include "CWPlayerController.generated.h"
 
+class UInputMappingContext;
+class UInputAction;
+struct FInputActionValue;
+
 /**
  * 쿼터뷰 플레이어 컨트롤러.
  *
@@ -19,8 +23,13 @@ class CROSSWALK_API ACWPlayerController : public APlayerController
 
 public:
 	ACWPlayerController();
+	virtual void PlayerTick(float DeltaTime) override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 protected:
+	// Filming observers have neither a gameplay pawn nor a movable spectator pawn.
+	virtual ASpectatorPawn* SpawnSpectatorPawn() override;
+
 	/** 서버가 폰을 붙이는 시점. 리슨 서버 호스트는 이 경로로 리스너가 잡힌다. */
 	virtual void OnPossess(APawn* InPawn) override;
 
@@ -34,6 +43,8 @@ protected:
 	virtual void OnUnPossess() override;
 
 private:
+	void UpdateObserverInput();
+	void HandleObserverAction(const FInputActionValue& Value, int32 ActionIndex);
 	/**
 	 * 소리를 듣는 지점을 카메라에서 캐릭터 위치로 옮긴다. 화면에 보이는 그림은 건드리지 않는다.
 	 *
@@ -49,4 +60,12 @@ private:
 	 * 이동 방향마다 회전하기 때문에, 방향을 틀 때마다 좌우 채널이 통째로 뒤집힌다.
 	 */
 	void ApplyAudioListenerOverride(APawn* InPawn);
+
+private:
+	// Runtime mappings are confined to the local fifth observer in gameplay maps.
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> ObserverMapping;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UInputAction>> ObserverActions;
+	bool bObserverMappingActive = false;
 };

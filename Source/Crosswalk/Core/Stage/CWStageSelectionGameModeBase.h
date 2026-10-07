@@ -17,6 +17,12 @@ class CROSSWALK_API ACWStageSelectionGameModeBase : public AGameModeBase
 #pragma region StageSelectionRequests
 
 public:
+	virtual FString InitNewPlayer(APlayerController* NewPlayerController, const FUniqueNetIdRepl& UniqueId,
+		const FString& Options, const FString& Portal = TEXT("")) override;
+	virtual void RestartPlayer(AController* NewPlayer) override;
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) override;
+
 	// 선택 조건을 만족하면 전원에게 스테이지 선택창을 표시함
 	UFUNCTION(BlueprintCallable, Category = "CW|StageSelection")
 	bool BeginStageSelection();
