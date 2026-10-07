@@ -69,6 +69,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TArray<TSubclassOf<UUserWidget>> InitialHUDClasses;
 
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI|Parry", meta = (DisplayName = "Show Parry Icon"))
+	bool bShowParryIcon = true;
+
+	UPROPERTY(EditDefaultsOnly, Category = "CW|UI|Parry", meta = (DisplayName = "Parry Icon Offset"))
+	FVector2D ParryIconOffset = FVector2D(42.f, -2.f);
+
 	// 기본 구현을 즉시 사용하고 문구나 배치는 UI 전용 파생 클래스에서 조절함
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TSubclassOf<UCWInteractionPromptWidget> InteractionPromptClass;
