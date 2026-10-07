@@ -735,16 +735,7 @@ bool ACWBaseVehicle::TryParry(AActor* Parrier, const FVector& LaunchDirection, f
 	const float DespawnDelay = FMath::Max(ParriedDespawnDelay, KINDA_SMALL_NUMBER);
 	GetWorldTimerManager().SetTimer(ParriedDespawnTimerHandle, this, &ACWBaseVehicle::OnReachedLaneEnd, DespawnDelay, false);
 
-	// 여기까지는 서버에서만 돈다. 연출은 이 RPC 로 모든 머신에 따로 뿌린다.
-	Multicast_PlayParriedFX(ParriedLaunchDirection, GetEffectiveSpeed(), Parrier);
-
 	return true;
-}
-
-void ACWBaseVehicle::Multicast_PlayParriedFX_Implementation(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier)
-{
-	// C++ 은 통보만 하고 무엇을 재생할지는 차량 BP 가 정한다.
-	OnParriedFX(LaunchDirection, LaunchSpeed, Parrier);
 }
 
 void ACWBaseVehicle::OnRep_ParryLaunch()
@@ -969,9 +960,6 @@ void ACWBaseVehicle::UpdateStopState(bool bNowStopped)
 	}
 
 	bStoppedAtStopLine = bNowStopped;
-
-	// 로그보다 먼저 알린다. 진단 스위치를 껐다고 보정이 안 도는 일이 없어야 한다.
-	OnStopStateChanged.Broadcast(this, bStoppedAtStopLine, StopTargetDistance);
 
 	if (!CWTrafficDiagnostics::IsSyncLoggingEnabled())
 	{

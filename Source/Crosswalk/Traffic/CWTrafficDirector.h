@@ -15,9 +15,6 @@ class ACWTrafficDirector;
 /** 그룹의 색이 바뀔 때. 신호등과 연출이 여기 붙는다. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FCWOnSignalGroupChangedSignature, ACWTrafficDirector*, Director, FName, GroupName, ECWTrafficSignalState, NewState, ECWTrafficSignalState, OldState);
 
-/** 시퀀스 단계가 넘어갈 때. 사운드나 카메라 연출을 붙일 자리다. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnSignalStepChangedSignature, ACWTrafficDirector*, Director, int32, StepIndex, FName, StepName);
-
 /**
  * 레벨의 교통 규칙을 굴린다. 신호등이 무슨 색인지 정하는 유일한 곳이다.
  *
@@ -68,19 +65,10 @@ public:
 	 * 이 차선이 지금 통행 가능한지. **황색은 초록과 같이 통행으로 본다.**
 	 *
 	 * 차를 세울지 말지는 색이 아니라 이 함수로 판정한다. 색 그대로가 필요한 곳
-	 * (신호등 연출)은 GetGroupState 나 IsLaneGreen 을 쓴다.
+	 * (신호등 연출)은 GetGroupState 를 쓴다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	bool IsLanePassable(const ACWTrafficLane* Lane) const;
-
-	/**
-	 * 이 차선의 색이 초록인지. **황색은 false 다** - 색을 그대로 묻는 함수다.
-	 *
-	 * 차량 정지 판정에는 쓰지 않는다. 그건 IsLanePassable 이다.
-	 * 예전에는 이 함수가 정지 판정까지 겸하고 있어서 황색에 차가 섰다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
-	bool IsLaneGreen(const ACWTrafficLane* Lane) const;
 
 	/** 그룹의 지금 색. 없는 그룹이면 꺼짐. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
@@ -94,10 +82,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
 	static FText GetSignalStateText(ECWTrafficSignalState State);
-
-	/** 지금 돌고 있는 시퀀스 단계. 시퀀스가 없거나 멈췄으면 INDEX_NONE. */
-	UFUNCTION(BlueprintPure, Category = "Traffic|Signal")
-	int32 GetCurrentStepIndex() const { return CurrentStepIndex; }
 
 	/** 시퀀스를 시작한다. bAutoStart 를 껐을 때 BP 에서 부른다. */
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Signal")
@@ -310,7 +294,4 @@ private:
 public:
 	UPROPERTY(BlueprintAssignable, Category = "Traffic|Signal")
 	FCWOnSignalGroupChangedSignature OnGroupStateChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Signal")
-	FCWOnSignalStepChangedSignature OnStepChanged;
 };

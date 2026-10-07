@@ -151,8 +151,6 @@ void ACWTrafficDifficulty::ApplyStep(int32 StepIndex)
 	UE_LOG(LogCWTraffic, Log, TEXT("[%s] 난이도 단계 %d(%s) / 진행도 %.0f%% 부터 / 주기 %.1f~%.1f초 / 스포너 %d개"),
 		*GetName(), StepIndex, *Step.StepName.ToString(), Step.StartProgress * 100.f,
 		Step.SpawnIntervalMin, Step.SpawnIntervalMax, Targets.Num());
-
-	OnStepChanged.Broadcast(StepIndex, Step.StepName);
 }
 
 TArray<ACWTrafficVehicleSpawner*> ACWTrafficDifficulty::ResolveSpawners() const

@@ -23,23 +23,6 @@ class UStaticMesh;
 class UStaticMeshComponent;
 
 /**
- * 차량이 정지선 앞에 서거나 다시 출발한 순간. 서버·클라이언트 양쪽에서 각자 뜬다.
- *
- * 정지 구간은 DistanceAlongLane 이 변하지 않아서 복제가 흐르지 않는 구간이다.
- * 보정이 필요한 쪽은 이 알림으로 "지금 이 차는 서 있고, 서야 할 자리는 여기다" 를 받는다.
- * 매 틱 값을 비교할 필요가 없도록 전이하는 순간에만 나간다.
- *
- * 앞차에 막혀 선 것은 여기 들어오지 않는다. 그쪽은 앞차가 움직이면 따라 풀리므로
- * 복제가 계속 흐르고, 정지선처럼 값이 얼어붙지 않는다.
- *
- * @param Vehicle             상태가 바뀐 차량.
- * @param bStoppedAtStopLine  섰으면 true, 다시 출발했으면 false.
- * @param StopTargetDistance  서야 하는 차선 위 진행 거리(cm). 출발 알림에서는 -1 이다.
- *                            (통행이 허가돼서 풀린 것이라 그 시점엔 볼 정지선이 없다)
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnVehicleStopStateChangedSignature, ACWBaseVehicle*, Vehicle, bool, bStoppedAtStopLine, float, StopTargetDistance);
-
-/**
  * 한 프레임의 주행 속도 결정 결과. ACWBaseVehicle::ResolveStepSpeed 가 낸다.
  *
  * 세 값이 한 묶음인 이유: 속도가 0 인 것만으로는 "정지선 앞에 섰다" 와 "앞차에 막혔다" 를
@@ -218,7 +201,6 @@ public:
 	float GetDefaultWheelRadius() const { return WheelRadius; }
 	const TArray<FName>& GetDefaultWheelBones() const { return WheelBones; }
 	float GetMinHitSpeed() const { return MinHitSpeed; }
-	bool ShouldFlattenOnHit() const { return bFlattenOnHit; }
 	UBoxComponent* GetCollisionBox() const { return CollisionBox; }
 	UStaticMeshComponent* GetVehicleMesh() const { return VehicleMesh; }
 	UPoseableMeshComponent* GetVehicleSkeletalMesh() const { return VehicleSkeletalMesh; }
@@ -273,26 +255,6 @@ public:
 	/** 패링 입력이 유효 판정되는 충돌 전 시간(초). 기획 값이므로 차량 쪽에서 단일 관리한다. */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Parry")
 	float GetParryWindow() const { return ParryWindow; }
-
-	/**
-	 * 패링당하는 순간 서버·클라이언트 모두에서 호출된다. 차량 BP 에서 구현해 **차에 붙는 연출**을 붙이는 자리다.
-	 *
-	 * 패링 성공 연출은 두 갈래로 나뉜다. 어디에 붙일지 헷갈리면 "누구 몸에 붙는가" 로 가른다.
-	 *   차에 붙는 것   - 여기. 차체 스파크, 타이어 트레일, 차 사운드처럼 차량 액터를 따라가는 연출.
-	 *   사람에 붙는 것 - UCWParryComponent::OnParrySucceeded. 카메라 흔들림, 히트스톱, HUD,
-	 *                    쳐낸 사람 애니메이션처럼 플레이어를 따라가는 연출.
-	 * 둘은 같은 사건에 각자 나가는 별개 RPC 다. 한쪽에 다른 쪽 연출을 붙이면 소유 액터가 달라서
-	 * 매번 상대를 찾아야 하고, 그 코드가 두 파일에 흩어진다.
-	 *
-	 * 호출 시점은 차량이 이미 새 방향으로 회전한 뒤다. 그래서 GetActorForwardVector 가
-	 * 곧 날아갈 방향이고, LaunchDirection 도 같은 값이다.
-	 *
-	 * @param LaunchDirection  차량이 날아가는 방향(정규화, 수평).
-	 * @param LaunchSpeed      그 순간의 실제 주행 속도(cm/s). 연출 세기 환산에 쓴다.
-	 * @param Parrier          쳐낸 플레이어. 차 쪽 연출을 그 사람에 따라 다르게 낼 때 쓴다.
-	 */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Traffic|Parry")
-	void OnParriedFX(const FVector& LaunchDirection, float LaunchSpeed, AActor* Parrier);
 
 protected:
 	/** 콜리전 박스를 바닥 기준으로 정렬한다. 편집 화면과 런타임이 같은 모습이어야 하기 때문이다. */
@@ -456,30 +418,13 @@ private:
 	float ResolveEffectiveRewindSeconds(float ViewRewindSeconds) const;
 
 	/**
-	 * 차에 붙는 패링 연출을 모든 머신에서 재생한다. 연출 전용이고 게임플레이 상태는 건드리지 않는다.
-	 *
-	 * 사람에 붙는 연출은 UCWParryComponent::Multicast_ParrySucceeded 가 따로 나간다.
-	 * 같은 사건에 RPC 가 둘인 것은 의도다 - 역할 구분은 OnParriedFX 주석 참고.
-	 *
-	 * 차량이 실제로 튕겨나가는 것은 bParried / ParriedLaunch* 복제가 담당한다.
-	 * 상태를 이 RPC 로 넘기지 않는 이유: 패링 순간에 관련성 밖이었다가 뒤늦게 들어온
-	 * 클라이언트는 이 RPC 를 못 받는다. 그때도 복제 프로퍼티는 현재 값이 그대로 도착한다.
-	 *
-	 * 그 분리가 성립하므로 Unreliable 이다. 유실이 게임플레이를 갈라놓지 않는데 Reliable 로
-	 * 두면 유실분이 재전송 큐에 쌓여 신뢰 채널을 먹는다. 놓친 클라이언트는 이번 연출 한 번을
-	 * 못 보는 것이 전부이고, 차량이 어디로 날아가는지는 복제 프로퍼티가 그대로 맞춘다.
-	 */
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayParriedFX(FVector_NetQuantizeNormal LaunchDirection, float LaunchSpeed, AActor* Parrier);
-
-	/**
-	 * 정지 상태 전이를 확정한다. 값이 바뀐 순간에만 델리게이트와 진단 로그가 나간다.
+	 * 정지 상태 전이를 확정한다. 값이 바뀐 순간에만 진단 로그가 나간다.
 	 *
 	 * 서버·클라이언트가 각자 부른다. 두 로그의 진행거리를 빼면 그 차가 양쪽에서 몇 cm
 	 * 어긋난 자리에 섰는지가 바로 나오고, 클라이언트 쪽 줄이 아예 없으면 그 화면에서는
 	 * 차가 서지 않았다는 뜻이다.
 	 *
-	 * 로그를 꺼 두었어도 상태와 델리게이트는 그대로 돈다. 진단 스위치가 보정 동작을
+	 * 로그를 꺼 두었어도 상태는 그대로 돈다. 진단 스위치가 보정 동작을
 	 * 바꾸면 "로그를 켜니까 증상이 사라진다" 가 되어서 실측 자체가 성립하지 않는다.
 	 */
 	void UpdateStopState(bool bNowStopped);
@@ -626,10 +571,6 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
 	FName VehicleType = TEXT("Sedan");
-
-	/** 대형 트럭처럼 납작해지는 특수 피격을 쓸지. 차종 BP에서 켠다. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Traffic|Vehicle")
-	bool bFlattenOnHit = false;
 
 	/**
 	 * 피격이 성립하는 최소 주행 속도(cm/s). 이보다 느린 차는 몸이 닿아도 치지 않는다.
@@ -935,9 +876,4 @@ private:
 	float StopTargetDistance = -1.f;
 
 	FTimerHandle ParriedDespawnTimerHandle;
-
-	// 델리게이트는 최하단에 배치
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Traffic|Vehicle")
-	FCWOnVehicleStopStateChangedSignature OnStopStateChanged;
 };

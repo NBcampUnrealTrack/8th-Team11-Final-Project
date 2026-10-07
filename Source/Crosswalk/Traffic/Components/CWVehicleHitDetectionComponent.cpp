@@ -210,8 +210,6 @@ void UCWVehicleHitDetectionComponent::TryApplyHit(AActor* OtherActor, bool bFrom
 	// 실제로 내고 있는 속도를 넘긴다. 앞차에 막혀 서 있는 차에 걸어 들어간 경우
 	// 희망 속도를 넘기면 전속력으로 치인 것과 같은 값이 된다.
 	HitContext.VehicleSpeed = Vehicle->GetCurrentSpeed();
-	HitContext.VehicleType = Vehicle->GetVehicleType();
-	HitContext.bFlattenOnHit = Vehicle->ShouldFlattenOnHit();
 
 	// 넉백 강도·스턴 시간 산출과 상태 전이는 수신 측(플레이어/물리 파트)이 결정한다.
 	IInterface_VehicleHitReceiver::Execute_ReceiveVehicleHit(OtherActor, HitContext);

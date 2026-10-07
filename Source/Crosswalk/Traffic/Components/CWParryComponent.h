@@ -15,9 +15,8 @@ class UCWParryPropCatalog;
  * 서버가 확정한 패링 결과를 모든 머신에서 발행. **사람에 붙는 연출**을 붙이는 자리다.
  *
  * 카메라 흔들림, 히트스톱, HUD, 쳐낸 사람 애니메이션처럼 플레이어를 따라가는 연출은 여기.
- * 차체 스파크, 트레일, 차 사운드처럼 차량을 따라가는 연출은 차량 BP 의
- * ACWBaseVehicle::OnParriedFX 다. 둘은 같은 사건에 각자 나가는 별개 RPC 이고,
- * "누구 몸에 붙는가" 로 가른다.
+ * 차 쪽에 따로 붙는 연출 통로는 없다. 패링 이펙트도 캐릭터(ACWPlayerCharacter::PlayParrySwingEffect)가
+ * 이 이벤트를 받아 낸다.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCWOnParrySucceededSignature, const FCWParrySyncData&, ParrySyncData);
 
@@ -63,10 +62,7 @@ protected:
 	void Server_RequestParry(FVector_NetQuantize CursorWorldLocation, int32 PropIndex);
 
 	/**
-	 * 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달. 사람에 붙는 연출 전용이다.
-	 *
-	 * 차에 붙는 연출은 ACWBaseVehicle::Multicast_PlayParriedFX 가 따로 나간다.
-	 * 같은 사건에 RPC 가 둘인 것은 의도다 - 역할 구분은 FCWOnParrySucceededSignature 주석 참고.
+	 * 서버가 확정한 패링 결과를 연출용으로 모든 클라이언트에 전달. 패링 연출은 전부 이 RPC 하나로 나간다.
 	 *
 	 * 연출 전용이라 Unreliable 이다. 차량이 실제로 튕겨나가는 것은 ACWBaseVehicle 의
 	 * 복제 프로퍼티(bParried / ParriedLaunch*)가 담당하므로, 이게 유실돼도
