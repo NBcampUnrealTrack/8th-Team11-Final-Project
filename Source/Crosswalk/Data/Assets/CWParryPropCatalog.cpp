@@ -83,11 +83,6 @@ EDataValidationResult UCWParryPropCatalog::IsDataValid(FDataValidationContext& C
 }
 #endif
 
-int32 UCWParryPropCatalog::GetPropCount() const
-{
-	return Props.Num();
-}
-
 const FCWParryProp* UCWParryPropCatalog::GetProp(int32 PropIndex) const
 {
 	return Props.IsValidIndex(PropIndex) ? &Props[PropIndex] : nullptr;

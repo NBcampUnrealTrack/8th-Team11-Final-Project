@@ -75,14 +75,13 @@ struct FCWTrafficSignalGroup
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic")
 	ECWTrafficSignalState DefaultState = ECWTrafficSignalState::Green;
 
-	/**
-	 * [검증용] 이 그룹의 차가 어디서 들어와 무엇을 하는가.
-	 *
-	 * 런타임 로직은 이 값을 보지 않는다. 경로가 서로 교차하는 그룹을 같은 단계에
-	 * 초록으로 두면 차들이 교차로에서 서로를 통과하는데(차간 거리 유지가 같은 차선
-	 * 안에서만 동작한다), 화면에서는 그냥 이상해 보일 뿐 원인이 안 보인다.
-	 * 그 배치 실수를 패널에서 잡으려면 경로 정보가 필요하다.
-	 */
+	// [검증용] 이 그룹의 차가 어디서 들어와 무엇을 하는가. (아래 Approaches, Turn)
+	//
+	// 런타임 로직은 이 값을 보지 않는다. 경로가 서로 교차하는 그룹을 같은 단계에
+	// 초록으로 두면 차들이 교차로에서 서로를 통과하는데(차간 거리 유지가 같은 차선
+	// 안에서만 동작한다), 화면에서는 그냥 이상해 보일 뿐 원인이 안 보인다.
+	// 그 배치 실수를 패널에서 잡으려면 경로 정보가 필요하다.
+
 	/**
 	 * 이 그룹으로 차가 들어오는 방향들. 비우면 이 그룹은 검증에서 제외된다.
 	 *
@@ -93,6 +92,7 @@ struct FCWTrafficSignalGroup
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Validation")
 	TArray<ECWTrafficApproach> Approaches;
 
+	/** 이 그룹의 차가 교차로에서 하는 동작(직진·좌회전·우회전). 검증에서 경로 교차를 가릴 때만 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traffic|Validation")
 	ECWTrafficTurn Turn = ECWTrafficTurn::Through;
 };

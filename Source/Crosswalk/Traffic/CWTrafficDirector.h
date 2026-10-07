@@ -292,7 +292,7 @@ private:
 	 * 발동 여부와 지연 타이머를 한 구조체에 둔다. 배열 둘로 나눠 들면 길이를 각각
 	 * 맞춰야 하고, 한쪽만 맞춘 채 인덱스로 쓰는 실수가 생긴다.
 	 */
-	struct FRuleRuntimeState
+	struct FCWRuleRuntimeState
 	{
 		/** 이미 발동했는가. 같은 규칙이 두 번 걸리지 않게 한다. */
 		bool bFired = false;
@@ -301,7 +301,7 @@ private:
 		FTimerHandle TimerHandle;
 	};
 
-	TArray<FRuleRuntimeState> RuleStates;
+	TArray<FCWRuleRuntimeState> RuleStates;
 
 	FTimerHandle StepTimerHandle;
 

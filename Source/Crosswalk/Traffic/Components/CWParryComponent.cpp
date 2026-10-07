@@ -49,9 +49,11 @@ bool UCWParryComponent::RequestParry(const FVector& CursorWorldLocation, int32& 
 
 	if (!CanUseLocalCooldown())
 	{
+		// CanUseLocalCooldown 은 World 가 없을 때도 false 를 돌려준다. 그 경우 남은 시간은 잴 수 없다.
+		const UWorld* World = GetWorld();
 		UE_LOG(LogCWTraffic, Log, TEXT("[Parry][%s] 로컬 쿨타임에 막힘. 남은 시간 %.2f초"),
 			*GetInstigatorTag(),
-			ParryCooldown - (GetWorld()->GetTimeSeconds() - LastLocalParryRequestTime));
+			World ? ParryCooldown - (World->GetTimeSeconds() - LastLocalParryRequestTime) : 0.f);
 		return false;
 	}
 
@@ -322,7 +324,21 @@ bool UCWParryComponent::CanUseServerCooldown() const
 		return false;
 	}
 
-	return World->GetTimeSeconds() - LastServerParryRequestTime >= ParryCooldown;
+	/**
+	 * 서버는 쿨타임보다 조금 짧게 잰다.
+	 *
+	 * 클라이언트는 ParryCooldown 간격을 지켜 보내지만, 패킷 지터로 두 요청이 서버에 더 붙어서
+	 * 도착할 수 있다. 같은 값으로 재면 서버가 그 요청을 조용히 버리고(환불·통보 없음),
+	 * 플레이어는 이미 스윙을 봤으므로 "쳤는데 안 됐다" 가 된다.
+	 *
+	 * 정상 클라이언트는 로컬 쿨타임(CanUseLocalCooldown)이 전체 값으로 막으므로 이 여유로
+	 * 더 빨리 칠 수 없다. 여유를 쓰는 것은 지터로 밀린 요청뿐이다.
+	 * 0.1초는 임의로 정한 값이다. 실측 근거는 없다.
+	 */
+	constexpr float ServerCooldownJitterTolerance = 0.1f;
+	const float ServerCooldown = FMath::Max(0.f, ParryCooldown - ServerCooldownJitterTolerance);
+
+	return World->GetTimeSeconds() - LastServerParryRequestTime >= ServerCooldown;
 }
 
 void UCWParryComponent::RejectParry()
