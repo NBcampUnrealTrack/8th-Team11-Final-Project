@@ -104,7 +104,7 @@ void UCWRoomViewModel::RefreshRoomState()
 		APlayerState* PlayerState =
 			PlayerStateObject.Get();
 
-		if (!IsValid(PlayerState))
+		if (!IsValid(PlayerState) || PlayerState->IsOnlyASpectator())
 		{
 			continue;
 		}

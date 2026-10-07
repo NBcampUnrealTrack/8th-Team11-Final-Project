@@ -86,7 +86,7 @@ protected:
 	// 3단계에서 존에 바닥 데칼이 붙으면 끈다. 그때까지 이걸 꺼두면 화면이 비어서
 	// 판정이 맞는지 확인할 방법이 없다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Highlight|Debug")
-	bool bDrawDebugBoxes = true;
+	bool bDrawDebugBoxes = false;
 
 	// 지금 작업할 수 있는 존의 색.
 	// 리티클의 진행 가능 색(UCWWorkReticleComponent::WorkableColor)과 같은 계열이어야 한다.

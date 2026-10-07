@@ -93,7 +93,7 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 		APlayerState* PlayerState =
 			PlayerStateObject.Get();
 
-		if (!IsValid(PlayerState))
+		if (!IsValid(PlayerState) || PlayerState->IsOnlyASpectator())
 		{
 			continue;
 		}

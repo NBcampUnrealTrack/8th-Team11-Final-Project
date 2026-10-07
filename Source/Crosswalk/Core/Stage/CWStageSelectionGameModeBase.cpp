@@ -5,6 +5,55 @@
 #include "Data/Assets/CWStageCatalog.h"
 #include "Data/Structs/CWStageInfo.h"
 #include "Engine/World.h"
+#include "Core/CWPlayerState.h"
+#include "GameFramework/PlayerController.h"
+
+FString ACWStageSelectionGameModeBase::InitNewPlayer(APlayerController* NewPlayerController,
+	const FUniqueNetIdRepl& UniqueId, const FString& Options, const FString& Portal)
+{
+	// Assign before Super can spawn a pawn or register the controller as a player.
+	int32 PlayingControllers = 0;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* Other = It->Get();
+		if (Other && Other != NewPlayerController && Other->PlayerState && !Other->PlayerState->IsOnlyASpectator())
+		{
+			++PlayingControllers;
+		}
+	}
+	if (ACWPlayerState* State = NewPlayerController->GetPlayerState<ACWPlayerState>())
+	{
+		State->SetFilmObserver(PlayingControllers >= 4);
+		UE_LOG(LogTemp, Display, TEXT("[CWFilmRole] PlayerId=%d Role=%s PlayingBeforeJoin=%d"),
+			State->GetPlayerId(), State->IsFilmObserver() ? TEXT("Observer") : TEXT("Player"), PlayingControllers);
+	}
+	return Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+}
+
+void ACWStageSelectionGameModeBase::RestartPlayer(AController* NewPlayer)
+{
+	const ACWPlayerState* State = NewPlayer ? NewPlayer->GetPlayerState<ACWPlayerState>() : nullptr;
+	if (State && State->IsFilmObserver()) { return; }
+	Super::RestartPlayer(NewPlayer);
+}
+
+void ACWStageSelectionGameModeBase::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
+	const ACWPlayerState* State = NewPlayer->GetPlayerState<ACWPlayerState>();
+	if (State)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[CWFilmRole] Started PlayerId=%d Observer=%d Pawn=%s"),
+			State->GetPlayerId(), State->IsFilmObserver(), *GetNameSafe(NewPlayer->GetPawn()));
+	}
+}
+
+APawn* ACWStageSelectionGameModeBase::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
+{
+	const ACWPlayerState* State = NewPlayer ? NewPlayer->GetPlayerState<ACWPlayerState>() : nullptr;
+	if (State && State->IsFilmObserver()) { return nullptr; }
+	return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
+}
 
 #pragma region StageSelectionRequests
 

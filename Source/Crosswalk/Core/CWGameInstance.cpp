@@ -148,6 +148,25 @@ void UCWGameInstance::Init()
 {
 	Super::Init();
 
+	// Packaged Development keeps the console, but must not display PrintString diagnostics.
+	if (GEngine)
+	{
+		GEngine->bEnableOnScreenDebugMessages = false;
+		GEngine->bEnableOnScreenDebugMessagesDisplay = false;
+	}
+	const TCHAR* DiagnosticVariables[] = {
+		TEXT("cw.Traffic.LogSync"), TEXT("cw.Traffic.LogNetCensus"),
+		TEXT("cw.Traffic.LogNetRelevancy"), TEXT("cw.Traffic.LogParryAim"),
+		TEXT("cw.Prompt.LogDiagnostics")
+	};
+	for (const TCHAR* Name : DiagnosticVariables)
+	{
+		if (IConsoleVariable* Variable = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			Variable->Set(0, ECVF_SetByCode);
+		}
+	}
+
 	// net.IpConnectionDisableResolution은 ECVF_Cheat라 프로젝트 ini([ConsoleVariables] 섹션)로는
 	// 못 켠다 - 엔진이 로드 시점에 ensure()를 던지며 무시한다(설정 자체가 적용 안 됨), 로컬 개인
 	// 파일(Engine/Config/ConsoleVariables.ini, 팀 깃에 안 들어감)에서만 허용되기 때문이다
@@ -879,7 +898,8 @@ void UCWGameInstance::CreateSessionWithRoomCode(const FString& RoomCode)
 
 	FOnlineSessionSettings SessionSettings;
 	SessionSettings.bIsLANMatch = IsLanOnlySubsystem();   // 검색(StartFindSessions)의 bIsLanQuery와 반드시 짝이 맞아야 한다
-	SessionSettings.NumPublicConnections = MaxPublicConnections;
+	// This filming build reserves the fifth connection for a pawnless observer.
+	SessionSettings.NumPublicConnections = 5;
 	SessionSettings.bShouldAdvertise = true;
 	SessionSettings.bAllowJoinInProgress = true;
 	SessionSettings.bAllowInvites = true;
@@ -1048,8 +1068,8 @@ int32 UCWGameInstance::GetHostedPlayerCount() const
 
 	for (const APlayerState* PlayerState : GameState->PlayerArray)
 	{
-		// 관전자는 방 자리를 차지하지 않으므로 뺌
-		if (IsValid(PlayerState) && !PlayerState->IsOnlyASpectator())
+		// Observers still consume an online connection; do not advertise a sixth slot.
+		if (IsValid(PlayerState))
 		{
 			++PlayerCount;
 		}
