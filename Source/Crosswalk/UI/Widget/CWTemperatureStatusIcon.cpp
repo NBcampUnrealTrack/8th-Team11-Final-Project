@@ -4,22 +4,28 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
-#include "Components/PanelWidget.h"
-#include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
-#include "UObject/ConstructorHelpers.h"
+#include "UI/CWUILog.h"
 
-UCWTemperatureStatusIcon::UCWTemperatureStatusIcon(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
+void UCWTemperatureStatusIcon::SynchronizeProperties()
 {
-	static ConstructorHelpers::FObjectFinder<UTexture2D> MD(TEXT("/Game/CrossWalk/UI/HUD/Textures/StatusIcons/T_UI_MoveDown"));
-	static ConstructorHelpers::FObjectFinder<UTexture2D> MU(TEXT("/Game/CrossWalk/UI/HUD/Textures/StatusIcons/T_UI_MoveUp"));
-	static ConstructorHelpers::FObjectFinder<UTexture2D> WD(TEXT("/Game/CrossWalk/UI/HUD/Textures/StatusIcons/T_UI_WorkDown"));
-	static ConstructorHelpers::FObjectFinder<UTexture2D> WU(TEXT("/Game/CrossWalk/UI/HUD/Textures/StatusIcons/T_UI_WorkUp"));
-	MoveDown = MD.Object;
-	MoveUp = MU.Object;
-	WorkDown = WD.Object;
-	WorkUp = WU.Object;
+	Super::SynchronizeProperties();
+
+	// 디자이너에서 값을 바꾸면 위젯을 다시 만들지 않아도 바로 보이게 함
+	ApplyIconLayout();
+	ApplyIconImage();
+}
+
+void UCWTemperatureStatusIcon::SetIncreasing(bool bInIncreasing)
+{
+	if (bStateReceived && bIncreasing == bInIncreasing)
+	{
+		return;
+	}
+
+	bStateReceived = true;
+	bIncreasing = bInIncreasing;
+	ApplyIconImage();
 }
 
 TSharedRef<SWidget> UCWTemperatureStatusIcon::RebuildWidget()
@@ -29,59 +35,58 @@ TSharedRef<SWidget> UCWTemperatureStatusIcon::RebuildWidget()
 		UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
 		WidgetTree->RootWidget = Canvas;
 		WorkerImage = WidgetTree->ConstructWidget<UImage>();
-		UCanvasPanelSlot* WorkerSlot = Canvas->AddChildToCanvas(WorkerImage);
-		WorkerSlot->SetPosition(FVector2D(20.f, 4.f));
-		WorkerSlot->SetSize(FVector2D(48.f, 48.f));
-		WorkerImage->SetBrushFromTexture(bWorkStatus ? WorkDown : MoveDown, false);
-		LastIncrease.Reset();
+		Canvas->AddChildToCanvas(WorkerImage);
 	}
-	ApplyIconSpacing();
+	else if (!WorkerImage)
+	{
+		// 컴파일 뒤처럼 트리는 남고 포인터만 비는 경우에 이미지를 다시 찾음
+		if (const UCanvasPanel* Canvas = Cast<UCanvasPanel>(WidgetTree->RootWidget))
+		{
+			WorkerImage = Cast<UImage>(Canvas->GetChildAt(0));
+		}
+	}
+
+	ApplyIconLayout();
+	ApplyIconImage();
 	return Super::RebuildWidget();
 }
 
-void UCWTemperatureStatusIcon::SynchronizeProperties()
+void UCWTemperatureStatusIcon::ApplyIconLayout()
 {
-	Super::SynchronizeProperties();
-	ApplyIconSpacing();
-}
-
-void UCWTemperatureStatusIcon::ApplyIconSpacing()
-{
-	// 기존 체온계 추종 위치를 유지하면서 위아래 행이 추가 간격을 절반씩 나누도록 함
-	const float Offset = (bWorkStatus ? 1.f : -1.f) * FMath::Max(0.f, AdditionalVerticalGap) * 0.5f;
-	if (WorkerImage)
-	{
-		if (UCanvasPanelSlot* ImageSlot = Cast<UCanvasPanelSlot>(WorkerImage->Slot))
-		{
-			ImageSlot->SetPosition(FVector2D(20.f, 4.f + Offset));
-		}
-	}
-}
-
-void UCWTemperatureStatusIcon::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-	UPanelWidget* Panel = GetParent();
-	if (!Panel || !WorkerImage)
+	UCanvasPanelSlot* ImageSlot = WorkerImage ? Cast<UCanvasPanelSlot>(WorkerImage->Slot) : nullptr;
+	if (!ImageSlot)
 	{
 		return;
 	}
-	// 기존 텍스트 결과만 읽어 체온 효과 판정이나 네트워크 로직이 갈라지는 것을 방지함
-	for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+
+	// 이동 행은 위로, 작업 행은 아래로 벌려 기존 체온계 추종 위치를 유지함
+	const float GapOffset = (bWorkStatus ? 1.f : -1.f) * FMath::Max(0.f, AdditionalVerticalGap) * 0.5f;
+	ImageSlot->SetPosition(IconPosition + FVector2D(0.f, GapOffset));
+	ImageSlot->SetSize(IconSize);
+}
+
+void UCWTemperatureStatusIcon::ApplyIconImage()
+{
+	if (!WorkerImage)
 	{
-		const UTextBlock* Label = Cast<UTextBlock>(Panel->GetChildAt(Index));
-		if (!Label)
-		{
-			continue;
-		}
-		const bool bIncrease = Label->GetText().ToString().Contains(TEXT("↑"));
-		if (!LastIncrease.IsSet() || LastIncrease.GetValue() != bIncrease)
-		{
-			WorkerImage->SetBrushFromTexture(bWorkStatus
-				? (bIncrease ? WorkUp.Get() : WorkDown.Get())
-				: (bIncrease ? MoveUp.Get() : MoveDown.Get()), false);
-			LastIncrease = bIncrease;
-		}
-		break;
+		return;
 	}
+
+	const bool bShowIncrease = bStateReceived ? bIncreasing : bPreviewIncreasing;
+	UTexture2D* Texture = bShowIncrease ? IncreaseTexture : DecreaseTexture;
+	if (!Texture)
+	{
+		// 이미지가 비면 조용히 사라지는 아이콘을 로그로 찾을 수 있게 상태마다 한 번만 알림
+		bool& bWarned = bShowIncrease ? bWarnedMissingIncrease : bWarnedMissingDecrease;
+		if (!bWarned && !IsDesignTime())
+		{
+			bWarned = true;
+			UE_LOG(LogCWUI, Warning, TEXT("StatusIcon %s: %s image is not set."), *GetName(), bShowIncrease ? TEXT("Increase") : TEXT("Decrease"));
+		}
+		WorkerImage->SetVisibility(ESlateVisibility::Hidden);
+		return;
+	}
+
+	WorkerImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	WorkerImage->SetBrushFromTexture(Texture, false);
 }
