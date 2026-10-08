@@ -22,6 +22,8 @@ class CROSSWALK_API ACWTrafficLane : public AActor
 public:
 	ACWTrafficLane();
 
+	virtual void OnConstruction(const FTransform& Transform) override;
+
 	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
 	float GetLaneLength() const;
 
@@ -41,8 +43,6 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Traffic|Lane")
 	float GetDistanceAtWorldLocation(const FVector& WorldLocation) const;
-
-	virtual void OnConstruction(const FTransform& Transform) override;
 
 protected:
 	virtual void BeginPlay() override;

@@ -26,11 +26,11 @@ class CROSSWALK_API UCWTrafficSubsystem : public UWorldSubsystem
 	GENERATED_BODY()
 
 public:
-	/** WorldContext로부터 서브시스템을 얻는다. 월드가 없으면 nullptr. */
-	static UCWTrafficSubsystem* Get(const UObject* WorldContextObject);
-
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	/** WorldContext로부터 서브시스템을 얻는다. 월드가 없으면 nullptr. */
+	static UCWTrafficSubsystem* Get(const UObject* WorldContextObject);
 
 	// 진단 로그(콘솔 변수·역할 태그·대수 대조)는 여기 없다. CWTrafficDiagnostics 참고.
 	// 판정을 바꾸면 안 되는 코드라 판정 코드와 파일을 나눠 둔다.
