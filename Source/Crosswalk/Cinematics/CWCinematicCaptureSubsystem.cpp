@@ -207,7 +207,8 @@ void UCWCinematicCaptureSubsystem::StartCapture(int32 Width, int32 Height, int32
 
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
 	RenderTarget->ClearColor = FLinearColor::Black;
-	RenderTarget->InitCustomFormat(Width, Height, PF_B8G8R8A8, false);
+	// FinalColorLDR is already display-encoded; an sRGB target encodes it twice and lifts the shadows.
+	RenderTarget->InitCustomFormat(Width, Height, PF_B8G8R8A8, true);
 	RenderTarget->UpdateResourceImmediate(true);
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.ObjectFlags |= RF_Transient;
