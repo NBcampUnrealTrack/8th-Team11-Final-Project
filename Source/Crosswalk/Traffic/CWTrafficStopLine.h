@@ -74,15 +74,6 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	/**
-	 * 차선별 검산 표시를 다시 만든다.
-	 *
-	 * 정지선이 제대로 놓였는지는 "차선 위 몇 cm 인가" 로만 알 수 있는데, 그 값이
-	 * 에디터 어디에도 안 보여서 PIE 를 돌려 로그를 읽는 것이 유일한 확인 방법이었다.
-	 * 옮길 때마다 그러는 것은 작업 절차가 못 된다.
-	 */
-	void RefreshLaneReadout();
-
 #if WITH_EDITOR
 	/**
 	 * 레벨을 열 때의 검산 표시는 여기서 걸어 둔 이벤트가 만든다.
@@ -100,7 +91,18 @@ protected:
 
 	/** 차선을 새로 지정했을 때도 붙인다. */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
+	/**
+	 * 차선별 검산 표시를 다시 만든다.
+	 *
+	 * 정지선이 제대로 놓였는지는 "차선 위 몇 cm 인가" 로만 알 수 있는데, 그 값이
+	 * 에디터 어디에도 안 보여서 PIE 를 돌려 로그를 읽는 것이 유일한 확인 방법이었다.
+	 * 옮길 때마다 그러는 것은 작업 절차가 못 된다.
+	 */
+	void RefreshLaneReadout();
+
+#if WITH_EDITOR
 	/** 이 정지선이 속한 레벨의 컴포넌트 등록이 끝났을 때 검산 표시를 만든다. */
 	void HandleLevelComponentsUpdated(UWorld* InWorld, ULevel* InLevel);
 
