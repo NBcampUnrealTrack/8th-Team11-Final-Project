@@ -71,6 +71,23 @@ public:
 	/** 커서 조준 회전만 담당한다. 나머지 상태는 전부 타이머와 델리게이트로 돈다. */
 	virtual void Tick(float DeltaSeconds) override;
 
+	/** 넉백으로 날아간 뒤 착지한 시점. 여기서부터 다운 시간이 흐른다. */
+	virtual void Landed(const FHitResult& Hit) override;
+
+	/**
+	 * 차량에 치였을 때 트래픽 쪽에서 들어온다. 서버에서만 유효하다.
+	 * 넉백 물리와 행동 잠금 시작은 여기서, 잠금 해제와 시간 관리는 피격 반응 컴포넌트가 한다.
+	 */
+	virtual void ReceiveVehicleHit_Implementation(const FCWVehicleHitContext& HitContext) override;
+
+	/**
+	 * 서버 패링 판정이 요청을 받기 전에 묻는다. (Interface_ParryGate)
+	 *
+	 * 클라이언트 Parry() 의 검사 중 서버가 스스로 아는 상태만 옮겼다. 피격·낙하·착석 잠금과
+	 * 통 소지다. 작업 중 차징(IsParryBlocked)은 누르고 있는 기계에만 있는 상태라 여기 없다.
+	 */
+	virtual bool CanParry() const override;
+
 	/**
 	 * 지금 몸이 커서를 보고 있는가. (이동 방향 정렬을 끈 상태인가)
 	 *
@@ -152,23 +169,6 @@ public:
 	 * 경로마다 따로 복구 코드를 쓰면 언젠가 하나를 빠뜨린다.
 	 */
 	void EndSitting();
-
-	/** 넉백으로 날아간 뒤 착지한 시점. 여기서부터 다운 시간이 흐른다. */
-	virtual void Landed(const FHitResult& Hit) override;
-
-	/**
-	 * 차량에 치였을 때 트래픽 쪽에서 들어온다. 서버에서만 유효하다.
-	 * 넉백 물리와 행동 잠금 시작은 여기서, 잠금 해제와 시간 관리는 피격 반응 컴포넌트가 한다.
-	 */
-	virtual void ReceiveVehicleHit_Implementation(const FCWVehicleHitContext& HitContext) override;
-
-	/**
-	 * 서버 패링 판정이 요청을 받기 전에 묻는다. (Interface_ParryGate)
-	 *
-	 * 클라이언트 Parry() 의 검사 중 서버가 스스로 아는 상태만 옮겼다. 피격·낙하·착석 잠금과
-	 * 통 소지다. 작업 중 차징(IsParryBlocked)은 누르고 있는 기계에만 있는 상태라 여기 없다.
-	 */
-	virtual bool CanParry() const override;
 
 protected:
 	/** WASD 8방향 이동. 카메라가 고정돼 있으므로 화면 기준 방향이 그대로 이동 방향이 된다. */
@@ -263,9 +263,6 @@ protected:
 
 	// 복제된 낙하 상태로 로컬 이름표 표시를 갱신함
 	void RefreshFallNameplateVisibility(bool bFallLocked);
-
-	UPROPERTY(EditDefaultsOnly, Category = "UI|Nameplate")
-	FName NameplateComponentName = TEXT("WidgetComp_NamePlate");
 
 	/**
 	 * 다운 시간이 끝나 일어날 차례가 됐을 때. 서버에서만 들어온다.
@@ -387,10 +384,11 @@ private:
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void OnRep_PlayerState() override;
-	void BindWearableToPlayerState();
 
 	/** 앉은 채로 사라지면 존이 자리를 영영 붙잡는다. 나가기 전에 반드시 일어난다. */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	void BindWearableToPlayerState();
 
 	/**
 	 * 착석 상태를 실제 동작에 반영한다. 모든 머신이 각자 부른다.
@@ -1073,6 +1071,9 @@ protected:
 	// 옷을 입고 벗는 키(J). 헬멧과 마찬가지로 프로토타입 확인용이다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleOutfitAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI|Nameplate")
+	FName NameplateComponentName = TEXT("WidgetComp_NamePlate");
 
 private:
 	/**
