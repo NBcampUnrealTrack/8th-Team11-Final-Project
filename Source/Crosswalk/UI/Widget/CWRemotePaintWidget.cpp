@@ -48,7 +48,11 @@ void UCWRemotePaintWidget::AddPlayer(ACWPlayerCharacter* Character)
 	if (!Status || !Status->GetWidgetFromName(TEXT("Image_Portrait"))
 		|| !Status->GetWidgetFromName(TEXT("WBP_ToolPaintGauge_Paint")))
 	{
-		UE_LOG(LogCWUI, Error, TEXT("Remote paint: player status icon/gauge configuration is invalid."));
+		if (!bWarnedInvalidStatus)
+		{
+			bWarnedInvalidStatus = true;
+			UE_LOG(LogCWUI, Error, TEXT("Remote paint: player status icon/gauge configuration is invalid."));
+		}
 		return;
 	}
 	FCWRemotePaintEntry& Entry = Entries.AddDefaulted_GetRef();
@@ -71,7 +75,11 @@ bool UCWRemotePaintWidget::BindPlayerState(UUserWidget* Status, APlayerState* Pl
 	if (!Input || !Input->HasAnyPropertyFlags(CPF_Parm) || Input->HasAnyPropertyFlags(CPF_OutParm)
 		|| (PlayerState && !PlayerState->IsA(Input->PropertyClass)))
 	{
-		UE_LOG(LogCWUI, Error, TEXT("Remote paint: SetPlayerState signature is invalid."));
+		if (!bWarnedBindFailure)
+		{
+			bWarnedBindFailure = true;
+			UE_LOG(LogCWUI, Error, TEXT("Remote paint: SetPlayerState signature is invalid."));
+		}
 		return false;
 	}
 	// BP 파라미터의 실제 레이아웃을 사용해 클래스 변경 시 잘못된 메모리를 읽지 않게 함

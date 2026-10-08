@@ -1,7 +1,6 @@
 #include "UI/Widget/CWParryStatusWidget.h"
 
 #include "Blueprint/WidgetLayoutLibrary.h"
-#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Characters/CWPlayerCharacter.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/Texture2D.h"
@@ -23,9 +22,6 @@ UCWParryStatusWidget::UCWParryStatusWidget(const FObjectInitializer& ObjectIniti
 	BatTexture = Bat.Object;
 	BatBrush.SetResourceObject(BatTexture);
 	BatBrush.ImageSize = FVector2D(40.f, 40.f);
-	static ConstructorHelpers::FClassFinder<UUserWidget> Legacy(
-		TEXT("/Game/CrossWalk/UI/HUD/Parry/WBP_ParryCooldownIndicator"));
-	LegacyIndicatorClass = Legacy.Class;
 }
 
 void UCWParryStatusWidget::ConfigureDisplay(bool bShow, FVector2D Offset)
@@ -83,21 +79,6 @@ void UCWParryStatusWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	const FVector2D Size = MyGeometry.GetLocalSize();
 	bCanDisplay = BatTexture && IconPosition.X >= 0.f && IconPosition.Y >= 0.f
 		&& IconPosition.X + 48.f <= Size.X && IconPosition.Y + 48.f <= Size.Y;
-	LegacyRefreshRemaining -= InDeltaTime;
-	if (LegacyIndicatorClass && LegacyRefreshRemaining <= 0.f)
-	{
-		// 기존 애셋을 덮어쓰지 않고 같은 소유자의 구형 쿨타임 바만 중복 표시에서 제외함
-		TArray<UUserWidget*> LegacyWidgets;
-		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, LegacyWidgets, LegacyIndicatorClass, false);
-		for (UUserWidget* Legacy : LegacyWidgets)
-		{
-			if (Legacy->GetOwningPlayer() == PC)
-			{
-				Legacy->SetRenderOpacity(0.f);
-			}
-		}
-		LegacyRefreshRemaining = 1.f;
-	}
 	bCanDisplay = bCanDisplay && bShowIcon;
 }
 

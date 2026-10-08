@@ -168,4 +168,7 @@ private:
 
 	int32 CarriedCount = 0;
 	bool bDirty = false;
+
+	// 데이터 미지정 경고는 페인트가 바뀔 때마다 반복되므로 한 번만 남김
+	bool bWarnedMissingToolUIData = false;
 };

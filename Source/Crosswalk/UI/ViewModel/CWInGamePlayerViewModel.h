@@ -7,7 +7,6 @@
 #include "Data/Structs/CWRoomPlayerInfo.h"
 #include "CWInGamePlayerViewModel.generated.h"
 
-class ACWGameState;
 class AGameStateBase;
 
 UCLASS(BlueprintType)
@@ -125,6 +124,9 @@ private:
 
 	// 다음 Tick 재시도 예약 핸들 (중복 예약 방지·취소용)
 	FTimerHandle RefreshPlayersRetryHandle;
+
+	// 연속 재시도 횟수 - 바인딩이 새로 될 때 0 으로 돌아감
+	int32 RefreshPlayersRetryCount = 0;
 
 #pragma endregion
 };

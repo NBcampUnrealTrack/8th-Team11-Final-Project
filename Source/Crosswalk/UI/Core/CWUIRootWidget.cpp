@@ -89,26 +89,6 @@ bool UCWUIRootWidget::AddHUDWidget(UUserWidget* InWidget)
 	return false;
 }
 
-bool UCWUIRootWidget::RemoveHUDWidget(UUserWidget* InWidget)
-{
-	if (!IsValid(Overlay_HUDLayer) || !IsValid(InWidget))
-	{
-		return false;
-	}
-
-	// 지정한 Widget만 HUD 레이어에서 제거
-	return Overlay_HUDLayer->RemoveChild(InWidget);
-}
-
-void UCWUIRootWidget::ClearHUDWidgets()
-{
-	if (IsValid(Overlay_HUDLayer))
-	{
-		// 현재 HUD Widget을 모두 제거
-		Overlay_HUDLayer->ClearChildren();
-	}
-}
-
 void UCWUIRootWidget::SetHUDLayerVisible(bool bVisible)
 {
 	if (!IsValid(Overlay_HUDLayer))

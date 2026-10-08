@@ -159,14 +159,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
 	bool AddHUDWidget(UUserWidget* InWidget);
 
-	// 현재 Root의 HUD 레이어에서 Widget을 제거
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
-	bool RemoveHUDWidget(UUserWidget* InWidget);
-
-	// 현재 Root의 HUD 레이어를 모두 정리
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
-	void ClearHUDWidgets();
-
 	// 현재 Root의 HUD 레이어 표시 여부를 변경
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|HUD")
 	void SetHUDVisible(bool bVisible);

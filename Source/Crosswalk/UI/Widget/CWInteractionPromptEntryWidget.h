@@ -87,5 +87,9 @@ private:
 	UPROPERTY(Transient)
 	TArray<FCWInteractionPromptEntryLine> Lines;
 
+	// 계약 위반 경고는 안내가 0.05초마다 바뀌어도 한 번만 남김 (BuildLine 이 const 라 mutable)
+	bool bWarnedTooManyLines = false;
+	mutable bool bWarnedMissingLabel = false;
+
 	friend class FCWInteractionPromptDisplayTest;
 };

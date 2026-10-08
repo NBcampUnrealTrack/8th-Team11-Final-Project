@@ -43,11 +43,12 @@ void UCWSettingsViewModel::Initialize(UObject* WorldContextObject)
 
 void UCWSettingsViewModel::Uninitialize()
 {
+	// 화면이 사라질 때 미확정 비디오 모드를 변경 전 값으로 복구
+	// 볼륨 저장보다 먼저 해야 미확정 해상도가 설정 파일에 쓰이지 않음
+	FinishPendingVideoMode(false, false);
+
 	// 슬라이더 놓기 이벤트를 놓치고 화면이 닫히는 경로를 대비한 백업 저장
 	SaveVolumeSettingsIfDirty();
-
-	// 화면이 사라질 때 미확정 비디오 모드를 변경 전 값으로 복구
-	FinishPendingVideoMode(false, false);
 
 	// pending 상태가 아니어도 남아 있을 수 있는 타이머를 안전하게 정리
 	ClearVideoModeConfirmationTimer();
@@ -122,16 +123,7 @@ void UCWSettingsViewModel::RefreshSettingsData()
 		)
 	);
 
-	// 그래픽 품질 (0~3 = 엔진 ScalabilityLevel). 복구 후 콤보를 되돌리려면 여기서 다시 읽어야 함
-	SetSelectedQualityIndex(
-		FMath::Clamp(
-			GameUserSettings->GetOverallScalabilityLevel(),
-			0,
-			3
-		)
-	);
-
-	// 그래픽 품질 (4옵션, 콤보 인덱스 = 엔진 ScalabilityLevel 0~3)
+	// 그래픽 품질 (4옵션, 콤보 인덱스 = 엔진 ScalabilityLevel 0~3). 복구 후 콤보를 되돌리려면 여기서 다시 읽어야 함
 	const int32 ScalabilityLevel =
 		GameUserSettings->GetOverallScalabilityLevel();
 
@@ -370,6 +362,9 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 			GameUserSettings->ConfirmVideoMode();
 			GameUserSettings->ApplyNonResolutionSettings();
 			GameUserSettings->SaveSettings();
+
+			// 설정 파일 전체가 저장되므로 미뤄 둔 볼륨 변경도 함께 기록됨
+			bHasUnsavedVolumeChanges = false;
 		}
 		else if (bHasVideoModeSnapshot)
 		{
@@ -395,6 +390,7 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 			// 복구된 값을 최종 확정하고 설정 파일에 저장
 			GameUserSettings->ConfirmVideoMode();
 			GameUserSettings->SaveSettings();
+			bHasUnsavedVolumeChanges = false;
 		}
 		else
 		{
@@ -411,6 +407,9 @@ void UCWSettingsViewModel::FinishPendingVideoMode(
 	}
 
 	ClearVideoModeSnapshot();
+
+	// 확인 대기 중 미뤄 둔 볼륨 변경을 비디오 모드가 정해진 뒤에 저장 (스냅샷 없는 복구 경로 포함)
+	SaveVolumeSettingsIfDirty();
 
 	// 타임아웃에서만 WBP에 팝업 종료를 요청
 	if (bNotifyExpiration)
@@ -606,7 +605,8 @@ bool UCWSettingsViewModel::RequestSetSFXVolume(float InVolume)
 void UCWSettingsViewModel::SaveVolumeSettingsIfDirty()
 {
 	// 변경분이 없으면 화면을 여닫기만 해도 디스크에 쓰이는 것을 막음
-	if (!bHasUnsavedVolumeChanges)
+	// 비디오 모드 확인 대기 중에는 SaveSettings 가 미확정 해상도·창모드·품질까지 함께 쓰므로 확정·복구 뒤로 미룸
+	if (!bHasUnsavedVolumeChanges || bIsVideoModeConfirmationPending)
 	{
 		return;
 	}
@@ -744,6 +744,7 @@ void UCWSettingsViewModel::ClearVideoModeSnapshot()
 {
 	ResolutionBeforePending = FIntPoint::ZeroValue;
 	WindowModeBeforePending = 0;
+	QualityBeforePending = 0;
 	bHasVideoModeSnapshot = false;
 }
 

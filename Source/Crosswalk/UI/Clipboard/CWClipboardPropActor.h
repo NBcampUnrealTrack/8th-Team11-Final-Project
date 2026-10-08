@@ -92,7 +92,6 @@ public:
 	// 이전 종이를 지우면서 새 종이를 그림. 끝나면 OnPaperCrossfadeFinished 를 발행함
 	// 올라와 있지 않거나 이전 종이가 없으면 즉시 교체하고 바로 발행함
 	void CrossfadePaperContent(UUserWidget* InOwner, UWidget* InContent);
-	bool IsPaperCrossfading() const { return bPaperCrossfading; }
 
 #pragma endregion
 

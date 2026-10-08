@@ -581,7 +581,7 @@ void UCWSessionViewModel::SetOperationInFlight(bool bInFlight)
 	))
 	{
 		UE_MVVM_BROADCAST_FIELD_VALUE_CHANGED(GetCanRefreshRooms);
-		UE_LOG(LogTemp, Log, TEXT("[SessionDiag] ViewModel Busy=%d"), bInFlight);
+		UE_LOG(LogTemp, Verbose, TEXT("[SessionDiag] ViewModel Busy=%d"), bInFlight);
 	}
 }
 

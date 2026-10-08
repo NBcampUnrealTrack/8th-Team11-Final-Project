@@ -60,6 +60,9 @@ private:
 	// 선택 확정에만 쓰는 안정 식별자 (표시용 아님 → FieldNotify 아님)
 	FName StageId = NAME_None;
 
+	// 접미사가 붙기 전의 카탈로그 표시 이름 - 잠김 표시를 여기서 다시 만듦
+	FText BaseDisplayName;
+
 	// 카드 표시 이름
 	UPROPERTY(
 		BlueprintReadOnly,

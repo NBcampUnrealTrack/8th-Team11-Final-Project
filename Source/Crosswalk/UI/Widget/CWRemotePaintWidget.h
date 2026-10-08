@@ -57,4 +57,8 @@ private:
 	TArray<FCWRemotePaintEntry> Entries;
 
 	float PlayerRefreshRemaining = 0.f;
+
+	// 구성 오류는 0.25초·매 프레임마다 반복되므로 한 번만 남김
+	bool bWarnedInvalidStatus = false;
+	mutable bool bWarnedBindFailure = false;
 };

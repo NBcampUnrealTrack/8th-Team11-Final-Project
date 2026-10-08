@@ -71,6 +71,9 @@ private:
 
 	void UnbindPrompts();
 	void RefreshGroups(const TArray<FCWInteractionPrompt>& Prompts);
+
+	// 클래스 미지정 경고는 안내가 바뀔 때마다 반복되므로 한 번만 남김
+	bool bWarnedMissingEntryClass = false;
 	FVector GetTargetAnchor(AActor* Target) const;
 
 	// 대상이 내 손에 들려 있는지
