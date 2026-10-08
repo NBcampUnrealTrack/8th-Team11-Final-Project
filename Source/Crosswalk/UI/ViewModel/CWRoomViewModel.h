@@ -103,10 +103,6 @@ public:
 		return bShouldShowStartCondition;
 	}
 
-private:
-	// 현재 GameState의 플레이어 상태를 MVVM 프로퍼티로 변환
-	void RefreshRoomState();
-
 #pragma endregion
 
 #pragma region GameStateBinding
@@ -127,7 +123,14 @@ protected:
 	// 표시 상태를 기본값으로 되돌림
 	virtual void ResetViewModelState() override;
 
+#pragma endregion
+
+#pragma region GameStateBindingInternals
+
 private:
+	// 현재 GameState의 플레이어 상태를 MVVM 프로퍼티로 변환
+	void RefreshRoomState();
+
 	// 방 플레이어 목록 또는 준비 상태 변경 처리
 	UFUNCTION()
 	void HandleRoomPlayersChanged();

@@ -23,6 +23,19 @@ class CROSSWALK_API UCWStageSelectWidgetBase : public UUserWidget
 {
 	GENERATED_BODY()
 
+#pragma region PublicFunctions
+
+public:
+	// Designer에 고정 배치된 위젯을 다시 열 때 사용
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Stage Select")
+	void BeginOpenStageSelect();
+
+	// 입력을 차단하고 클립보드 내리기 연출 시작
+	UFUNCTION(BlueprintCallable, Category = "CW|UI|Stage Select")
+	void BeginCloseStageSelect();
+
+#pragma endregion
+
 #pragma region UserWidgetOverrides
 
 protected:
@@ -37,25 +50,10 @@ protected:
 
 #pragma endregion
 
-#pragma region PublicFunctions
-
-public:
-	// Designer에 고정 배치된 위젯을 다시 열 때 사용
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Stage Select")
-	void BeginOpenStageSelect();
-
-	// 입력을 차단하고 클립보드 내리기 연출 시작
-	UFUNCTION(BlueprintCallable, Category = "CW|UI|Stage Select")
-	void BeginCloseStageSelect();
-
-#pragma endregion
-
 #pragma region PrivateFunctions
 
 private:
 	void ApplyStageEntryLock(UUserWidget& EntryWidget);
-	TArray<TWeakObjectPtr<UListViewBase>> StageLists;
-
 	UFUNCTION()
 	void HandleClipboardRaiseFinished();
 
@@ -94,6 +92,8 @@ protected:
 	TObjectPtr<USizeBox> SizeBox_PaperHost;
 
 private:
+	TArray<TWeakObjectPtr<UListViewBase>> StageLists;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UCWClipboardPresenterSubsystem> ClipboardPresenter;
 

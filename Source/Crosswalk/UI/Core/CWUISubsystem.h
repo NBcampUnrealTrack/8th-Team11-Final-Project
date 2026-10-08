@@ -75,45 +75,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "CW|UI")
 	bool HasPageToReturn() const { return PageBeforeCurrentPage != ECWUIPage::None; }
 
-private:
-	// 현재 페이지를 닫고 참조를 정리
-	UFUNCTION(BlueprintCallable, Category = "CW|UI")
-	void CloseCurrentPage();
-
-	// 화면의 페이지 전환 요청을 처리
-	UFUNCTION()
-	void HandleRequestOpenPage(ECWUIPage TargetPage);
-
-	// 공개 작업의 시작~끝을 묶어 끝난 시점의 확정 페이지만 OnPageChanged 로 통보
-	// 열기 중 CloseCurrentPage 가 만드는 중간 None 이 구독자에게 보이지 않게 하고,
-	// 중첩 호출(OpenPage 안의 EnsureUIRoot)은 가장 바깥 작업이 한 번만 통보함
-	struct FPageChangeScope
-	{
-		explicit FPageChangeScope(UCWUISubsystem& InOwner);
-		~FPageChangeScope();
-
-		UCWUISubsystem& Owner;
-	};
-
-#pragma endregion
-
-#pragma region Root
-
-private:
-	// 현재 World에서 사용할 Root를 확인하거나 생성
-	bool EnsureUIRoot();
-
-#pragma endregion
-
-#pragma region Transition
-
-private:
-	// 화면 전환 상태와 입력 차단을 시작
-	void BeginTransition();
-
-	// 화면 전환 상태와 입력 차단을 종료
-	void EndTransition();
-
 #pragma endregion
 
 #pragma region Input
@@ -221,6 +182,53 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CW|UI|Feedback")
 	void CopyTextToClipboard(const FString& Text);
 
+#pragma endregion
+
+#pragma region PageInternals
+
+private:
+	// 현재 페이지를 닫고 참조를 정리
+	UFUNCTION(BlueprintCallable, Category = "CW|UI")
+	void CloseCurrentPage();
+
+	// 화면의 페이지 전환 요청을 처리
+	UFUNCTION()
+	void HandleRequestOpenPage(ECWUIPage TargetPage);
+
+	// 공개 작업의 시작~끝을 묶어 끝난 시점의 확정 페이지만 OnPageChanged 로 통보
+	// 열기 중 CloseCurrentPage 가 만드는 중간 None 이 구독자에게 보이지 않게 하고,
+	// 중첩 호출(OpenPage 안의 EnsureUIRoot)은 가장 바깥 작업이 한 번만 통보함
+	struct FPageChangeScope
+	{
+		explicit FPageChangeScope(UCWUISubsystem& InOwner);
+		~FPageChangeScope();
+
+		UCWUISubsystem& Owner;
+	};
+
+#pragma endregion
+
+#pragma region Root
+
+private:
+	// 현재 World에서 사용할 Root를 확인하거나 생성
+	bool EnsureUIRoot();
+
+#pragma endregion
+
+#pragma region Transition
+
+private:
+	// 화면 전환 상태와 입력 차단을 시작
+	void BeginTransition();
+
+	// 화면 전환 상태와 입력 차단을 종료
+	void EndTransition();
+
+#pragma endregion
+
+#pragma region FeedbackInternals
+
 private:
 	// 확인 팝업을 만들고 열기까지의 공통 경로
 	UCWBaseConfirmDialog* OpenConfirmDialog(
@@ -242,7 +250,15 @@ private:
 
 #pragma endregion
 
-#pragma region ViewModel
+#pragma region FocusTarget
+
+private:
+	// 지금 키보드 포커스를 가져야 할 위젯. 없으면 nullptr
+	UUserWidget* GetFocusTargetWidget() const;
+
+#pragma endregion
+
+#pragma region Variables
 
 private:
 	// Global Viewmodel Collection에 등록하거나 조회한 Session ViewModel
@@ -252,14 +268,6 @@ private:
 	// 이 서브시스템이 전역 Session ViewModel을 직접 등록했는지 구분
 	bool bOwnsSessionViewModelRegistration = false;
 
-#pragma endregion
-
-#pragma region UIConfiguration
-
-private:
-	// 지금 키보드 포커스를 가져야 할 위젯. 없으면 nullptr
-	UUserWidget* GetFocusTargetWidget() const;
-
 	// 현재 사용할 Root Widget 클래스
 	UPROPERTY()
 	TSubclassOf<UCWUIRootWidget> UIRootClass;
@@ -268,11 +276,6 @@ private:
 	UPROPERTY()
 	TMap<ECWUIPage, FCWUIPageConfig> PageConfigs;
 
-#pragma endregion
-
-#pragma region RuntimeState
-
-private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UCWPauseMenuWidget> PauseMenu;
 

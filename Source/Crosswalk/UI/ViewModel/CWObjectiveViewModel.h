@@ -27,29 +27,6 @@ public:
 		return Objectives;
 	}
 
-private:
-	// 목표 목록을 갱신하고 FieldNotify를 발생
-	void SetObjectives(const TArray<FCWStageObjective>& InObjectives);
-	void PublishObjectives(const TArray<FCWStageObjective>& InObjectives);
-	void UpdateObjectiveTransition();
-	bool PrepareObjectiveInkLayer();
-	void StopObjectiveTransition();
-
-	UPROPERTY(Transient)
-	TArray<FCWStageObjective> PendingObjectives;
-
-	UPROPERTY(Transient)
-	TWeakObjectPtr<URetainerBox> ObjectiveInkLayer;
-
-	FTimerHandle ObjectiveTransitionTimer;
-	float ObjectiveTransitionStarted = 0.f;
-	bool bTransitioningObjectives = false;
-	bool bTransitionListReplaced = false;
-	bool bCleanupVisible = false;
-
-	// 스테이지 클리어 여부를 갱신하고 FieldNotify를 발생
-	void SetIsStageCleared(bool bInIsStageCleared);
-
 #pragma endregion
 
 #pragma region GameStateBinding
@@ -84,6 +61,21 @@ private:
 
 #pragma endregion
 
+#pragma region ObjectiveDataInternals
+
+private:
+	// 목표 목록을 갱신하고 FieldNotify를 발생
+	void SetObjectives(const TArray<FCWStageObjective>& InObjectives);
+	void PublishObjectives(const TArray<FCWStageObjective>& InObjectives);
+	void UpdateObjectiveTransition();
+	bool PrepareObjectiveInkLayer();
+	void StopObjectiveTransition();
+
+	// 스테이지 클리어 여부를 갱신하고 FieldNotify를 발생
+	void SetIsStageCleared(bool bInIsStageCleared);
+
+#pragma endregion
+
 #pragma region ViewModelState
 
 private:
@@ -104,6 +96,18 @@ private:
 		meta = (AllowPrivateAccess = "true")
 	)
 	bool bIsStageCleared = false;
+
+	UPROPERTY(Transient)
+	TArray<FCWStageObjective> PendingObjectives;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<URetainerBox> ObjectiveInkLayer;
+
+	FTimerHandle ObjectiveTransitionTimer;
+	float ObjectiveTransitionStarted = 0.f;
+	bool bTransitioningObjectives = false;
+	bool bTransitionListReplaced = false;
+	bool bCleanupVisible = false;
 
 #pragma endregion
 };
