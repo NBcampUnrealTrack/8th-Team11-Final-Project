@@ -8,6 +8,13 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
+#include "UI/CWUILog.h"
+
+namespace
+{
+	// 다음 틱 재시도 상한 - 60fps 기준 약 5초, 그 뒤에는 목록을 현재 상태로 둠
+	constexpr int32 MaxRefreshPlayersRetries = 300;
+}
 
 #pragma region PlayerData
 
@@ -165,6 +172,10 @@ void UCWInGamePlayerViewModel::RefreshPlayers()
 	{
 		ScheduleRefreshPlayersRetry();
 	}
+	else
+	{
+		RefreshPlayersRetryCount = 0;
+	}
 }
 
 void UCWInGamePlayerViewModel::ScheduleRefreshPlayersRetry()
@@ -179,6 +190,13 @@ void UCWInGamePlayerViewModel::ScheduleRefreshPlayersRetry()
 
 	if (!IsValid(World))
 	{
+		return;
+	}
+
+	// 소유 플레이어나 PlayerState 가 끝내 안 오면 매 틱 재구성이 영원히 돌므로 상한을 둠
+	if (++RefreshPlayersRetryCount > MaxRefreshPlayersRetries)
+	{
+		UE_LOG(LogCWUI, Warning, TEXT("InGamePlayerViewModel: RefreshPlayers retry limit reached (%d)."), MaxRefreshPlayersRetries);
 		return;
 	}
 
@@ -220,6 +238,9 @@ void UCWInGamePlayerViewModel::SubscribeToGameState(
 	{
 		return;
 	}
+
+	// 새 바인딩이므로 재시도 횟수를 처음부터 셈
+	RefreshPlayersRetryCount = 0;
 
 	// 플레이어 입장·퇴장·이름 변경 이벤트 구독
 	GameState->OnPlayerListChanged.AddDynamic(

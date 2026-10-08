@@ -186,8 +186,9 @@ void UCWBaseToolPaintGauge::Apply()
 		}
 		Input.PaintCanIcon = ToolUIData->GetPaintCanIcon();
 	}
-	else
+	else if (!bWarnedMissingToolUIData)
 	{
+		bWarnedMissingToolUIData = true;
 		UE_LOG(LogCWUI, Warning, TEXT("[ToolPaintGauge] ToolUIData is not assigned. Widget=%s"), *GetName());
 	}
 

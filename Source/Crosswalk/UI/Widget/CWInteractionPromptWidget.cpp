@@ -125,7 +125,11 @@ void UCWInteractionPromptWidget::RefreshGroups(const TArray<FCWInteractionPrompt
 	if (!EntryWidgetClass)
 	{
 		// 안내판 클래스가 없으면 아무것도 못 그리므로 조용히 비지 않게 함
-		UE_LOG(LogCWUI, Warning, TEXT("[InteractionPromptUI] EntryWidgetClass is not set."));
+		if (!bWarnedMissingEntryClass)
+		{
+			bWarnedMissingEntryClass = true;
+			UE_LOG(LogCWUI, Warning, TEXT("[InteractionPromptUI] EntryWidgetClass is not set."));
+		}
 		return;
 	}
 

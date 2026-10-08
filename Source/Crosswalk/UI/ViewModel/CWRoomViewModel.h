@@ -7,7 +7,6 @@
 #include "Data/Structs/CWRoomPlayerInfo.h"
 #include "CWRoomViewModel.generated.h"
 
-class ACWRoomGameState;
 class AGameStateBase;
 
 UCLASS(BlueprintType)

@@ -18,7 +18,6 @@
 #include "TimerManager.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Components/TextBlock.h"
 #include "UI/Widget/CWInteractionPromptWidget.h"
 #include "UI/Widget/CWStageIntroWidget.h"
 #include "UI/Widget/CWRemotePaintWidget.h"

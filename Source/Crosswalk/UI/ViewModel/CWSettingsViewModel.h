@@ -8,7 +8,6 @@
 
 class UGameUserSettings;
 class UWorld;
-class UCWGameUserSettings;
 class UCWAudioSubsystem;
 
 // 비디오 모드 확인 시간이 만료됐음을 UI에 알림

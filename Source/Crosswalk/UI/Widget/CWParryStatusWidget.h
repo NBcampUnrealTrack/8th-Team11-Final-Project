@@ -22,8 +22,6 @@ protected:
 private:
 	UPROPERTY()
 	TObjectPtr<UTexture2D> BatTexture;
-	UPROPERTY()
-	TSubclassOf<UUserWidget> LegacyIndicatorClass;
 	TWeakObjectPtr<APawn> LastPawn;
 	FSlateBrush BatBrush;
 	FVector2D IconPosition = FVector2D::ZeroVector;
@@ -33,5 +31,4 @@ private:
 	bool bReady = false;
 	bool bHadCooldown = false;
 	float ReadyPopRemaining = 0.f;
-	float LegacyRefreshRemaining = 0.f;
 };

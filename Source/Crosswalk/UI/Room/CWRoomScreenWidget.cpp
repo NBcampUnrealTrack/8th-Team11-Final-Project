@@ -71,7 +71,7 @@ void UCWRoomScreenWidget::CreateSeatLabels()
 		FSlateFontInfo CheckFont = Font;
 		CheckFont.Size = FMath::Clamp(ReadyCheckFontSize * 2 / 5 - 1, 13, 23);
 		Check->SetFont(CheckFont);
-		Check->SetText(FText::FromString(TEXT("v 준비 완료")));
+		Check->SetText(NSLOCTEXT("CWRoomScreen", "ReadyStamp", "v 준비 완료"));
 		const FLinearColor StampGreen(0.12f, 0.25f, 0.13f, 1.f);
 		Check->SetColorAndOpacity(FSlateColor(StampGreen));
 		Check->SetJustification(ETextJustify::Center);
@@ -188,7 +188,7 @@ void UCWRoomScreenWidget::UpdateSeatLabels(const FGeometry& MyGeometry)
 		FString DisplayName = Player->GetPlayerName();
 		if (DisplayName.IsEmpty())
 		{
-			DisplayName = FString::Printf(TEXT("플레이어 %d"), Index + 1);
+			DisplayName = FText::Format(NSLOCTEXT("CWRoomScreen", "DefaultPlayerName", "플레이어 {0}"), Index + 1).ToString();
 		}
 		// 글자 수 대신 실제 너비로 제한하여 한글과 영문이 섞여도 일정한 판독성을 유지함
 		const TSharedRef<FSlateFontMeasure> FontMeasure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();

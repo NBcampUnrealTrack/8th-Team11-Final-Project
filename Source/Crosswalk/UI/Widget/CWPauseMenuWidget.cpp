@@ -143,7 +143,7 @@ void UCWPauseMenuWidget::ConfirmLeaveRoom()
 	}
 	if (ViewModel->GetIsOperationInFlight())
 	{
-		UI->ShowToast(FText::FromString(TEXT("처리 중인 요청이 끝난 뒤 다시 시도해 주세요.")));
+		UI->ShowToast(NSLOCTEXT("CWPauseMenu", "OperationInFlight", "처리 중인 요청이 끝난 뒤 다시 시도해 주세요."));
 		return;
 	}
 
@@ -181,7 +181,7 @@ void UCWPauseMenuWidget::HandleSessionCompleted(ECWSessionOperation Operation, b
 	else if (UCWUISubsystem* UI = GetUISubsystem(); IsValid(UI))
 	{
 		UI->ShowToast(IsValid(ViewModel) && !bSuccess ? ViewModel->GetLastFailureText()
-			: FText::FromString(TEXT("메뉴 맵 설정을 확인해 주세요.")));
+			: NSLOCTEXT("CWPauseMenu", "MenuMapMissing", "메뉴 맵 설정을 확인해 주세요."));
 		RestoreFocus();
 	}
 }
@@ -265,10 +265,10 @@ FReply UCWPauseMenuWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FK
 	// 조건 없이 Handled 를 돌려주면 다시 열 키까지 삼켜 한 번만 열림
 	if (bMenuOpen && (InKeyEvent.GetKey() == EKeys::Escape || InKeyEvent.GetKey() == EKeys::One))
 	{
-		// 메뉴가 키를 가져간 경우를 남김 - 컨트롤러까지 안 내려간 이유를 가리기 위함
+		// 메뉴가 키를 가져간 경우를 남김 - 컨트롤러까지 안 내려간 이유를 가리기 위함 (진단할 때만 켬)
 		UE_LOG(
 			LogCWUI,
-			Log,
+			Verbose,
 			TEXT("[PauseMenu] key handled by menu. Key=%s"),
 			*InKeyEvent.GetKey().ToString()
 		);

@@ -26,9 +26,10 @@ bool UCWToolUIDataAsset::FindToolUIData(
 	// 이전 호출의 데이터가 남지 않도록 실패 시 출력값 초기화
 	OutToolUIData = FCWToolUIData();
 
+	// 게이지가 페인트 변화마다 조회하므로 평소에는 숨기고 진단할 때만 켬
 	UE_LOG(
 		LogCWUI,
-		Warning,
+		Verbose,
 		TEXT("ToolUIDataAsset: tool UI data not found. ToolType=%s"),
 		*UEnum::GetValueAsString(ToolType)
 	);

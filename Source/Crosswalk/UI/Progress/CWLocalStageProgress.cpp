@@ -17,7 +17,14 @@ UCWLocalStageProgressSave* FCWLocalStageProgress::Load()
 		UCWLocalStageProgressSave* Save = Cast<UCWLocalStageProgressSave>(UGameplayStatics::LoadGameFromSlot(ProgressSlot, 0));
 		// 다른 버전의 저장 파일을 새 데이터로 덮어쓰지 않기 위함
 		if (Save && Save->Version == 1) return Save;
-		UE_LOG(LogCWUI, Warning, TEXT("Local stage progress could not be loaded; keeping the existing slot."));
+
+		// 호스트가 클릭할 때마다 불리므로 같은 경고를 한 번만 남김
+		static bool bWarnedVersionMismatch = false;
+		if (!bWarnedVersionMismatch)
+		{
+			bWarnedVersionMismatch = true;
+			UE_LOG(LogCWUI, Warning, TEXT("Local stage progress could not be loaded; keeping the existing slot."));
+		}
 		return nullptr;
 	}
 	return Cast<UCWLocalStageProgressSave>(UGameplayStatics::CreateSaveGameObject(UCWLocalStageProgressSave::StaticClass()));

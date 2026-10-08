@@ -19,7 +19,7 @@ void UCWRoomViewModel::RequestChangeOutfit()
 		? LocalPlayerController->GetPlayerState<ACWPlayerState>() : nullptr;
 	if (IsValid(PlayerState) && IsValid(PlayerState->GetWearableComponent()))
 	{
-		PlayerState->GetWearableComponent()->CycleSlotItem(TEXT("Head"));
+		PlayerState->GetWearableComponent()->CycleSlotItem(CWWearableSlots::Head);
 	}
 }
 

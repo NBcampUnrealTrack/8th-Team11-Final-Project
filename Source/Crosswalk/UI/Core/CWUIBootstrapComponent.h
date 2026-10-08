@@ -8,7 +8,6 @@
 #include "CWUIBootstrapComponent.generated.h"
 
 class UCWUIRootWidget;
-class UCWUIScreenWidget;
 class UCWUIPageConfigDataAsset;
 class UUserWidget;
 class UCWInteractionPromptWidget;

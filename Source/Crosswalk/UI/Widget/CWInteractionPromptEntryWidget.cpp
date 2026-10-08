@@ -41,8 +41,12 @@ void UCWInteractionPromptEntryWidget::SetPrompts(const TArray<FCWInteractionProm
 		if (Lines.Num() >= MaxLines)
 		{
 			// 고정 행을 넘으면 조용히 사라지므로 계약이 바뀐 신호로 남김
-			UE_LOG(LogCWUI, Warning,
-				TEXT("[InteractionPromptUI] More than %d lines on one target"), MaxLines);
+			if (!bWarnedTooManyLines)
+			{
+				bWarnedTooManyLines = true;
+				UE_LOG(LogCWUI, Warning,
+					TEXT("[InteractionPromptUI] More than %d lines on one target"), MaxLines);
+			}
 			break;
 		}
 
@@ -67,8 +71,12 @@ bool UCWInteractionPromptEntryWidget::BuildLine(const FCWInteractionPrompt& Prom
 	if (!Label || Label->IsEmpty())
 	{
 		// 늘어난 enum 항목이 빈 줄로 그려지지 않게 함
-		UE_LOG(LogCWUI, Warning,
-			TEXT("[InteractionPromptUI] Missing action label: %d"), static_cast<int32>(Prompt.Action));
+		if (!bWarnedMissingLabel)
+		{
+			bWarnedMissingLabel = true;
+			UE_LOG(LogCWUI, Warning,
+				TEXT("[InteractionPromptUI] Missing action label: %d"), static_cast<int32>(Prompt.Action));
+		}
 		return false;
 	}
 

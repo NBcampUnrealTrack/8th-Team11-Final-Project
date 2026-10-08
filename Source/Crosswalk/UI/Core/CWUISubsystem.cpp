@@ -333,10 +333,11 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	}
 
 	// 요청한 페이지의 정책 검색
-	const FCWUIPageConfig* FoundConfig =
+	// 아래에서 BP 이벤트를 부르는 동안 InitializeUI 가 PageConfigs 를 바꿀 수 있어 맵 안의 포인터 대신 값으로 복사
+	const FCWUIPageConfig* FoundConfigPtr =
 		PageConfigs.Find(TargetPage);
 
-	if (FoundConfig == nullptr || !FoundConfig->WidgetClass)
+	if (FoundConfigPtr == nullptr || !FoundConfigPtr->WidgetClass)
 	{
 		UE_LOG(
 			LogCWUI,
@@ -346,6 +347,8 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 
 		return false;
 	}
+
+	const FCWUIPageConfig FoundConfig = *FoundConfigPtr;
 
 	// 현재 World에서 사용할 수 있는 UI Root 준비
 	if (!EnsureUIRoot())
@@ -395,7 +398,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	UCWUIScreenWidget* NewScreen =
 		CreateWidget<UCWUIScreenWidget>(
 			PlayerController,
-			FoundConfig->WidgetClass
+			FoundConfig.WidgetClass
 		);
 
 	if (!IsValid(NewScreen))
@@ -473,7 +476,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 	// 이 페이지를 닫을 때 복원할 기준 상태 저장
 	bHUDWasVisibleBeforePage = bBaseHUDVisible;
 	InputModeBeforeCurrentPage = BaseInputMode;
-	bCurrentPageHidesHUD = FoundConfig->bHideHUD;
+	bCurrentPageHidesHUD = FoundConfig.bHideHUD;
 
 	// 화면 진입 처리 후 HUD 정책과 입력 모드 적용
 	NewScreen->OnScreenOpened();
@@ -487,7 +490,7 @@ bool UCWUISubsystem::OpenPage(ECWUIPage TargetPage)
 		SetHUDVisible(bBaseHUDVisible);
 	}
 
-	ApplyInputMode(FoundConfig->InputMode);
+	ApplyInputMode(FoundConfig.InputMode);
 
 	// 화면 전환과 입력 차단 종료
 	EndTransition();
@@ -720,6 +723,10 @@ bool UCWUISubsystem::EnsureUIRoot()
 	bPauseMenuBlocked = false;
 	CurrentPage = ECWUIPage::None;
 
+	// 이전 월드의 팝업이 GC 전이면 참조가 살아 있어 새 월드의 OpenPopup 이 "이미 열림"으로 거부되므로 함께 폐기
+	CurrentPopup.Reset();
+	PopupReturnInputMode = ECWUIInputMode::UIOnly;
+
 	// 이전 월드의 복귀 지점이 새 월드에서 조회되지 않게 함
 	PageBeforeCurrentPage = ECWUIPage::None;
 
@@ -863,10 +870,10 @@ void UCWUISubsystem::DismissOverlaysForClear()
 
 bool UCWUISubsystem::OpenPauseMenu()
 {
-	// 어느 조건에서 걸렸는지 남김. 거절도 결과이므로 항상 기록함
+	// 어느 조건에서 걸렸는지 남김 - 키를 누를 때마다 나오므로 진단할 때만 켬
 	UE_LOG(
 		LogCWUI,
-		Log,
+		Verbose,
 		TEXT("[PauseMenu] open requested. Page=%d Blocked=%d MenuValid=%d"),
 		static_cast<int32>(CurrentPage),
 		bPauseMenuBlocked ? 1 : 0,
@@ -1050,34 +1057,6 @@ bool UCWUISubsystem::AddHUDWidget(UUserWidget* InWidget)
 	return false;
 }
 
-bool UCWUISubsystem::RemoveHUDWidget(UUserWidget* InWidget)
-{
-	if (!IsValid(InWidget))
-	{
-		return false;
-	}
-
-	// 실제 HUD 제거는 Root에 위임
-	if (UCWUIRootWidget* RootWidget = UIRoot.Get())
-	{
-		return RootWidget->RemoveHUDWidget(InWidget);
-	}
-
-	return false;
-}
-
-void UCWUISubsystem::ClearHUDWidgets()
-{
-	UE_LOG(LogCWUI, Log, TEXT("[HUDState] Clear widgets World=%s Page=%d"),
-		*GetNameSafe(GetWorld()), static_cast<int32>(CurrentPage));
-
-	// 현재 Root의 HUD Widget을 모두 정리
-	if (UCWUIRootWidget* RootWidget = UIRoot.Get())
-	{
-		RootWidget->ClearHUDWidgets();
-	}
-}
-
 bool UCWUISubsystem::CanShowInteractionPrompts() const
 {
 	const UCWPauseMenuWidget* Menu = PauseMenu.Get();
@@ -1102,7 +1081,8 @@ bool UCWUISubsystem::TryGetClearSummary(float& OutElapsedSeconds, int32& OutStar
 
 	if (!bClearSummaryValid)
 	{
-		UE_LOG(LogCWUI, Warning, TEXT("[ClearSummary] requested but nothing was recorded."));
+		// 기록이 없는 것은 결과 화면 밖에서는 정상이라 경고로 두지 않음
+		UE_LOG(LogCWUI, Verbose, TEXT("[ClearSummary] requested but nothing was recorded."));
 		return false;
 	}
 
@@ -1242,6 +1222,11 @@ bool UCWUISubsystem::ClosePopup(UUserWidget* InWidget)
 			Error,
 			TEXT("UISubsystem: failed to remove popup widget.")
 		);
+
+		// 참조를 남기면 이후 모든 OpenPopup 이 막히므로 위젯은 직접 떼고 상태는 비움
+		InWidget->RemoveFromParent();
+		CurrentPopup.Reset();
+		PopupReturnInputMode = ECWUIInputMode::UIOnly;
 
 		return false;
 	}

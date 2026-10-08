@@ -4,7 +4,6 @@
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
-#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Traffic/CWTrafficDirector.h"
 #include "UI/CWUILog.h"
