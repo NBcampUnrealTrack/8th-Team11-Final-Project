@@ -48,6 +48,8 @@ class CROSSWALK_API UCWVehicleHitReactionComponent : public UActorComponent
 public:
 	UCWVehicleHitReactionComponent();
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	// 차량 피격 정보를 받아 서버 기준 피격 상태를 시작
 	UFUNCTION(BlueprintCallable, Category = "Traffic|Hit")
 	void HandleVehicleHit(const FCWVehicleHitContext& HitContext);
@@ -73,8 +75,6 @@ public:
 	// 서버가 마지막으로 확정한 피격 정보를 반환
 	UFUNCTION(BlueprintPure, Category = "Traffic|Hit")
 	FCWVehicleHitContext GetLastHitContext() const;
-
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
 	// 피격 상태가 시작될 때 서버와 클라이언트에서 호출

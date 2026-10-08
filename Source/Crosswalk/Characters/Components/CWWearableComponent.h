@@ -49,6 +49,8 @@ class CROSSWALK_API UCWWearableComponent : public UActorComponent
 public:
 	UCWWearableComponent();
 
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	/** PlayerState가 선택을 보관하고, 현재 화면의 몸 메시만 로컬에서 연결한다. */
 	void SetBodyMesh(USkeletalMeshComponent* InBodyMesh);
 	void ReleaseBodyMesh(USkeletalMeshComponent* InBodyMesh);
@@ -57,8 +59,6 @@ public:
 	/** 기존 좌석 소유자 ID로 복장 외형을 연결한다. 네트워크 요청을 보내지 않는다. */
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
 	static void BindLobbySeat(USkeletalMeshComponent* SeatMesh, int32 PlayerId, UMeshComponent* LegacyHelmet);
-
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	/** 슬롯에 아이템을 입힌다. Item 이 nullptr 이면 그 슬롯을 벗는다. */
 	UFUNCTION(BlueprintCallable, Category = "Crosswalk|Wearable")
@@ -137,7 +137,6 @@ private:
 	bool HasAuthority() const;
 	bool CanChangeOutfit() const;
 	void ClearVisuals();
-	TWeakObjectPtr<USkeletalMeshComponent> BodyMeshTarget;
 
 protected:
 	/**
@@ -193,4 +192,6 @@ private:
 	TMap<int32, TObjectPtr<UMaterialInterface>> OriginalBodyMaterials;
 
 	TMap<int32, int32> BodyMaterialSlots;
+
+	TWeakObjectPtr<USkeletalMeshComponent> BodyMeshTarget;
 };
