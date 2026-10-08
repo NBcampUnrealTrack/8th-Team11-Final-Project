@@ -59,12 +59,6 @@ public:
 public:
 	virtual void Tick(float DeltaSeconds) override;
 
-protected:
-	virtual void BeginPlay() override;
-
-	// 떠 있는 채로 맵 이동 등으로 사라지면 해상도 고정이 인게임까지 남으므로 여기서 풂
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-
 #pragma endregion
 
 #pragma region Setup
@@ -110,6 +104,14 @@ public:
 	}
 
 #pragma endregion
+
+#pragma region ProtectedOverrides
+
+protected:
+	virtual void BeginPlay() override;
+
+	// 떠 있는 채로 맵 이동 등으로 사라지면 해상도 고정이 인게임까지 남으므로 여기서 풂
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 #pragma region PrivateFunctions
 
@@ -161,7 +163,7 @@ private:
 
 #pragma endregion
 
-#pragma region Components
+#pragma region Variables
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CW|Clipboard", meta = (AllowPrivateAccess = "true"))
@@ -186,11 +188,6 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "CW|Clipboard")
 	TObjectPtr<UCWClipboardWidgetInteractionComponent> PaperInteraction;
 
-#pragma endregion
-
-#pragma region Tuning
-
-private:
 	// 카메라 기준 숨김 포즈 (화면 아래, 눕혀진 상태)
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|Pose")
 	FVector HiddenRelativeLocation = FVector(50.f, 5.f, -60.f);
@@ -252,11 +249,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "CW|Clipboard|PaperFade")
 	TObjectPtr<UMaterialInterface> PaperInkWipeMaterial;
 
-#pragma endregion
-
-#pragma region State
-
-private:
 	ECWClipboardState ClipboardState = ECWClipboardState::Hidden;
 
 	float MotionElapsed = 0.f;

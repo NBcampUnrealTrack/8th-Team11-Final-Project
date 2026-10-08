@@ -26,6 +26,15 @@ bool FCWClearSignalTiming::IsTimedOut(float ElapsedSeconds, float TimeoutSeconds
 	return ElapsedSeconds >= FMath::Max(TimeoutSeconds, MinSignalTimeoutSeconds);
 }
 
+float FCWClearSignalTiming::StageElapsedSeconds(float ClearStartedAt, float StageStartedAt)
+{
+	if (StageStartedAt < 0.f)
+	{
+		return ClearStartedAt;
+	}
+	return FMath::Max(0.f, ClearStartedAt - StageStartedAt);
+}
+
 void UCWBaseInGameHUD::NativeConstruct()
 {
 	// Super 앞에서 끝냄 - BP Construct 의 뷰모델 초기화가 즉시 SetStageCleared 를 부를 수 있음
@@ -34,6 +43,16 @@ void UCWBaseInGameHUD::NativeConstruct()
 	if (UCWUISubsystem* UI = GetUISubsystem(); IsValid(UI))
 	{
 		UI->ClearClearSummary();
+	}
+
+	// 소요 시간의 기준 - 월드 시간이 맵 이동에도 이어져 결과 화면에 스테이지마다 누적되어 보였으므로 HUD 가 처음 만들어진 시각을 스테이지 시작으로 봄
+	// 같은 위젯이 다시 구성돼도 처음 값을 유지함
+	if (StageStartedAt < 0.f)
+	{
+		if (const UWorld* World = GetWorld())
+		{
+			StageStartedAt = World->GetTimeSeconds();
+		}
 	}
 
 	Super::NativeConstruct();
@@ -239,7 +258,7 @@ void UCWBaseInGameHUD::OpenResult()
 	}
 
 	// 결과 화면이 열리는 순간 읽으므로 반드시 열기 전에 기록
-	UI->SetClearSummary(ClearStartedAt, PreviewStarCount);
+	UI->SetClearSummary(FCWClearSignalTiming::StageElapsedSeconds(ClearStartedAt, StageStartedAt), PreviewStarCount);
 	if (UI->OpenPage(ECWUIPage::Result))
 	{
 		bClearResultOpened = true;

@@ -86,10 +86,6 @@ public:
 		return bIsHost;
 	}
 
-private:
-	// 현재 GameState의 선택 상태를 세 값 함께 반영함
-	void RefreshStageSelectionState();
-
 #pragma endregion
 
 #pragma region GameStateBinding
@@ -110,7 +106,14 @@ protected:
 	// 이전 월드의 선택 상태를 기본값으로 초기화함
 	virtual void ResetViewModelState() override;
 
+#pragma endregion
+
+#pragma region GameStateBindingInternals
+
 private:
+	// 현재 GameState의 선택 상태를 세 값 함께 반영함
+	void RefreshStageSelectionState();
+
 	UFUNCTION()
 	void HandleStageSelectionStateChanged();
 

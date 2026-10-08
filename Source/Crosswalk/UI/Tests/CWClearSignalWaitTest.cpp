@@ -25,6 +25,12 @@ bool FCWClearSignalWaitTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("0 설정 하한 경계"), FCWClearSignalTiming::IsTimedOut(0.5f, 0.f));
 	TestFalse(TEXT("음수 설정 하한 전"), FCWClearSignalTiming::IsTimedOut(0.1f, -3.f));
 
+	// 소요 시간은 스테이지 시작을 뺀 값 - 맵 이동에도 이어지는 월드 시간이 누적되어 보이지 않게 함
+	TestEqual(TEXT("소요 시간 = 클리어 - 시작"), FCWClearSignalTiming::StageElapsedSeconds(286.f, 226.f), 60.f);
+	TestEqual(TEXT("다음 스테이지도 처음부터"), FCWClearSignalTiming::StageElapsedSeconds(430.f, 290.f), 140.f);
+	TestEqual(TEXT("시작이 더 늦으면 0"), FCWClearSignalTiming::StageElapsedSeconds(10.f, 20.f), 0.f);
+	TestEqual(TEXT("시작 기록 전에는 이전 값 그대로"), FCWClearSignalTiming::StageElapsedSeconds(280.f, -1.f), 280.f);
+
 	return true;
 }
 

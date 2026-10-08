@@ -39,16 +39,6 @@ public:
 		return RemotePlayers;
 	}
 
-private:
-	// GameState의 PlayerArray를 로컬·원격 플레이어 데이터로 변환
-	void RefreshPlayers();
-
-	// RefreshPlayers 재시도를 다음 Tick에 한 번만 예약
-	void ScheduleRefreshPlayersRetry();
-
-	// 재시도 예약을 취소하고 핸들 무효화
-	void ClearRefreshPlayersRetry();
-
 #pragma endregion
 
 #pragma region GameStateBinding
@@ -73,6 +63,20 @@ private:
 	// 플레이어 입장·퇴장·이름 변경 처리
 	UFUNCTION()
 	void HandlePlayerListChanged();
+
+#pragma endregion
+
+#pragma region PlayerDataInternals
+
+private:
+	// GameState의 PlayerArray를 로컬·원격 플레이어 데이터로 변환
+	void RefreshPlayers();
+
+	// RefreshPlayers 재시도를 다음 Tick에 한 번만 예약
+	void ScheduleRefreshPlayersRetry();
+
+	// 재시도 예약을 취소하고 핸들 무효화
+	void ClearRefreshPlayersRetry();
 
 #pragma endregion
 

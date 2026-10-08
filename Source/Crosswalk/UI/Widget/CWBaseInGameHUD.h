@@ -30,6 +30,10 @@ struct CROSSWALK_API FCWClearSignalTiming
 
 	// 신호가 준비되지 않아도 연출을 진행할 시점인지 - 하한 0.5초로 설정 실수에도 즉시 통과하지 않게 함
 	static bool IsTimedOut(float ElapsedSeconds, float TimeoutSeconds);
+
+	// 결과 화면에 표시할 소요 시간 - 클리어 시작 시각에서 스테이지 시작 시각을 뺌
+	// 월드 시간은 맵 이동에도 이어져 그대로 쓰면 스테이지를 거칠 때마다 누적되므로 시작 시각이 없으면(음수) 이전 값 그대로 돌려줌
+	static float StageElapsedSeconds(float ClearStartedAt, float StageStartedAt);
 };
 
 // 인게임 HUD 의 공통 부모
@@ -112,8 +116,11 @@ private:
 	// 신호 판정 미구현 경고를 연출 1회당 한 번만 남기기 위함
 	bool bWarnedMissingSignalEvaluation = false;
 
-	// 클리어 시작 시점의 게임 시간(초) - 결과 화면의 소요 시간으로 쓰이던 값
+	// 클리어 시작 시점의 게임 시간(초)
 	float ClearStartedAt = 0.f;
+
+	// 이 HUD 가 처음 만들어진 시점의 게임 시간(초) - 스테이지 시작으로 보고 소요 시간의 기준으로 씀, 음수는 아직 기록 전
+	float StageStartedAt = -1.f;
 
 	// 맵 이동 중 파기될 수 있어 약참조로 보관
 	TArray<TWeakObjectPtr<ACWTrafficDirector>> ClearSignalDirectors;

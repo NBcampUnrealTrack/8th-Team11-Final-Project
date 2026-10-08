@@ -35,9 +35,6 @@ protected:
 
 private:
 	void TryOpenInitialPage();
-	FTimerHandle InitialPageTimer;
-	ECWUIPage PendingInitialPage = ECWUIPage::None;
-	bool bInitialWorldReady = false;
 
 #pragma endregion
 
@@ -81,6 +78,11 @@ protected:
 	// 안내 이미지를 BP에서 지정해 화면 조정에 C++ 재빌드가 필요하지 않게 함
 	UPROPERTY(EditDefaultsOnly, Category = "CW|UI")
 	TSubclassOf<UCWStageIntroWidget> StageIntroClass;
+
+private:
+	FTimerHandle InitialPageTimer;
+	ECWUIPage PendingInitialPage = ECWUIPage::None;
+	bool bInitialWorldReady = false;
 
 #pragma endregion
 };

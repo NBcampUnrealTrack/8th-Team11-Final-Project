@@ -38,14 +38,6 @@ public:
 	// 설정 화면은 클립보드 위라 고정된 채면 품질을 바꿔도 가장 큰 차이인 해상도가 안 보임
 	void SetWorldResolutionPreview(bool bPreview);
 
-private:
-	// 저장값(ScalabilityQuality)은 건드리지 않고 적용 중인 값만 바꿔 설정 파일에는 사용자 값이 남음
-	void ApplyWorldResolutionOverride() const;
-
-	int32 FullWorldResolutionRequests = 0;
-
-	bool bWorldResolutionPreview = false;
-
 #pragma endregion
 
 #pragma region Accessors
@@ -88,6 +80,14 @@ public:
 
 #pragma endregion
 
+#pragma region WorldUIResolutionInternals
+
+private:
+	// 저장값(ScalabilityQuality)은 건드리지 않고 적용 중인 값만 바꿔 설정 파일에는 사용자 값이 남음
+	void ApplyWorldResolutionOverride() const;
+
+#pragma endregion
+
 #pragma region PrivateFunctions
 
 private:
@@ -99,6 +99,10 @@ private:
 #pragma region Variables
 
 private:
+	int32 FullWorldResolutionRequests = 0;
+
+	bool bWorldResolutionPreview = false;
+
 	// Config 지정이 없으면 GameUserSettings.ini 에 기록되지 않음
 	UPROPERTY(Config)
 	float MasterVolume = 1.0f;

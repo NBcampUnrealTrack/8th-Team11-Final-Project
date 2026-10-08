@@ -73,10 +73,6 @@ protected:
 	virtual void ResetViewModelState()
 		PURE_VIRTUAL(UCWBaseGameStateViewModel::ResetViewModelState, );
 
-private:
-	// GameState가 늦게 생성된 경우 다시 구독
-	void HandleGameStateSet(AGameStateBase* InGameState);
-
 #pragma endregion
 
 #pragma region PlayerInfoHelpers
@@ -92,6 +88,14 @@ protected:
 	static void SortPlayerInfosByPlayerId(
 		TArray<FCWRoomPlayerInfo>& PlayerInfos
 	);
+
+#pragma endregion
+
+#pragma region GameStateBindingInternals
+
+private:
+	// GameState가 늦게 생성된 경우 다시 구독
+	void HandleGameStateSet(AGameStateBase* InGameState);
 
 #pragma endregion
 
