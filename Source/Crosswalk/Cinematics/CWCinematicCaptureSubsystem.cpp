@@ -207,8 +207,8 @@ void UCWCinematicCaptureSubsystem::StartCapture(int32 Width, int32 Height, int32
 
 	RenderTarget = NewObject<UTextureRenderTarget2D>(this);
 	RenderTarget->ClearColor = FLinearColor::Black;
-	// FinalColorLDR is already display-encoded; an sRGB target encodes it twice and lifts the shadows.
-	RenderTarget->InitCustomFormat(Width, Height, PF_B8G8R8A8, true);
+	// Linear float keeps the tone-curved output; an 8-bit linear target crushes shadows onto the 1/255 step.
+	RenderTarget->InitCustomFormat(Width, Height, PF_FloatRGBA, true);
 	RenderTarget->UpdateResourceImmediate(true);
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.ObjectFlags |= RF_Transient;
@@ -218,7 +218,8 @@ void UCWCinematicCaptureSubsystem::StartCapture(int32 Width, int32 Height, int32
 	CaptureActor->SetActorTickEnabled(false);
 	USceneCaptureComponent2D* Capture = CaptureActor->GetCaptureComponent2D();
 	Capture->TextureTarget = RenderTarget;
-	Capture->CaptureSource = SCS_FinalColorLDR;
+	// Keeps exposure, tone curve and PPV grading but outputs linear color for Slate to encode once.
+	Capture->CaptureSource = SCS_FinalToneCurveHDR;
 	// A single scheduled capture avoids rendering both every-frame and explicit captures.
 	Capture->bCaptureEveryFrame = false;
 	Capture->bCaptureOnMovement = false;
