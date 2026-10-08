@@ -942,7 +942,7 @@ void ACWWorkZone_Cells::OnHighlightStateChanged_Implementation(ECWZoneHighlightS
 
 void ACWWorkZone_Cells::RefreshPaintFieldHighlight()
 {
-	if (!bHighlightPaintedCells || PaintFieldMID == nullptr)
+	if (!bHighlightPaintedCells)
 	{
 		return;
 	}
@@ -963,7 +963,21 @@ void ACWWorkZone_Cells::RefreshPaintFieldHighlight()
 		break;
 	}
 
-	PaintFieldMID->SetScalarParameterValue(TEXT("Highlight"), Intensity);
+	/**
+	 * 발광이 아니라 페인트 색을 바꿔서 알린다.
+	 *
+	 * 처음에는 칠해진 칸을 빛나게 했는데, 발광 표면은 Lumen 이 광원으로 받아들여서
+	 * 도로에 깔린 이 판이 주변 오브젝트를 비추는 조명이 됐다. 레이트레이싱 반사로는
+	 * 지나가는 차량 표면에도 묻었다.
+	 *
+	 * 둘 다 "빛" 이라서 생기는 문제였다. 그래서 밝기 대신 색으로 간다.
+	 * 머티리얼이 이 값으로 페인트 색을 주기적으로 바꾸고, 평범한 페인트 반사로만 보인다.
+	 * 시야 주변부는 밝기보다 변화에 민감해서 눈에 띄는 정도는 오히려 낫다.
+	 */
+	if (PaintFieldMID != nullptr)
+	{
+		PaintFieldMID->SetScalarParameterValue(TEXT("Highlight"), Intensity);
+	}
 }
 
 void ACWWorkZone_Cells::Multicast_ApplyBrushes_Implementation(const TArray<FCWBrushStroke>& Strokes)
