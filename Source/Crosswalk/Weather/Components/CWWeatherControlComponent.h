@@ -26,14 +26,25 @@ class CROSSWALK_API UCWWeatherControlComponent : public UActorComponent
 public:
 	UCWWeatherControlComponent();
 
+	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
 	// 값을 반영할 Niagara 컴포넌트를 코드에서 배정 (같은 액터가 생성자에서 미리 묶어줄 때 사용)
 	void SetTargetNiagaraComponent(UNiagaraComponent* InNiagaraComponent)
 	{
 		TargetNiagaraComponent = InNiagaraComponent;
 	}
 
-	virtual void BeginPlay() override;
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+private:
+	// UCWWeatherComponent::OnWeatherStateChanged 구독 콜백 - 새 목표값으로 Lerp를 시작
+	UFUNCTION()
+	void HandleWeatherStateChanged(const FCWWeatherEventPayload& Payload);
+
+	// 매 틱: 카메라 위치 추종 + 카메라 하향 기울임 계산
+	void UpdateCameraFollow();
+
+	// 매 틱: 블렌드 진행 + Niagara User Parameter 반영
+	void UpdateNiagaraParameters(float DeltaTime);
 
 protected:
 	// 값을 실제로 반영할 Niagara 컴포넌트. 액터/블루프린트에서 배정한다 (이 컴포넌트가 직접 만들지 않음)
@@ -81,17 +92,6 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Weather")
 	float CameraFollowForwardOffset = 1200.f;
-
-private:
-	// UCWWeatherComponent::OnWeatherStateChanged 구독 콜백 - 새 목표값으로 Lerp를 시작
-	UFUNCTION()
-	void HandleWeatherStateChanged(const FCWWeatherEventPayload& Payload);
-
-	// 매 틱: 카메라 위치 추종 + 카메라 하향 기울임 계산
-	void UpdateCameraFollow();
-
-	// 매 틱: 블렌드 진행 + Niagara User Parameter 반영
-	void UpdateNiagaraParameters(float DeltaTime);
 
 private:
 	float CurrentWindSpeed = 0.f;
