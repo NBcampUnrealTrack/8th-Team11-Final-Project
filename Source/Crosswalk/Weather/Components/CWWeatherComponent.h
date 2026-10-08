@@ -51,11 +51,6 @@ public:
 		return CurrentWeatherState;
 	}
 
-protected:
-	// 날씨 상태별 지속시간/풍속/강도를 정의하는 DataTable. 행 이름은 ECWWeatherState의 짧은 이름과 맞춘다.
-	UPROPERTY(EditDefaultsOnly, Category = "Weather")
-	TObjectPtr<UDataTable> WeatherDataTable;
-
 private:
 	// 서버 전용: 다음 상태로 넘어가고, 그 상태의 값을 굴리고, 다음 전환 타이머를 건다
 	void AdvanceWeatherState();
@@ -69,6 +64,11 @@ private:
 
 	// Payload를 만들어 OnWeatherStateChanged로 브로드캐스트
 	void BroadcastWeatherState(float RolledWindSpeed, float RolledIntensity, float BlendTime);
+
+protected:
+	// 날씨 상태별 지속시간/풍속/강도를 정의하는 DataTable. 행 이름은 ECWWeatherState의 짧은 이름과 맞춘다.
+	UPROPERTY(EditDefaultsOnly, Category = "Weather")
+	TObjectPtr<UDataTable> WeatherDataTable;
 
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentWeatherState)
