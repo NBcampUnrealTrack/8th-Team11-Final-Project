@@ -4,9 +4,16 @@
 #include "Painting/Zone/CWBaseWorkZone.h"
 #include "CWWorkZone_BorderSketch.generated.h"
 
+class ACWBaseTool;
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
+class UAnimInstance;
+class UAnimMontage;
+class UAnimSequence;
+class USoundBase;
+class UNiagaraSystem;
+class UNiagaraComponent;
 class ACWWorkZone_Cells;
 
 /**
@@ -23,6 +30,10 @@ struct FCWBorderCell
 	// 칸이 둘레를 따라 차지하는 길이(cm).
 	float Length = 0.f;
 
+	// 둘레를 한 바퀴 도는 방향이 메시의 U(+) 방향과 같으면 +1, 반대면 -1.
+	// 변마다 진행 방향이 달라서(위·오른쪽 변은 +, 아래·왼쪽 변은 -) 스윕 방향을 정할 때 필요하다.
+	float RingDirectionSign = 1.f;
+
 	// 이 칸이 X 축 방향으로 누워 있는가. 인스턴스 배율을 어느 축에 줄지 정한다.
 	bool bAlongX = false;
 };
@@ -33,7 +44,9 @@ struct FCWBorderCell
  * 규칙
  *   1. 테두리 직사각형의 둘레를 CellLength 길이의 칸으로 나눈다
  *   2. 라인 테두리 도구를 들고 존 옆에서 작업 키를 누르고 있으면 차징이 시작된다
- *   3. 누른 시간이 길수록 단계가 올라간다 (0.3초 1칸 → 0.7초 2칸 → 1.2초 3칸 → 1.8초 4칸)
+ *   3. 누른 시간이 길수록 단계가 올라간다 (0.3초 1단계 → 0.7초 2단계 → 1.2초 3단계 → 1.8초 4단계)
+ *      칸 수는 ChargeRunCellCounts 가 정한다. 캐릭터 발밑에서 가장 가까운 칸이 시작점이고, 캐릭터가
+ *      바라보는 쪽으로 테두리를 따라 **한 줄**로 이어 간다
  *   4. 키를 떼면 그 단계만큼의 칸이 한 번에 칠해진다. 최대 단계에 닿고 FullChargeHoldSeconds(1초)가
  *      지나면 떼지 않아도 칠해지고 작업이 끝난다. 다음 차징은 키를 다시 눌러야 시작된다
  *      (더 눌러도 얻는 게 없는데 계속 붙잡고 있으면 차에 노출되는 시간만 늘어난다)
@@ -110,10 +123,52 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Work|Border")
 	bool IsCellPainted(int32 CellIndex) const;
 
+	/** 마지막 단계까지의 차징 진행도. 0 = 안 누름, 1 = 최대 단계. 차징 이펙트 세기에 쓴다. */
+	UFUNCTION(BlueprintPure, Category = "Work|FX")
+	float GetChargeAlpha() const;
+
+	/**
+	 * 지금 놓으면 칠해질 구간의 끝(선두) 위치. 이 기계의 플레이어가 차징 중일 때만 유효하다.
+	 * @return 선두가 있으면 true
+	 */
+	UFUNCTION(BlueprintPure, Category = "Work|FX")
+	bool GetChargeTipLocation(FVector& OutTipLocation) const;
+
 	virtual ECWZoneHighlightState GetHighlightStateFor(ECWToolType ToolType) const override;
 	virtual bool ShouldDrawDebugHighlightBox() const override { return false; }
 
 protected:
+	/**
+	 * 차징이 시작됐다. 도구 끝에 붙는 루프 이펙트를 켜는 자리다.
+	 * 이 기계의 플레이어가 누를 때만 불린다. 남의 차징은 알려지지 않는다.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Work|FX")
+	void OnChargeStarted(ACWBaseTool* Tool);
+
+	/**
+	 * 차징 단계가 올랐다.
+	 *
+	 * @param TipLocation 지금 놓으면 칠해질 구간의 끝. 칠할 칸이 없으면 시작 칸이다.
+	 * @param bWillPaint  지금 놓으면 실제로 칠해지는가. false 면 헛스윙 연출을 줘야 한다.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Work|FX")
+	void OnChargeLevelReached(int32 Level, int32 MaxLevel, const FVector& TipLocation, bool bWillPaint);
+
+	/** 차징이 끝났다. 놓았든 중단됐든 불린다. OnChargeStarted 로 켠 것을 끄는 자리다. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Work|FX")
+	void OnChargeEnded();
+
+	/**
+	 * 붓질이 확정돼 선이 쓸려 칠해지기 시작한다. 모든 기계에서, 남이 칠한 것도 불린다.
+	 *
+	 * @param CellLocations 붓이 지나가는 순서대로의 칸 중심(월드). 이 선을 따라 스플래시를 뿌린다.
+	 * @param StartDelays   칸마다 붓이 닿기까지의 시간(초). 머티리얼 쓸림과 같은 값이라 이펙트를
+	 *                      이 시차로 터뜨리면 선과 어긋나지 않는다. CellLocations 와 같은 순서다.
+	 * @param SweepSeconds  쓸림이 전부 끝나기까지 걸리는 시간.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Work|FX")
+	void OnStrokeSwept(const TArray<FVector>& CellLocations, const TArray<float>& StartDelays, float SweepSeconds);
+
 	/** 칸별 안내선이 도색 상태를 표시하므로 전체 사각형 데칼은 겹쳐 그리지 않는다. */
 	virtual void OnHighlightStateChanged_Implementation(ECWZoneHighlightState NewState) override;
 
@@ -179,22 +234,30 @@ private:
 	 */
 	void RefreshPaintedInstances();
 
-	/** 대기열에 있는 칸을 CellRevealInterval 간격으로 하나씩 켠다. */
-	void TickCellReveal();
-
-	/** 넘어온 순서 그대로 점등 대기열에 넣는다. 붓이 지나간 순서라 그대로 켜져야 한다. */
-	void EnqueueRevealCells(const TArray<int32>& OrderedCells);
+	/**
+	 * 넘어온 칸들을 붓이 지나가는 순서대로 쓸어 칠한다.
+	 *
+	 * 칸마다 [2] 시작 시각, [3] 지속 시간, [4] 스윕 방향을 custom data 에 넣는다. 칸 안에서
+	 * 선이 번져 나가는 모양은 머티리얼이 Time 으로 스스로 그리므로 이 뒤로는 틱이 필요 없다.
+	 * 시작 시각을 칸 길이 누적 / StrokeSweepSpeed 로 어긋나게 줘서, 칸 여러 개가 하나의 붓질로
+	 * 이어져 읽힌다. (칸을 하나씩 켜던 방식은 스탬프를 찍은 것처럼 보였다)
+	 */
+	void BeginRevealCells(const TArray<int32>& OrderedCells);
 
 	/**
 	 * 점등 상태를 칠해진 칸 목록에 맞춘다.
 	 *
 	 * 서버가 예측을 되돌렸으면 켜둔 칸을 즉시 끄고, 남이 칠했거나 늦게 들어와 새로 알게 된
-	 * 칸은 대기열에 넣는다. 리플리케이션은 "누가 어떤 순서로 그었는지" 를 알려주지 않으므로
-	 * 그쪽은 칸 번호 순으로 켠다.
+	 * 칸은 쓸어 칠한다. 리플리케이션은 "누가 어떤 순서로 그었는지" 를 알려주지 않으므로
+	 * 그쪽은 칸 번호 순으로 쓴다.
 	 */
-	void SyncRevealQueueToFlags();
+	void SyncRevealToFlags();
 
-	void RevealCell(int32 CellIndex);
+	/** 붓이 이 칸을 지나가는 방향이 메시의 U(+) 방향과 같은가. +1 / -1 */
+	float ComputeSweepSign(const TArray<int32>& OrderedCells, int32 OrderIndex) const;
+
+	/** 차징 선두 정보를 지금 상태에 맞춘다. 단계가 오른 프레임에만 이벤트를 낸다. */
+	void UpdateChargeFX(int32 Level, const TArray<int32>& AffordableCells);
 
 	/** 칸 중심의 월드 좌표. */
 	FVector GetCellWorldLocation(int32 CellIndex) const;
@@ -206,10 +269,82 @@ private:
 	FTransform MakeBandTransform(const FCWBorderCell& Cell) const;
 
 	/** 결과 띠를 이번에 칠해질 칸 목록에 맞춘다. 목록이 그대로면 아무것도 하지 않는다. */
-	void UpdatePreviewBand(const TArray<int32>& AffordableCells);
+	void UpdatePreviewBand(const TArray<int32>& AffordableCells, int32 Level);
+
+	/** 칸 하나가 4등분(RailSlicesPerCell)된 레일 조각 하나의 트랜스폼. 칸 로컬 기준이다. */
+	FTransform MakeRailTransform(const FCWBorderCell& Cell, int32 SliceIndex) const;
+
+	/** 레일 조각 하나의 custom data 를 쓴다. 렌더 갱신은 호출한 쪽이 한 번에 한다. */
+	void SetRailSlice(int32 CellIndex, int32 SliceIndex, float RiseStart, float Tier, float CollapseStart, float Crest);
 
 	/**
-	 * 범위 사각형의 머티리얼 인스턴스를 만든다.
+	 * 새로 닿게 된 칸의 레일을 솟게 하고, 범위 밖으로 빠진 칸은 감춘다.
+	 * 이미 솟은 칸은 건드리지 않는다. 그래야 단계가 오를 때 새 구간만 솟는다.
+	 *
+	 * @param Tier 차징 단계(1~4). 조준 프리뷰는 AimRailTier 를 넘긴다. 머티리얼이 이 값으로 모양을 가른다.
+	 */
+	void UpdateRail(float Tier, const TArray<int32>& TargetCells);
+
+	/**
+	 * 차징하기 전, 지금 누르면 어느 칸부터 칠해지는지 민트색으로 낮게 보여 준다.
+	 *
+	 * 시작 칸과 방향은 차징을 시작할 때와 같은 방식으로 정한다. 그래야 보이는 칸이 곧 칠해지는 칸이다.
+	 * 칠할 칸이 없거나(이미 칠함 / 페인트 없음) 작업 범위 밖이면 아무것도 띄우지 않는다.
+	 */
+	void UpdateAimPreview(const UCWWorkerComponent* Worker);
+
+	/**
+	 * 칸의 레일을 무너뜨린다. 붓질이 지나가는 시각에 맞춰 조각마다 시차를 둔다.
+	 * @param bCrest true 면 무너지기 직전 물마루처럼 한 번 더 솟는다. 칠해지는 칸만 쓴다.
+	 */
+	void CollapseRailCell(int32 CellIndex, float StartTime, float Duration, float SweepSign, bool bCrest);
+
+	/** 차징이 끝난 시점에 아직 서 있는 레일(칠해지지 않는 칸)을 마저 내린다. */
+	void FinishRail();
+
+	/** 서 있거나 무너지는 레일을 전부 감춘다. */
+	void HideRail();
+
+	/** 차징을 시작하며 와인드업 자세로 간다. 로컬 작업자 전용이다. */
+	void StartChargeAnimation(UCWWorkerComponent* Worker);
+
+	/** 와인드업 끝 자세에 닿으면 얼린다. 차징 중 매 프레임 부른다. */
+	void TickChargeAnimation();
+
+	/** 얼려 둔 자세를 풀어 휘두르게 한다. 와인드업 도중이면 홀드 자세에 닿을 때까지 미룬다. */
+	void ReleaseChargeAnimation();
+
+	/** 최소 홀드 전에 놓았을 때, 당긴 길을 되감아 붓을 거둔다. */
+	void RewindChargeAnimation();
+
+	/**
+	 * 키를 뗀 뒤의 몽타주를 끝까지 돌본다. 차징이 끝난 뒤에도 돌아야 해서 Tick 에서 부른다.
+	 * 미뤄 둔 휘두르기를 내보내고, 되감기를 마무리하고, 잠금이 풀린 뒤 걷기 시작하면 피니시를 끊는다.
+	 */
+	void TickReleaseAnimation();
+
+	/** 키를 뗀 뒤 지켜보던 몽타주를 놓는다. */
+	void ClearReleaseAnimation();
+
+	/** 와인드업을 ChargeAnimWindupSeconds 안에 끝내는 재생 배율. */
+	float GetChargeWindupRate() const;
+
+	/** 홀드 자세에서 릴리즈 배율로 풀고 궤적을 켠다. */
+	void BeginReleaseSwing(UAnimInstance* AnimInstance, UAnimMontage* Montage);
+
+	/** 휘두르는 동안 붓 소켓에 궤적을 붙여 켠다. */
+	void StartReleaseTrail(UAnimInstance* AnimInstance);
+
+	void StopChargeAnimation();
+
+	/** 차징 단계에 맞는 소리를 이 기계에서만 낸다. */
+	void PlayChargeLevelSound(int32 Level) const;
+
+	/** 이 기계의 플레이어에게만 들리는 소리를 낸다. 데디케이티드 서버는 들을 사람이 없어 건너뛴다. */
+	void PlayLocalSound(USoundBase* Sound, float Volume = 1.f) const;
+
+	/**
+	 * 결과 띠의 머티리얼 인스턴스를 만든다.
 	 *
 	 * 색과 불투명도는 여기서 넣지 않는다. 그건 머티리얼 인스턴스가 가진다.
 	 * C++ 이 색까지 덮어쓰면 아티스트가 MI 에서 바꾼 값이 런타임에 조용히 무시되어,
@@ -237,40 +372,31 @@ private:
 	/** 이 기계에서 조종 중인 플레이어의 작업 컴포넌트. 데디케이티드 서버에서는 nullptr 이다. */
 	UCWWorkerComponent* FindLocalWorker();
 
+	/** 차징 단계에 맞는 한 줄의 칸 수. 0 단계는 0. */
+	int32 GetChargeRunCount(int32 Level) const;
+
 	/**
-	 * 범위 사각형을 지금 상태에 맞게 그리거나 숨긴다.
+	 * 시작 칸에서 테두리 고리를 따라 칸을 한 줄로 이어 모은다. 캐릭터에서 가까운 순이다.
 	 *
-	 * @param AffordableCount 이번에 실제로 칠해질 칸 수. 0 이면 빨강이다.
-	 * @param bPaintShort     페인트가 모자라 끊겼는가. 이때만 주황이다.
-	 * @param Level           차징 단계. 음수면 띄울 상황이 아니다.
+	 * 순서가 중요하다. 페인트가 모자라면 앞에서부터 끊기는데, 순서가 뒤죽박죽이면 한가운데가
+	 * 비고 끝만 칠해지는 그림이 나온다.
 	 */
-	void UpdatePreviewBox(int32 AffordableCount, bool bPaintShort,
-		const FVector& Origin, const FVector& Forward, int32 Level);
+	void CollectCellRun(int32 AnchorCell, bool bForward, int32 Count, TArray<int32>& OutCells) const;
 
-	/**
-	 * 이 단계에서 붓이 덮는 범위의 크기. X = 앞으로 뻗는 길이, Y = 좌우 폭.
-	 * 단계가 0 이면(최소 홀드 전) 1단계 크기를 돌려준다. 어디를 겨누는지는 보여줘야 한다.
-	 */
-	FVector2D GetChargeAreaSize(int32 Level) const;
+	/** 작업자가 바라보는 쪽이 칸 인덱스가 늘어나는 방향인가. 차징을 시작할 때 한 번만 정한다. */
+	bool ComputeChargeForward(const UCWWorkerComponent* Worker, int32 AnchorCell) const;
 
-	/**
-	 * 범위 안에 중심이 들어온 칸을 모은다. 캐릭터에서 가까운 순으로 정렬된다.
-	 *
-	 * 정렬이 중요하다. 페인트가 모자라면 앞에서부터 끊기는데, 순서가 뒤죽박죽이면
-	 * 범위 한가운데가 비고 끝만 칠해지는 그림이 나온다.
-	 */
-	void CollectCellsInArea(const FVector& Origin, const FVector& Forward, const FVector2D& AreaSize,
-		TArray<int32>& OutCells) const;
+	/** 위치에서 가장 가까운 칸. 높이는 보지 않는다. */
+	int32 FindNearestCell(const FVector& WorldLocation) const;
 
-	/**
-	 * 지금 그릴 범위의 기준점과 방향. 차징 중이면 얼려둔 값, 아니면 지금 위치에서 계산한 값.
-	 *
-	 * 차징을 시작하며 얼릴 값을 정하는 자리에서는 쓰면 안 된다. ComputeWorkerFrame 을 쓴다.
-	 */
-	void GetChargeFrame(const UCWWorkerComponent* Worker, FVector& OutOrigin, FVector& OutForward) const;
+	/** 시작 칸이 이미 칠해져 있으면 진행 방향으로 훑어 첫 빈 칸을 찾는다. */
+	int32 FindSnappedAnchor(int32 AnchorCell, bool bForward) const;
 
-	/** 작업자의 지금 위치와 정면으로 범위의 기준을 계산한다. 얼려둔 값을 보지 않는다. */
-	void ComputeWorkerFrame(const UCWWorkerComponent* Worker, FVector& OutOrigin, FVector& OutForward) const;
+	/** 다음 칸을 향하는 수평 방향. */
+	FVector GetCellTangent(int32 CellIndex) const;
+
+	/** 인덱스를 고리 범위로 감는다. 음수도 받는다. */
+	int32 WrapCellIndex(int32 CellIndex) const;
 
 	void BeginCharge(UCWWorkerComponent* Worker);
 
@@ -308,6 +434,12 @@ public:
 	 *
 	 *   [0] 도색 정도   0 = 가이드(노랑 점선), 1 = 도색 완료(흰색 실선)
 	 *   [1] 대시 개수   이 칸 안에 들어가는 점선 주기 수. 칸을 만들 때 한 번 넣고 바꾸지 않는다.
+	 *   [2] 쓸림 시작   이 칸에 붓이 닿는 월드 시각(머티리얼 Time 과 같은 시계). 연출 없이 칠해진
+	 *                   칸은 아주 먼 과거(-1000)라 쓸림이 이미 끝난 것으로 읽힌다.
+	 *   [3] 쓸림 시간   붓이 이 칸을 지나가는 데 걸리는 시간(초). 0 으로 나누지 않게 하한을 둔다.
+	 *   [4] 쓸림 방향   +1 이면 메시 U 가 커지는 쪽으로, -1 이면 작아지는 쪽으로 쓸려 간다.
+	 *
+	 * 쓸림 진행도 = saturate((Time - [2]) / [3]). [0] 이 1 이어도 이 값이 0 이면 아직 가이드로 보여야 한다.
 	 *
 	 * 점선은 머티리얼이 UV.U 로 그린다. frac(U * [1]) 가 대시 비율보다 작은 곳만 남기고,
 	 * [0] 이 1 이면 전부 남긴다. 칠하기 전인지 후인지가 선 모양만 봐도 읽혀야 한다.
@@ -327,25 +459,9 @@ public:
 	TObjectPtr<UInstancedStaticMeshComponent> BorderMeshes;
 
 	/**
-	 * 붓이 쓸고 갈 범위를 바닥에 그리는 사각형. 이 기계의 플레이어에게만 보인다.
-	 *
-	 * 칸에 표시를 켜는 대신 범위 자체를 도구로 보여준다. 차징할수록 앞으로 길어지고,
-	 * 이 안에 중심이 들어온 칸이 칠해진다.
-	 *
-	 * 사각형은 통째로 한 색이라 per-instance custom data 가 필요 없다. 그래서 칸과
-	 * 머티리얼을 공유하지 않는다. 색 파라미터 하나, 불투명도 파라미터 하나면 되는
-	 * 훨씬 단순한 머티리얼(M_BorderPreview)을 쓴다.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
-	TObjectPtr<UStaticMeshComponent> PreviewBox;
-
-	/**
 	 * 이번 붓질로 실제로 칠해질 구간을 테두리 위에 덧그리는 띠.
 	 *
-	 * 사각형(PreviewBox)은 "붓이 닿는 영역" 이고 이쪽은 "그래서 칠해지는 자리" 다.
-	 * 둘을 나눈 이유: 사각형만 그리면 그게 결과인 줄 알고 보게 되는데, 실제로는 그 안에서
-	 * 테두리와 겹치는 부분만 칠해진다. 각도를 잘못 잡으면 사각형은 넓은데 띠가 짧게 나오고,
-	 * 플레이어는 그 차이를 보고 스스로 자세를 고친다.
+	 * 지금은 3D 레일(RailMeshes)이 이 역할을 대신해서 BP 에서 숨겨 둔다.
 	 *
 	 * 칠해질 칸마다 인스턴스를 하나씩 놓는다. 칸보다 넓게 그려서 서로 붙으면 한 줄로 보이고,
 	 * 중간에 이미 칠해진 칸이 있으면 그 자리만 비어서 그것도 그대로 정보가 된다.
@@ -353,6 +469,25 @@ public:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
 	TObjectPtr<UInstancedStaticMeshComponent> PreviewBandMeshes;
+
+	/**
+	 * 차징 중 닿는 구간에 솟아오르는 3D 레일. 이 기계의 플레이어에게만 보인다.
+	 *
+	 * 칸마다 RailSlicesPerCell 개로 쪼갠 조각이 인스턴스 하나씩이고, 인덱스는
+	 * CellIndex * RailSlicesPerCell + SliceIndex 다. 만든 뒤로는 인스턴스를 더하거나 빼지 않고
+	 * **per-instance custom data 만 바꾼다.** 솟고 무너지는 모양은 머티리얼이 Time 으로 그린다.
+	 *
+	 *   [0] 솟기 시작한 월드 시각
+	 *   [1] 단계(0 = 감춤, 1~4 = 그 칸이 닿은 차징 단계. 높을수록 진하고 밝다)
+	 *   [2] 무너지기 시작하는 월드 시각(아직이면 아주 먼 미래)
+	 *   [3] 물마루 여부(1 = 무너지기 전에 한 번 더 솟는다)
+	 *   [4] 레일 높이(cm). 머티리얼이 높이를 줄이는 기준이다
+	 *
+	 * 이 컴포넌트의 머티리얼은 PerInstanceCustomData 를 읽고 WorldPositionOffset 으로 높이를
+	 * 그려야 한다. 안 읽으면 모든 조각이 한 높이의 상자로 서 있다.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Work")
+	TObjectPtr<UInstancedStaticMeshComponent> RailMeshes;
 
 protected:
 	// 칸 하나의 목표 길이(cm). (차징 붓 기획서 2.1)
@@ -380,24 +515,22 @@ protected:
 	TArray<float> ChargeThresholds = { 0.3f, 0.7f, 1.2f, 1.8f };
 
 	/**
-	 * 단계별 붓 범위의 크기(cm). X = 앞으로 뻗는 길이, Y = 좌우 폭. (차징 붓 기획서 2.3)
+	 * 단계별로 한 번에 칠하는 칸 수. 인덱스 0 이 1단계다. (차징 붓 기획서 2.3)
 	 *
-	 * 캐릭터 발밑에서 바라보는 방향으로 뻗는 직사각형이고, 차징할수록 커진다.
-	 * 이 안에 중심이 들어온 칸이 칠해진다.
+	 * 캐릭터 발밑에서 가장 가까운 칸이 시작점이고, 캐릭터가 바라보는 쪽으로 테두리를 따라 한 줄로
+	 * 이어서 칠한다. 마주 보는 두 변에 걸치는 일이 없다. 칸 길이가 100 이면 1칸은 약 1m 다.
 	 *
 	 * ChargeThresholds 와 개수가 같아야 한다. 모자라면 마지막 값을 계속 쓴다.
-	 *
-	 * 폭을 테두리 두께(BorderThickness, 기본 12)에 맞추지 않고 넉넉히 주는 이유는 관용이다.
-	 * 딱 맞추면 선 위에 정확히 서지 않은 순간 아무것도 안 칠해진다. 대충 맞춰 서도 걸리되,
-	 * 각도를 잘 잡을수록 더 많이 걸리는 정도가 적당하다.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge")
-	TArray<FVector2D> ChargeAreaSizes = {
-		FVector2D(120.f, 110.f),
-		FVector2D(270.f, 120.f),
-		FVector2D(430.f, 130.f),
-		FVector2D(590.f, 140.f)
-	};
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "1"))
+	TArray<int32> ChargeRunCellCounts = { 1, 2, 4, 6 };
+
+	/**
+	 * 시작 칸이 이미 칠해져 있을 때 진행 방향으로 몇 칸까지 훑어 빈 칸을 찾을 것인가.
+	 * 범위 안이 전부 칠해져 있으면 원래 칸을 그대로 쓰고, 그 릴리즈는 헛손질이 된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0"))
+	int32 AnchorSnapCells = 3;
 
 	/**
 	 * 최대 단계에 닿은 뒤 저절로 나가기까지 기다리는 시간(초).
@@ -410,7 +543,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0.0"))
 	float FullChargeHoldSeconds = 1.f;
 
-	// 릴리즈 붓질 모션 동안 이동이 잠기는 시간(초). 패링은 이 동안에도 된다.
+	// 휘두르기가 시작된 뒤 이동이 잠기는 시간(초). 패링은 이 동안에도 된다.
+	// 휘두르는 구간만 덮는다. 그 뒤 피니시 도중에 움직이면 피니시를 끊고 걷는다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Charge", meta = (ClampMin = "0.0"))
 	float ReleaseSeconds = 0.25f;
 
@@ -450,8 +584,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Guide")
 	float GuideHeightOffset = 2.f;
 
-	// 범위 사각형을 칸보다 얼마나 더 띄울 것인가. (cm)
-	// 칸 위에 얹혀야 "이 칸들이 범위 안에 있다" 로 읽힌다.
+	// 프리뷰(결과 띠, 레일)를 칸보다 얼마나 더 띄울 것인가. (cm)
+	// 칸 위에 얹혀야 "이 칸들이 칠해진다" 로 읽힌다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.01"))
 	float PreviewBoxHeightOffset = 1.f;
 
@@ -460,21 +594,150 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "1.0"))
 	float PreviewBandWidthScale = 2.4f;
 
-	// 결과 띠를 범위 사각형보다 얼마나 더 띄울 것인가. (cm)
+	// 결과 띠를 프리뷰 기준 높이보다 얼마나 더 띄울 것인가. (cm)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Preview", meta = (ClampMin = "0.01"))
 	float PreviewBandHeightOffset = 0.5f;
 
 	/**
-	 * 칸이 하나씩 켜지는 간격(초). (차징 붓 기획서 5.5 "싹—")
+	 * 붓이 선을 쓸어 칠하는 속도(cm/s). (차징 붓 기획서 5.5 "싹—")
 	 *
-	 * 4칸을 한 번에 툭 켜면 붓을 그은 것이 아니라 스탬프를 찍은 것처럼 보인다.
-	 * 진행 방향으로 차례차례 켜져야 한 번의 붓질로 읽힌다.
+	 * 칸을 하나씩 툭 켜면 붓을 그은 것이 아니라 스탬프를 찍은 것처럼 보인다. 그래서 칸마다
+	 * 시작 시각을 길이 누적 / 이 속도로 어긋나게 주고, 각 칸 안에서도 선두가 번져 나가게 한다.
+	 * 5m 를 약 0.3초에 쓸려면 1600 안팎이다.
 	 *
-	 * 0 이면 즉시 전부 켜진다. 점등은 연출일 뿐이라 게임플레이 판정(진행도·페인트·완료)은
-	 * 릴리즈한 프레임에 이미 끝나 있다.
+	 * 0 이하면 연출 없이 즉시 칠해진다. 쓸림은 연출일 뿐이라 게임플레이 판정(진행도·페인트·
+	 * 완료)은 릴리즈한 프레임에 이미 끝나 있다.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.0"))
-	float CellRevealInterval = 0.05f;
+	float StrokeSweepSpeed = 1600.f;
+
+	/**
+	 * 키를 놓고 쓸림이 시작되기까지의 지연(초). 붓을 휘두르는 모션이 앞으로 나가는 순간에
+	 * 페인트가 닿게 맞추는 값이다. 0 이면 놓는 즉시 쓸린다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|FX", meta = (ClampMin = "0.0"))
+	float ReleaseSweepDelay = 0.1f;
+
+	// 칸 하나를 몇 조각으로 쪼개 레일로 세울 것인가. 많을수록 무너지는 물마루가 부드럽다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Rail", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 RailSlicesPerCell = 4;
+
+	// 레일 높이(cm). 한 칸 길이 100 에 비해 낮게 눕혀야 쿼터뷰에서 바닥 위 가이드로 읽힌다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Rail", meta = (ClampMin = "1.0"))
+	float RailHeight = 22.f;
+
+	// 레일 폭을 선 두께(BorderThickness)의 몇 배로 할 것인가. 선보다 넓어야 테두리를 덮고 솟아 보인다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Rail", meta = (ClampMin = "1.0"))
+	float RailWidthScale = 1.6f;
+
+	// 레일이 선을 따라 이어서 솟는 속도(cm/s). 새로 닿은 구간의 조각들이 이 속도로 차례차례 솟는다.
+	// 작을수록 천천히 쭉 자라는 느낌이고, 너무 크면 한꺼번에 솟는 것처럼 보인다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Rail", meta = (ClampMin = "100.0"))
+	float RailRiseSpeed = 900.f;
+
+	// 무너지는 데 걸리는 시간(초). 머티리얼의 CollapseDuration 파라미터와 같은 값이어야 한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Rail", meta = (ClampMin = "0.05"))
+	float RailCollapseSeconds = 0.35f;
+
+	/**
+	 * 차징·휘두르기에 쓸 애니메이션. 비워두면 모션 없이 이펙트만 나간다.
+	 * 와인드업이 앞에, 휘두르기가 뒤에 이어진 한 덩어리 시퀀스를 넣는다.
+	 * 런타임에 다이내믹 몽타주로 감싸 재생하므로 몽타주 애셋은 필요 없다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim")
+	TObjectPtr<UAnimSequence> ChargeAnimation;
+
+	// 와인드업이 끝나는 시점(시퀀스 안의 초). 차징 중에는 이 자세에서 얼어 있다가 놓으면 여기서부터 풀린다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim", meta = (ClampMin = "0.0"))
+	float ChargeAnimHoldTime = 1.03f;
+
+	// 와인드업 자세까지 가는 데 걸리는 실제 시간(초). 최소 홀드(첫 단계)보다 짧아야 자세가 먼저 잡힌다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim", meta = (ClampMin = "0.05"))
+	float ChargeAnimWindupSeconds = 0.25f;
+
+	// 놓았을 때 휘두르는 재생 배율. 클수록 "촥" 나가는 속도감이 난다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim", meta = (ClampMin = "0.1"))
+	float ReleaseAnimPlayRate = 2.2f;
+
+	// AnimBP 의 슬롯 이름. ParrySwing 몽타주와 같은 슬롯을 쓴다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim")
+	FName ChargeAnimSlot = TEXT("DefaultSlot");
+
+	/**
+	 * 휘두르는 동안 붓 끝에 붙일 궤적. 비워두면 궤적 없이 휘두른다.
+	 * 애니메이션 노티파이로 붙이지 않는다. 홀드에서 재생 위치를 되돌리고 배율을 바꾸는 사이
+	 * 노티파이 구간이 어긋나 실제 플레이에서 궤적이 나오지 않았다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim")
+	TObjectPtr<UNiagaraSystem> ReleaseTrailSystem;
+
+	// 궤적을 붙일 캐릭터 메시 소켓. 붓이 붙는 소켓이고, 위치는 솔 끝이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim")
+	FName ReleaseTrailSocket = TEXT("ToolSocket_Liner");
+
+	// 소켓 기준 궤적 위치. 솔 끝에서 손잡이 쪽으로 조금 올려 솔 한가운데를 지나게 한다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim")
+	FVector ReleaseTrailOffset = FVector(0.f, 0.f, 10.f);
+
+	// 궤적을 켜 두는 길이(시퀀스 안의 초, 홀드 지점부터). 실제 시간은 ReleaseAnimPlayRate 로 나눈 값이다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Anim", meta = (ClampMin = "0.05"))
+	float ReleaseTrailClipSeconds = 0.4f;
+
+	/**
+	 * 차징 단계가 오를 때 나는 소리. 인덱스 0 이 1단계다. 이 기계의 플레이어에게만 들린다.
+	 *
+	 * 단계 수보다 짧으면 마지막 소리를 계속 쓴다. 소리 하나만 넣고 아래 피치 배열로 음계를
+	 * 올려도 되고, 단계마다 다른 소리를 넣어도 된다. 비워두면 소리 없이 이펙트만 나간다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TArray<TObjectPtr<USoundBase>> ChargeLevelSounds;
+
+	// 단계별 피치 배율. 기본값은 도-미-솔-높은 도(장3화음)로 점점 높아진다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TArray<float> ChargeLevelPitches = { 1.f, 1.26f, 1.5f, 2.f };
+
+	// 단계별 음량 배율. 높은 단계일수록 조금씩 커진다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TArray<float> ChargeLevelVolumes = { 0.7f, 0.8f, 0.9f, 1.f };
+
+	// 붓질이 확정돼 쓸리기 시작할 때 첫 칸 위치에서 나는 소리. 근처에 있는 모두에게 들린다.
+	// 쓸림이 끝나는 순간 페이드아웃되므로 가장 긴 붓질보다 넉넉히 긴 소리를 넣는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TObjectPtr<USoundBase> StrokeSweepSound;
+
+	// 쓸림이 끝난 뒤 StrokeSweepSound 가 잦아드는 시간(초). 짧은 붓질은 소리도 짧게 끝난다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound", meta = (ClampMin = "0.0"))
+	float StrokeSweepFadeOutSeconds = 0.25f;
+
+	/**
+	 * 칸 하나가 칠해지는 순간마다 그 칸 위치에서 나는 짧은 소리. 근처에 있는 모두에게 들린다.
+	 *
+	 * 쓸림 연출이 칸마다 시작하는 시각에 맞춰 차례로 낸다. 칸 수가 단계마다 달라서 소리 개수와 길이도
+	 * 저절로 단계를 따라간다. 시각은 각 기계가 받은 칸 목록으로 계산하므로 따로 동기화하지 않는다.
+	 * StrokeSweepSound 와 함께 써도 되고, 하나만 써도 된다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TObjectPtr<USoundBase> StrokeCellSound;
+
+	// 칸이 하나 지날 때마다 올라가는 피치 배율. 0 이면 같은 음이 반복된다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound", meta = (ClampMin = "0.0"))
+	float StrokeCellPitchStep = 0.04f;
+
+	// StrokeCellSound 의 음량 배율.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound", meta = (ClampMin = "0.0"))
+	float StrokeCellVolume = 1.f;
+
+	// 버튼을 눌러 차징을 시작하는 순간 나는 소리. 붓을 뒤로 빼며 자세를 잡는 느낌이다. 본인에게만 들린다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TObjectPtr<USoundBase> ChargeStartSound;
+
+	// 놓아서 실제로 칠해질 때 휘두르는 순간의 소리. 본인에게만 들린다. 페인트가 닿는 소리는 StrokeSweepSound 가 맡는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TObjectPtr<USoundBase> ReleaseSwingSound;
+
+	// 최소 홀드는 채웠지만 칠해진 칸이 없을 때(페인트 부족, 이미 칠한 칸) 나는 맥 빠진 소리. 본인에게만 들린다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Sound")
+	TObjectPtr<USoundBase> DryReleaseSound;
 
 	// 차징 상태를 화면에 띄운다. 단계 판정을 눈으로 확인하는 용도다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Work|Debug")
@@ -500,11 +763,17 @@ private:
 	// 누적 차징 시간. 체온 계수가 곱해진 시간이 쌓이므로 더울수록 천천히 찬다.
 	float ChargeSeconds = 0.f;
 
-	// 범위 사각형의 기준점(월드). 캐릭터 발밑이고, 여기서 앞으로 뻗는다.
-	FVector ChargeOriginLocation = FVector::ZeroVector;
+	// 지금 조준 프리뷰로 띄워 둔 칸. 목록이 그대로면 레일을 다시 세우지 않는다.
+	TArray<int32> AimCells;
 
-	// 범위가 뻗는 방향(월드, 수평). 차징 시작 시점에 얼어붙고 중간에 바뀌지 않는다.
-	FVector ChargeForwardDirection = FVector::ForwardVector;
+	// 조준 프리뷰가 마지막으로 가리킨 진행 방향. 칸은 같고 방향만 바뀌는 경우를 알아채는 데 쓴다.
+	bool bAimForward = true;
+
+	// 이번 차징의 시작 칸. 캐릭터 발밑에서 가장 가까운 칸이고, 차징을 시작할 때 한 번 정한 뒤 바뀌지 않는다.
+	int32 ChargeAnchorCell = INDEX_NONE;
+
+	// 시작 칸에서 칸 인덱스가 늘어나는 쪽으로 이어 갈 것인가. 캐릭터가 바라보는 방향으로 정해 얼려 둔다.
+	bool bChargeForward = true;
 
 	// 마지막으로 알린 단계. 값이 바뀔 때만 디버그를 띄운다.
 	int32 LastReportedChargeLevel = 0;
@@ -526,20 +795,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> FillHighlightMaterial;
 
-	// 범위 사각형의 머티리얼. 상태 숫자 하나만 넘긴다.
-	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> PreviewBoxMaterial;
-
-	// 결과 띠의 머티리얼. 사각형과 같은 부모 머티리얼을 쓰되 인스턴스가 달라서
-	// 불투명도를 따로 줄 수 있다. 상태(PreviewState)는 둘 다 같은 값을 받는다.
+	// 결과 띠의 머티리얼.
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> PreviewBandMaterial;
 
 	// 지금 띠에 떠 있는 칸들. 목록이 그대로면 인스턴스를 다시 만들지 않는다.
 	TArray<int32> PreviewBandCells;
-
-	// 마지막으로 머티리얼에 넣은 상태. 값이 그대로면 다시 쓰지 않는다.
-	int32 LastPreviewState = -1;
 
 	// 이 기계의 플레이어. 매 프레임 컴포넌트를 찾지 않으려고 들고 있는다.
 	UPROPERTY(Transient)
@@ -549,9 +810,46 @@ private:
 	// 순수한 연출 상태라 리플리케이트하지 않는다. 각 기계가 자기 화면을 따라잡는다.
 	TArray<uint8> RevealedCellFlags;
 
-	// 아직 안 켜진 칸. 붓이 지나간 순서로 들어 있다.
-	TArray<int32> PendingRevealCells;
+	// 레일이 서 있는 칸. 칸 인덱스 → 0/1. 이 기계의 연출 상태라 리플리케이트하지 않는다.
+	TArray<uint8> RailCellActive;
 
-	// 다음 칸을 켤 시각.
-	float NextRevealTime = -1000.f;
+	// 무너지기 시작한 칸. 서 있는 레일을 마저 내릴 때 이미 무너지는 칸을 건너뛰는 데 쓴다.
+	TArray<uint8> RailCellCollapsing;
+
+	// 이 시각이 지나면 남은 레일을 감춘다. 무너지는 모션이 끝날 때까지 컴포넌트를 살려 두려는 것이다.
+	float RailLingerUntil = -1.f;
+
+	// 차징 애니메이션. 다이내믹 몽타주를 들고 있다가 얼리고 푼다.
+	TWeakObjectPtr<UAnimInstance> ChargeAnimInstance;
+	TWeakObjectPtr<UAnimMontage> ChargeMontage;
+
+	// 와인드업 자세에서 얼렸는가.
+	bool bChargeAnimHeld = false;
+
+	// 키를 뗀 뒤에도 끝까지 지켜보는 몽타주. 놓는 순간 ResetChargeState 가 위의 차징 포인터를
+	// 비우므로 따로 들고 있는다.
+	TWeakObjectPtr<UAnimInstance> ReleaseAnimInstance;
+	TWeakObjectPtr<UAnimMontage> ReleaseMontage;
+
+	// 와인드업 도중에 놓아 휘두르기를 홀드 자세까지 미뤄 두었는가.
+	bool bReleaseSwingPending = false;
+
+	// 최소 홀드 전에 놓아 와인드업을 되감는 중인가.
+	bool bReleaseRewinding = false;
+
+	// 켜 둔 휘두르기 궤적. ReleaseTrailTimer 가 끝나면 끈다.
+	TWeakObjectPtr<UNiagaraComponent> ReleaseTrail;
+	FTimerHandle ReleaseTrailTimer;
+
+	// 지금 놓으면 칠해질 구간의 끝(월드). GetChargeTipLocation 이 돌려준다.
+	FVector ChargeTipLocation = FVector::ZeroVector;
+
+	// ChargeTipLocation 이 지금 유효한가. 차징 중이고 프리뷰가 떠 있을 때만 true 다.
+	bool bHasChargeTip = false;
+
+	// 마지막으로 이벤트를 낸 차징 단계. 값이 오를 때만 OnChargeLevelReached 를 낸다.
+	int32 LastFxChargeLevel = 0;
+
+	// 단계 소리를 마지막으로 냈을 때 칠할 수 있던 칸 수. 단계가 올라도 이 수가 늘지 않으면 소리를 내지 않는다.
+	int32 LastFxAffordableCount = 0;
 };
