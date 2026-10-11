@@ -332,7 +332,6 @@ void ACWSinkhole::OnRep_FillCount()
 	}
 
 	OnFillProgressed(FillCount, FillRatio);
-	OnFillChanged.Broadcast(this, FillCount, FillRatio);
 }
 
 void ACWSinkhole::OnRep_State()

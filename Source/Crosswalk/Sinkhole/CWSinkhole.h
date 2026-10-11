@@ -14,12 +14,6 @@ class UDecalComponent;
 class USphereComponent;
 
 /**
- * 복구 진행도가 바뀔 때. 서버와 클라이언트 양쪽에서 발행된다.
- * FillRatio 는 0~1 로 정규화된 값이라 데칼 스케일과 UI 에 그대로 넣을 수 있다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCWOnSinkholeFillChangedSignature, ACWSinkhole*, Sinkhole, int32, FillCount, float, FillRatio);
-
-/**
  * 도로에 생기는 싱크홀. (싱크홀 기획서 3~4절, 7-8)
  *
  * 지형을 실제로 함몰시키지 않는다. 검은 원 데칼 + 균열 데칼로 "꺼진 것처럼 보이게" 한다.
@@ -75,21 +69,16 @@ public:
 	bool IsPointInHitRange(const FVector& WorldLocation) const;
 
 	/** 지금 보이는 검은 원의 반지름. 진행도에 따라 줄어든다. */
-	UFUNCTION(BlueprintPure, Category = "Sinkhole")
 	float GetVisualRadius() const;
 
 	/** 지금 낙하 판정 반경. 시각 반경보다 작다. */
-	UFUNCTION(BlueprintPure, Category = "Sinkhole")
 	float GetFallRadius() const;
 
 	/** 0 = 손도 안 댐, 1 = 복구 완료. */
-	UFUNCTION(BlueprintPure, Category = "Sinkhole")
 	float GetFillRatio() const;
 
-	UFUNCTION(BlueprintPure, Category = "Sinkhole")
 	int32 GetFillCount() const { return FillCount; }
 
-	UFUNCTION(BlueprintPure, Category = "Sinkhole")
 	int32 GetRequiredFillCount() const { return RequiredFillCount; }
 
 	UFUNCTION(BlueprintPure, Category = "Sinkhole")
@@ -297,9 +286,4 @@ private:
 	// 균열 데칼의 동적 머티리얼. 반경 파라미터를 여기에 넣는다.
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> CrackMID;
-
-	// 델리게이트는 최하단에 배치
-public:
-	UPROPERTY(BlueprintAssignable, Category = "Sinkhole")
-	FCWOnSinkholeFillChangedSignature OnFillChanged;
 };
