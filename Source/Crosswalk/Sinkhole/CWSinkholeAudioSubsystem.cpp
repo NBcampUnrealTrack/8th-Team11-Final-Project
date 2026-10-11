@@ -99,10 +99,5 @@ const UCWSinkholeSoundSet* UCWSinkholeAudioSubsystem::ResolveSoundSet()
 
 	LoadedSoundSet = SoundSet.LoadSynchronous();
 
-	if (LoadedSoundSet == nullptr)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[SinkholeAudio] 사운드 셋을 불러오지 못했습니다. DefaultGame.ini 경로를 확인하세요: %s"), *SoundSet.ToString());
-	}
-
 	return LoadedSoundSet;
 }
