@@ -25,7 +25,7 @@ public:
 	virtual void OnWorldEndPlay(UWorld& InWorld) override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
-	void StartCapture(int32 Width = 1920, int32 Height = 1080, int32 FrameRate = 30);
+	void StartCapture(int32 Width = 1920, int32 Height = 1080, int32 FrameRate = 60);
 	void StopCapture();
 	void SetShot(int32 Shot);
 	void SetFollow(bool bEnabled);
@@ -67,7 +67,7 @@ private:
 	FVector FocusLocation = FVector::ZeroVector;
 	float CaptureAccumulator = 0.f;
 	float HiddenRefreshAccumulator = 0.f;
-	float CaptureInterval = 1.f / 30.f;
+	float CaptureInterval = 1.f / 60.f;
 	float OrbitSpeed = 0.f;
 	float OrbitAngle = 0.f;
 	int32 ActiveShot = 1;

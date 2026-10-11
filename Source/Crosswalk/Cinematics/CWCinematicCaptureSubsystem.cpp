@@ -56,7 +56,7 @@ namespace CWFilm
 	}
 
 	FAutoConsoleCommandWithWorldAndArgs Start(TEXT("cw.Film.Start"),
-		TEXT("Open local filming window: cw.Film.Start [width height fps]. Default 1920 1080 30."),
+		TEXT("Open local filming window: cw.Film.Start [width height fps]. Default 1920 1080 60."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
 			if (auto* Film = Get(World))
