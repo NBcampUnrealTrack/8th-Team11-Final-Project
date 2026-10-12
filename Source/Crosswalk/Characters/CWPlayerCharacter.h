@@ -619,8 +619,9 @@ public:
 	/**
 	 * 캐릭터가 항상 마우스 커서 방향을 보게 한다.
 	 *
-	 * 켜면 CharacterMovement 의 bOrientRotationToMovement 를 끄고 Tick 이 직접 회전을 넣는다.
-	 * 켜 둔 채로 회전을 넣으면 무브먼트가 매 프레임 이동 방향으로 되돌려서 아무 효과가 없다.
+	 * 켜면 CharacterMovement 의 bOrientRotationToMovement 를 끄고 bUseControllerDesiredRotation 을
+	 * 켠다. Tick 이 커서 방향을 컨트롤 회전에 넣고, 무브먼트가 그 값으로 몸을 돌린다.
+	 * 컨트롤 회전은 이동 패킷에 실려 서버로 가므로 남의 화면에도 같은 방향이 보인다.
 	 *
 	 * 끄면 예전 조작(이동 방향을 본다)으로 돌아간다. 생성자에서 한 번만 읽으므로
 	 * 런타임에 바꿔도 반영되지 않는다. BP 클래스 기본값으로 정하는 스위치다.

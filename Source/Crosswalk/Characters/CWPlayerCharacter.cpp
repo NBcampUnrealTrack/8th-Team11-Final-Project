@@ -76,7 +76,19 @@ ACWPlayerCharacter::ACWPlayerCharacter()
 	// 커서를 보는 모드에서는 이동 방향 정렬을 끈다.
 	// 켜 둔 채로 회전을 넣으면 무브먼트가 매 프레임 이동 방향으로 되돌려서 아무 효과가 없다.
 	Movement->bOrientRotationToMovement = !bFaceCursor;
-	Movement->RotationRate = FRotator(0.f, 720.f, 0.f);
+
+	/**
+	 * 커서 방향은 컨트롤 회전에 실어서 무브먼트가 몸을 돌리게 한다.
+	 *
+	 * 액터 회전은 이동 패킷에 실리지 않는다. 본인 기계에서 SetActorRotation 으로 돌리면
+	 * 서버는 그 회전을 모르고, 남의 화면에서는 몸이 굳은 채로 미끄러진다.
+	 * 컨트롤 회전은 이동 패킷마다 이미 서버로 가고 있어서 추가 비용 없이 서버까지 닿는다.
+	 *
+	 * 회전 속도는 즉시(음수)로 둔다. 부드럽게 도는 보간은 ApplyCursorFacing 이 컨트롤 회전을
+	 * 만들 때 이미 했으므로, 무브먼트가 한 번 더 속도를 깎으면 조작감이 달라진다.
+	 */
+	Movement->bUseControllerDesiredRotation = bFaceCursor;
+	Movement->RotationRate = FRotator(0.f, bFaceCursor ? -1.f : 720.f, 0.f);
 	// 기획서 3.3 의 "차량 속도 = 기본 이동속도의 1.5배" 기준값이 되므로 명시해 둔다.
 	Movement->MaxWalkSpeed = 500.f;
 
@@ -588,6 +600,18 @@ void ACWPlayerCharacter::StopRagdoll(const FVector& RecoverLocation, float Recov
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	SetActorLocation(RecoverLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	SetActorRotation(FRotator(0.f, RecoverYaw, 0.f), ETeleportType::TeleportPhysics);
+
+	/**
+	 * 컨트롤 회전도 같은 방향으로 맞춘다.
+	 *
+	 * 무브먼트가 컨트롤 회전 쪽으로 몸을 돌리므로(생성자 참고), 그대로 두면 아래에서 무브먼트를
+	 * 되살리는 순간 맞기 전 커서 방향으로 몸이 홱 돌아간다. 멀티캐스트라 서버(모든 플레이어의
+	 * 컨트롤러)와 본인 기계(자기 컨트롤러) 양쪽에서 맞춰진다. 남의 기계에는 컨트롤러가 없다.
+	 */
+	if (AController* OwnerController = GetController())
+	{
+		OwnerController->SetControlRotation(FRotator(0.f, RecoverYaw, 0.f));
+	}
 
 	MeshComponent->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
 	MeshComponent->SetRelativeTransform(DefaultMeshRelativeTransform, false, nullptr, ETeleportType::TeleportPhysics);
@@ -2608,13 +2632,14 @@ void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)
 	}
 
 	/**
-	 * 회전을 넣는 것은 조종 중인 본인 기계뿐이다.
+	 * 회전을 정하는 것은 조종 중인 본인 기계뿐이다. 애초에 서버와 다른 클라이언트는
+	 * 이 플레이어의 마우스 커서를 읽을 수 없다.
 	 *
-	 * 남의 캐릭터 회전은 캐릭터 무브먼트의 리플리케이션으로 내려온다. 서버가 자기 판단으로
-	 * 또 돌리면 클라이언트가 보내온 회전과 싸워서 남의 화면에서만 몸이 떨린다.
-	 * 애초에 서버와 다른 클라이언트는 이 플레이어의 마우스 커서를 읽을 수 없다.
+	 * 정한 방향은 몸이 아니라 컨트롤 회전에 넣는다. 컨트롤 회전은 이동 패킷에 실려 서버로 가고,
+	 * 서버 무브먼트가 그 값으로 몸을 돌린 결과가 남의 화면으로 복제된다. (생성자 참고)
 	 */
-	if (!IsLocallyControlled())
+	AController* OwnerController = GetController();
+	if (!IsLocallyControlled() || OwnerController == nullptr)
 	{
 		return;
 	}
@@ -2623,21 +2648,16 @@ void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)
 	 * 쓰러져 있는 동안은 돌리지 않는다.
 	 *
 	 * 래그돌이 물리로 자세를 잡고 있고, 기상할 때는 복귀 정렬이 캡슐 회전을 직접 맞춘다.
-	 * (HandleHitLockChanged 경로의 SetActorRotation) 여기서 매 프레임 덮으면 그 정렬과 싸운다.
-	 */
-	if (IsActionLocked())
-	{
-		return;
-	}
-
-	/**
-	 * 차징처럼 대상 범위가 이미 확정된 작업 중에는 몸을 돌리지 않는다.
+	 * (HandleHitLockChanged 경로의 SetActorRotation) 그 정렬과 싸우지 않도록 컨트롤 회전을
+	 * 지금 몸 방향에 묶어 둔다. 손을 떼기만 하면 무브먼트가 마지막 커서 방향으로 마저 돌린다.
 	 *
+	 * 차징처럼 대상 범위가 이미 확정된 작업 중에도 같다.
 	 * 테두리 차징은 누르는 순간 어느 칸을 칠할지 정해진다. 그 뒤로도 커서를 따라 몸이 돌면
 	 * 화면에 보이는 조준과 실제로 칠해질 자리가 어긋나고, 프리뷰가 계속 흔들린다.
 	 */
-	if (WorkerComponent != nullptr && WorkerComponent->IsAimingBlocked())
+	if (IsActionLocked() || (WorkerComponent != nullptr && WorkerComponent->IsAimingBlocked()))
 	{
+		OwnerController->SetControlRotation(FRotator(0.f, GetActorRotation().Yaw, 0.f));
 		return;
 	}
 
@@ -2659,7 +2679,7 @@ void ACWPlayerCharacter::ApplyCursorFacing(float DeltaSeconds)
 		? TargetYaw
 		: FMath::RInterpTo(CurrentYaw, TargetYaw, DeltaSeconds, CursorFacingInterpSpeed);
 
-	SetActorRotation(FRotator(0.f, NewYaw.Yaw, 0.f));
+	OwnerController->SetControlRotation(FRotator(0.f, NewYaw.Yaw, 0.f));
 }
 
 FVector ACWPlayerCharacter::ResolveCursorWorldLocation() const
