@@ -2,132 +2,171 @@
 
 # CROSSWALK
 
-### 횡단보도 하나 칠하는데, 이렇게까지 해야 한다고?
+### 도로 위의 혼란을 함께 해결하는 1~4인 온라인 협동 파티 액션
 
-차는 달리고, 페인트는 떨어지고, 동료는 날아갑니다.<br>
-친구들과 함께 도로 위의 난장판을 수습하는 **1~4인 온라인 협동 파티 액션 게임**.
+**Unreal Engine 5.8 · C++ / Blueprint · Steam Multiplayer**
 
-**온라인 협동 · 파티 게임 · 액션 · 코미디**
+![Crosswalk 플레이 장면](Docs/Media/crosswalk-overview.gif)
 
-![차량이 오가는 도로에서 함께 횡단보도를 완성하는 Crosswalk](Docs/Media/crosswalk-overview.gif)
-
-[프로젝트 소개](https://app.notion.com/p/teamsparta/8-11-CrossWalk-3b12dc3ef51480e1a725cf3e8956cd06)
+[출시용 게임 소개](https://github.com/NBcampUnrealTrack/8th-Team11-Final-Project/blob/codex/readme-steam-page/README.md) · [팀 노션](https://app.notion.com/p/teamsparta/8-11-CrossWalk-3b12dc3ef51480e1a725cf3e8956cd06)
 
 </div>
 
----
+## 프로젝트 개요
 
-## 게임 정보
+**Crosswalk**는 차량이 달리는 도로에서 동료들과 횡단보도를 완성하는 협동 게임입니다. 청소, 테두리 그리기, 도색, 뒷정리를 나눠 수행하며 차량 패링과 돌발 상황에 함께 대응합니다.
 
-**오늘의 할 일: 횡단보도를 완성하세요. 물론, 차는 멈춰주지 않습니다.**
+이 README는 프로젝트의 기술 구성과 구현 구조를 소개합니다. 플레이어를 위한 게임 소개와 작업별 GIF는 위의 **출시용 게임 소개**에서 볼 수 있습니다.
 
-Crosswalk에서 여러분은 도로 작업반이 됩니다. 빗자루로 먼지를 쓸고, 테두리를 그리고, 롤러로 하얀 줄을 채워 넣으세요. 간단해 보이지만 작업에 정신이 팔린 사이에도 자동차는 끊임없이 달려옵니다.
+| 항목 | 내용 |
+| --- | --- |
+| 프로젝트 | Crosswalk / 크로스워크 |
+| 팀 | 내일배움캠프 Unreal 트랙 8기 11조 |
+| 장르 | 온라인 협동 파티 액션 |
+| 플레이 인원 | 1~4인 |
+| 시점 | 쿼터뷰 |
+| 개발 대상 | Windows PC |
+| 핵심 경험 | 역할 분담, 차량 패링, 도로 작업과 돌발 상황 대응 |
 
-혼자서 차근차근 완성해도 좋고, 친구들과 역할을 나눠 손발을 맞춰도 좋습니다. 다만 누군가 날아가는 순간, 방금 세운 계획은 다시 짜야 할지도 모릅니다!
+## 핵심 플레이
 
-<br>
+**도로 청소 → 테두리 그리기 → 흰색 도색 → 넘친 페인트 정리**
 
-### 차가 온다고요? 받아치세요!
+- **작업 분담**: 빗자루, 테두리 도구, 흰색·검은색 롤러를 사용해 횡단보도를 완성합니다.
+- **차량 패링**: 다가오는 차량을 받아쳐 작업 공간을 확보합니다. 튕겨 나간 차량은 다른 플레이어에게도 위험이 됩니다.
+- **보급과 휴식**: 도구의 페인트를 보충하고, 작업 중 올라가는 체온을 관리합니다.
+- **돌발 상황**: 도로에 생긴 싱크홀을 아스팔트건으로 복구하며 작업을 이어갑니다.
 
-![도로 위에서 차량을 받아치는 패링](Docs/Media/vehicle-parry.gif)
+## 기술 스택
 
-달려오는 차를 피하거나, 충돌 직전 타이밍을 맞춰 패링하세요. 제대로 쳐낸 차는 조준한 방향으로 튕겨 나갑니다. 뒤에서 작업하던 친구를 지켜냈다면 훌륭한 팀워크죠.
+| 영역 | 기술 | 프로젝트 내 활용 |
+| --- | --- | --- |
+| 게임 엔진 | Unreal Engine 5.8 | 게임플레이, 레벨, 렌더링, 네트워크 |
+| 구현 | C++ · Blueprint | C++ 시스템과 Blueprint 콘텐츠·연출 구성 |
+| 입력 | Enhanced Input | 캐릭터 이동 및 작업·상호작용 입력 |
+| 멀티플레이 | Online Subsystem Steam · SteamSockets | Steam 세션 생성·검색·참가와 네트워크 연결 |
+| 로컬 세션 개발 | Online Subsystem Null | 로컬 테스트용 온라인 서브시스템 의존성 |
+| UI | UMG · Slate · ModelViewViewModel | 로비·HUD·설정 화면, 상태 바인딩, 커스텀 표시 |
+| 이펙트 | Niagara | 게임플레이 시각 효과 |
+| 도색 표현 | Decal · 동적 텍스처 · RHI | 도색 영역 표시 및 작업 상태 텍스처 갱신 |
+| 렌더링 설정 | Lumen · Hardware Ray Tracing · Virtual Shadow Maps · Substrate | 프로젝트 조명·반사·그림자·머티리얼 설정 |
+| 버전 관리 | Git · GitHub · Git LFS | 소스 협업 및 Unreal 애셋 관리 |
+| 검증 | Unreal Automation Test | UI·세션·작업 표시 회귀 테스트 |
 
-**그 차가 다른 친구에게 날아가기 전까지는요.**
+모듈 의존성은 [Crosswalk.Build.cs](Source/Crosswalk/Crosswalk.Build.cs), 엔진 버전과 활성 플러그인은 [Crosswalk.uproject](Crosswalk.uproject)에서 확인할 수 있습니다.
 
-패링에 실패하면 도구를 떨어뜨린 채 멀리 날아갑니다. 날아간 곳에서 동료와 마주치더라도 너무 놀라지 마세요. 이 작업장에서는 흔한 일입니다.
+## 주요 시스템
 
-<br>
+| 시스템 | 담당 기능 | 구현 위치 |
+| --- | --- | --- |
+| 게임 진행 | 작업 목표, 스테이지 상태, 목표 달성 현황 공유 | [Core](Source/Crosswalk/Core) |
+| 온라인 세션 | Steam 로그인, 공개 방 검색, 방 코드 참가, 세션 종료 | [CWGameInstance](Source/Crosswalk/Core/CWGameInstance.h) |
+| 캐릭터 | 플레이어 조작과 컨트롤러 | [Characters](Source/Crosswalk/Characters) |
+| 도로 작업 | 먼지 제거, 테두리 작업, 셀 도색, 도구·보급·체온 관리 | [Painting](Source/Crosswalk/Painting) |
+| 교통·패링 | 차량 생성, 차선·정지선, 교통 난이도와 패링 | [Traffic](Source/Crosswalk/Traffic) |
+| 싱크홀 | 생성 영역, 추락 처리, 아스팔트건과 투사체 | [Sinkhole](Source/Crosswalk/Sinkhole) |
+| 날씨 | 날씨 액터와 제어 컴포넌트 | [Weather](Source/Crosswalk/Weather) |
+| 화면·상호작용 | ViewModel, 위젯, 진행 표시, 상호작용 안내 | [UI](Source/Crosswalk/UI) · [Interaction](Source/Crosswalk/Interaction) |
+| 사운드 | 오디오·음악 서브시스템 | [Audio](Source/Crosswalk/Audio) · [CWMusicSubsystem](Source/Crosswalk/Core/CWMusicSubsystem.h) |
 
-### 우리 작업반을 소개합니다!
+### 멀티플레이와 상태 전달
 
-한 사람이 들 수 있는 도구는 하나. 빗자루부터 롤러까지, 필요한 도구를 나눠 들고 네 단계의 작업을 이어가세요. 맡은 일이 끝났다면 다른 동료에게 손을 보태주세요!
+호스트가 게임을 함께 실행하는 **리슨 서버** 방식으로 세션을 구성합니다. `CWGameInstance`가 방 생성·검색·참가를 관리하고, 게임 진행 상태는 `CWGameMode`와 `CWGameState`로 나누어 처리합니다.
 
-#### 01. 쓸어주세요! — 도로 청소
+아래는 작업 목표와 진행 상태가 HUD에 전달되는 흐름입니다.
 
-![빗자루로 도로의 먼지를 쓸어내는 작업](Docs/Media/road-cleaning.gif)
+```mermaid
+flowchart LR
+    A[서버: CWGameMode] -->|진행 상태 갱신| B[서버: CWGameState]
+    B -->|상태 복제| C[클라이언트: CWGameState]
+    B --> D[호스트 ViewModel]
+    C --> E[클라이언트 ViewModel]
+    D --> F[호스트 HUD]
+    E --> G[클라이언트 HUD]
+```
 
-첫 작업은 빗자루질입니다. 도로에 쌓인 먼지를 쓸어내고 횡단보도를 그릴 자리를 마련하세요. 바닥만 보고 있다가는 달려오는 차를 놓칠지도 모릅니다!
+`CWGameState`는 목표 목록, 완료 개수, 스테이지 상태를 복제하고 변경 이벤트를 제공합니다. UI에서는 GameState를 구독하는 ViewModel을 통해 표시 상태를 갱신합니다.
 
-<br>
+관련 구현: [CWGameMode](Source/Crosswalk/Core/CWGameMode.cpp) · [CWGameState](Source/Crosswalk/Core/CWGameState.h) · [CWBaseGameStateViewModel](Source/Crosswalk/UI/ViewModel/CWBaseGameStateViewModel.cpp) · [CWObjectiveViewModel](Source/Crosswalk/UI/ViewModel/CWObjectiveViewModel.cpp)
 
-#### 02. 선을 그어주세요! — 테두리 작업
+### 작업 영역과 플레이어 기능 분리
 
-![가이드라인을 따라 횡단보도 테두리를 그리는 작업](Docs/Media/border-marking.gif)
+도로 작업 영역은 먼지, 테두리, 도색 셀에 따라 클래스를 나눕니다. 플레이어 측 기능은 작업, 도구 보유, 보급품 운반, 체온, 작업 조준점 등을 컴포넌트로 구성합니다.
 
-라인마킹카트로 가이드를 따라 테두리를 그으세요. 차분하게 선을 잇다가도 차가 오면 잠깐 손을 떼야 합니다. **“조금만 더 긋고 피할까?”** 그 고민이 가장 위험합니다.
+- **작업 영역**: `CWWorkZone_Dust`, `CWWorkZone_BorderSketch`, `CWWorkZone_Cells`
+- **플레이어 작업**: `CWWorkerComponent`, `CWToolHolderComponent`, `CWSupplyCarrierComponent`
+- **작업 피드백**: `CWTemperatureComponent`, `CWWorkReticleComponent`, `CWWorkZoneHighlightComponent`
 
-<br>
+관련 구현: [Painting/Zone](Source/Crosswalk/Painting/Zone) · [Painting/Components](Source/Crosswalk/Painting/Components)
 
-#### 03. 빈칸을 채워주세요! — 안쪽 도색
+## 저장소 구조
 
-![흰색 롤러로 횡단보도 안쪽을 채우는 작업](Docs/Media/painting-coop.gif)
+```text
+Crosswalk/
+├─ Source/Crosswalk/
+│  ├─ Core/           # 게임 진행, 세션, 로비, 스테이지
+│  ├─ Characters/     # 플레이어 캐릭터와 컨트롤러
+│  ├─ Painting/       # 도로 작업, 도구, 보급, 체온
+│  ├─ Traffic/        # 차량, 교통 제어, 패링
+│  ├─ Sinkhole/       # 싱크홀과 아스팔트 복구
+│  ├─ Weather/        # 날씨
+│  ├─ UI/             # ViewModel, 위젯, 화면, UI 테스트
+│  ├─ Interaction/    # 상호작용 안내
+│  ├─ Audio/          # 오디오 서브시스템
+│  ├─ Data/           # 열거형, 구조체, 데이터 애셋
+│  └─ Tests/          # 자동화 테스트
+├─ Content/           # Blueprint, 맵, 게임 애셋
+├─ Config/            # 프로젝트 설정
+├─ Plugins/           # 프로젝트 플러그인
+└─ Docs/Media/        # README 플레이 GIF
+```
 
-테두리가 완성됐다면 흰색 롤러를 들 차례! 비어 있는 곳을 칠해 횡단보도를 완성해 가세요. 넓게 칠하는 것도 좋지만, 선 밖으로 삐져나간 페인트는 누군가 다시 지워야 합니다.
+## 개발 환경과 실행
 
-<br>
+### 준비
 
-#### 04. 뒷정리도 부탁해요! — 페인트 정리
+- Unreal Engine **5.8**
+- Unreal C++ 빌드 도구가 설치된 Visual Studio 및 Windows SDK
+- Git 및 Git LFS
+- 온라인 플레이 확인을 위한 Steam 클라이언트와 계정
 
-![검은색 롤러로 횡단보도 주변의 페인트 자국을 지우는 작업](Docs/Media/paint-cleanup.gif)
+### 프로젝트 받기
 
-검은색 롤러로 삐져나간 페인트와 도로에 남은 자국을 지워주세요. 친구가 흘린 페인트도, 차가 밟고 지나간 자국도 깔끔하게! **다 치웠다고 생각한 순간, 저쪽에서 페인트 통이 터질 수도 있습니다.**
+```powershell
+git lfs install
+git clone https://github.com/NBcampUnrealTrack/8th-Team11-Final-Project.git
+cd 8th-Team11-Final-Project
+git lfs pull
+```
 
-<br>
+`.uasset`과 `.umap` 등은 Git LFS로 관리합니다. 애셋 다운로드가 끝나면 `Crosswalk.uproject`에서 프로젝트 파일을 생성하고, **Development Editor / Win64** 구성으로 빌드한 뒤 에디터를 실행합니다. 프로젝트에서 활성화한 플러그인도 해당 엔진 환경에 준비되어 있어야 합니다.
 
-### “여기 페인트 좀!” — 보급도 팀워크
+### 명령줄 빌드
 
-페인트가 떨어진 동료에게 새 페인트 통을 운반해 주세요. 통을 든 동안에는 패링할 수 없으니, 다른 동료가 차를 경계해 주면 든든하겠죠.
+프로젝트 루트의 PowerShell에서 실행합니다. `$EngineRoot`는 자신의 엔진 설치 경로로 바꾸세요. 빌드 전 에디터를 종료합니다.
 
-차에 치여 통을 터뜨리면? 보급하러 왔다가 청소할 일만 늘어날 수도 있습니다. **일손이 모자란 곳을 찾아 움직이는 것까지가 여러분의 일입니다.**
+```powershell
+$EngineRoot = 'E:\UE_5.8'
+& "$EngineRoot\Engine\Build\BatchFiles\Build.bat" CrosswalkEditor Win64 Development "-Project=$((Get-Location).Path)\Crosswalk.uproject" -WaitMutex
+```
 
-<br>
+## 자동화 테스트
 
-### 뜨거워지는 건 우정만이 아닙니다
+현재 소스에는 **13개의 자동화 테스트**가 등록되어 있습니다. 테스트 코드는 [Tests](Source/Crosswalk/Tests)와 [UI/Tests](Source/Crosswalk/UI/Tests)에 있습니다.
 
-![작업 도중 휴식구역으로 이동해 체온을 식히는 장면](Docs/Media/rest-and-cooldown.gif)
+| 범위 | 주요 검증 대상 |
+| --- | --- |
+| 세션 | 방 검색 취소 처리 |
+| 도로 작업 | 작업 조준점과 도색 일치, 기존 테두리 하이라이트 |
+| 캐릭터 장착물 | 로비 이동과 잠금 상태에서의 수명 관리 |
+| UI | 플레이어 이름, 도구 페인트 표시, 상호작용 안내, 확인창 |
+| 진행·연출 | 클리어 신호 대기, 브러시 텍스트 렌더링, 스테이지 선택·클립보드 표시 |
 
-열심히 일할수록 체온이 올라 이동과 작업이 느려집니다. 잠시 의자에 앉아 열을 식히고, 동료에게 작업을 넘겨주세요.
+테스트 이름은 `Crosswalk.*`로 시작합니다. 에디터용 테스트와 클라이언트용 테스트의 실행 컨텍스트가 구분되어 있습니다. 위 목록은 구현된 검증 범위이며 최신 실행 결과를 의미하지 않습니다.
 
-문제는 **휴식 자리가 딱 한 명 몫**이라는 것. 누가 먼저 쉬고, 누가 남은 일을 맡을지 서로 이야기하세요. 쉬는 친구 쪽으로 차를 쳐내지 않는 배려도 잊지 마시고요.
+## 팀 문서
 
-<br>
+- [8기 11조 Crosswalk — 프로젝트 소개 및 팀 문서](https://app.notion.com/p/teamsparta/8-11-CrossWalk-3b12dc3ef51480e1a725cf3e8956cd06)
+- [출시용 README — 게임 소개와 작업별 플레이 영상](https://github.com/NBcampUnrealTrack/8th-Team11-Final-Project/blob/codex/readme-steam-page/README.md)
 
-### 방금까지 길이었는데요
-
-![아스팔트 건으로 도로의 싱크홀을 복구하는 장면](Docs/Media/sinkhole-repair.gif)
-
-도로 위에 갑자기 벌어진 싱크홀이 작업 동선을 가로막습니다. 돌아갈까요, 아니면 지금 메울까요? 아스팔트 건을 꺼내 구멍을 복구하고 동료가 지나갈 길을 확보하세요.
-
-조준은 신중하게! 빗나간 아스팔트는 바닥에 끈적한 자국을 남겨 여러분과 동료의 발목을 잡습니다. 도로를 고치려다가 새 장애물을 만들지는 마세요.
-
-<br>
-
-### 완성은 함께, 다음 도전은 더 빠르게
-
-제한 시간에 쫓겨 작업이 끝나지는 않습니다. 넘어지고, 흘리고, 돌아가더라도 끝까지 횡단보도를 완성하세요. 클리어 시간에 따라 별 등급이 결정됩니다.
-
-첫 도전에서는 무사히 마무리하는 것을 목표로, 다음 도전에서는 역할과 동선을 맞춰 더 높은 등급에 도전하세요. **방금 그 사고만 없었어도 더 빨랐을 텐데!**
-
----
-
-### 주요 특징
-
-- **1~4인 플레이** — 혼자서도, 친구들과 온라인 협동으로도 즐기는 도로 작업.
-- **차량 회피와 패링** — 작업을 계속할지, 피할지, 받아칠지 결정하는 아슬아슬한 순간.
-- **네 단계의 횡단보도 작업** — 청소부터 테두리, 안쪽 도색, 페인트 정리까지.
-- **계속 바뀌는 역할 분담** — 도구 교대, 페인트 보급, 휴식과 싱크홀 복구.
-- **사고가 만드는 코미디** — 날아가는 동료와 쏟아진 페인트, 그리고 함께하는 뒷수습.
-- **클리어 시간에 따른 별 등급** — 손발이 맞을수록 빨라지는 우리 팀의 작업.
-
-<br>
-
-<div align="center">
-
-**혼자 해도 재밌지만, 같이하면 더 재밌다.**<br>
-오늘도 도로 위에서 만나요.
-
-<sub>Unreal Engine 5.8 · 내일배움캠프 Unreal 8기 11조</sub>
-
-</div>
-
+팀원별 역할과 제작 과정은 팀 노션에서 확인할 수 있습니다.
